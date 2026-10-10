@@ -9,7 +9,7 @@ import java.util.TimeZone
 import kotlin.math.abs
 
 /**
- * 门禁 **G2**：[MoonPhase] 的历算正确性（规格 `docs/moonlit-visualizer-plan.md` §4.6）。
+ * 门禁 **G2**：[MoonPhase] 的历算正确性（规格 `docs/archive/moonlit-visualizer-plan.md` §4.6）。
  *
  * 四组向量逐字照抄 §4.6：A 天象锚点、B 连续向量、C 朔望对照、D 负向自证。
  * ⛔ **D 的几例是本类的重点** —— 没有它们，A/B/C 三组即使全绿也证明不了测试有判别力

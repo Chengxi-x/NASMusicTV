@@ -1,4 +1,4 @@
-// CDP driver for docs/moonlit-preview.html —— **真截图**判读 + 数值探针。
+// CDP driver for docs/archive/moonlit-preview.html —— **真截图**判读 + 数值探针。
 //
 // 为什么需要它：内嵌浏览器（browser-use）在本机拿不到画面
 //   （take_screenshot → NATIVE_BROWSER_VIEWPORT_UNAVAILABLE，且 clientWidth=0 ⇒ 几何全 NaN），
@@ -27,7 +27,7 @@ const HERE = dirname(process.argv[1]);
 const ROOT = resolve(HERE, '..', '..', '..', '..');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9334;                                   // ⛔ 别和 seaside 驱动（9333）撞
-const PAGE = resolve(ROOT, 'docs', 'moonlit-preview.html');
+const PAGE = resolve(ROOT, 'docs', 'archive', 'moonlit-preview.html');
 const URL_STR = 'file:///' + PAGE.replace(/\\/g, '/');
 const OUT = resolve(ROOT, 'output', 'moonlit_frames');
 const DT = 1 / 60;

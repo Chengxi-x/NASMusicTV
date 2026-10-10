@@ -17,7 +17,7 @@ import kotlin.math.sin
  * 本文件只有数据与函数，`MoonlitRenderer` 只负责把本文件算出的几何画出来。
  *
  * ## 与原型的关系（逐字对齐的对象）
- * `docs/moonlit-preview.html:293-308`（常量表）、`:665-712`（播种）、`:720-752`（`layoutPuffs`）、
+ * `docs/archive/moonlit-preview.html:293-308`（常量表）、`:665-712`（播种）、`:720-752`（`layoutPuffs`）、
  * `:754-767`（`stepClouds`）、`:769-778`（`occlusion`）、`:1016-1024`（晕）、
  * `:1029-1043`（远层）、`:1102-1146`（近层 + 银边）、`:1310-1340`（`softEllipse` / `cloudCol`）。
  * ⚠️ **播种的 rng 调用次序是契约**（§3.0(f) 第 6 条）：改**调用次数**整场重排 ⇒

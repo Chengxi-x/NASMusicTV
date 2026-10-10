@@ -7,7 +7,7 @@ import kotlin.math.min
 /**
  * 画质档 —— ⛔ **刻意不是** `androidx.tv.material3` 的 `FxLevel`、也不是 `Color`。
  *
- * 为什么自建（`docs/moonlit-visualizer-plan.md` §10.2 G4，与 E43 §4.9.5 同一条硬前提）：
+ * 为什么自建（`docs/archive/moonlit-visualizer-plan.md` §10.2 G4，与 E43 §4.9.5 同一条硬前提）：
  * [MoonOpBudget] 的三道门（G4 的 ops / 填充 / native 三张表）必须在**纯 JVM 单测**里直接调，
  * 而带 Compose / material3 类型的签名在 JVM 单测里会 `not mocked`
  * （`FxLevel` 是 value class、`Color` 走 inline class 包装）。

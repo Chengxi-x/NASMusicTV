@@ -1,4 +1,4 @@
-// E44「明月」T7 / G3 的**基准生成器**：从 `docs/moonlit-preview.html` 里**原文抽出**云场函数
+// E44「明月」T7 / G3 的**基准生成器**：从 `docs/archive/moonlit-preview.html` 里**原文抽出**云场函数
 // （播种 / 铺斑 / 推进 / 遮挡），跑出一个确定性参考帧，把结果写成 Kotlin 测试基线文件
 // `app/src/test/java/…/renderers/MoonlitCloudBaseline.kt`。
 //
@@ -14,7 +14,7 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..', '..', '..', '..');
-const lines = fs.readFileSync(path.join(root, 'docs', 'moonlit-preview.html'), 'utf8').split(/\r?\n/);
+const lines = fs.readFileSync(path.join(root, 'docs', 'archive', 'moonlit-preview.html'), 'utf8').split(/\r?\n/);
 const grab = (a, b) => lines.slice(a - 1, b).join('\n');
 const idx = (needle) => {
   const i = lines.findIndex((l) => l.includes(needle));

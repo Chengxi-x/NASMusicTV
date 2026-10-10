@@ -264,7 +264,7 @@ enum class VisualizerTheme(
     SEASIDE(R.string.visualizer_theme_seaside, "海边", Tier.BASIC, "43", needsParticleBudget = false),
 
     /**
-     * 明月（第 44 个效果，方案 `docs/moonlit-visualizer-plan.md`）
+     * 明月（第 44 个效果，方案 `docs/archive/moonlit-visualizer-plan.md`）
      *
      * 视觉：俯临一片静海的月夜 —— 分界线固定在画面 0.64 高度（⛔ 不同于 E43 那条"浪能冲上来"
      * 的岸线），上方是**真实月相**的圆盘（月面贴图 + 三层嵌套相位阴影，相位由天文算法按系统

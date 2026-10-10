@@ -11,7 +11,7 @@ import kotlin.math.floor
 
 /**
  * 门禁 **G10 / G9 / G6 / G7 / G8**：[MoonDiskBake] 的 UV 反解、色彩曲线单位与烘焙质量
- * （规格 `docs/moonlit-visualizer-plan.md` §5.1 / §5.2+ / §十 10.2）。
+ * （规格 `docs/archive/moonlit-visualizer-plan.md` §5.1 / §5.2+ / §十 10.2）。
  *
  * 纯 JVM：[MoonDiskBake] 不碰 `android.*`，源图用 **ImageIO** 直接从
  * `app/src/main/assets/globe/moon.jpg` 解成 `0xAARRGGBB` 整型数组（与

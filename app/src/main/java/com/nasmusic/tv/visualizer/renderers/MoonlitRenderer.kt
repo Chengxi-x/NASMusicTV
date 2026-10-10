@@ -29,7 +29,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * E44 [VisualizerTheme.MOONLIT]「明月」（`docs/moonlit-visualizer-plan.md`）。
+ * E44 [VisualizerTheme.MOONLIT]「明月」（`docs/archive/moonlit-visualizer-plan.md`）。
  *
  * ## 本文件的阶段边界（⚠️ 读之前先看这段）
  * 已落地：注册链 + §3.2 层 1（夜空与海体两块**不相交**矩形，色阶由 [MoonSeascape] 这把尺给出）

@@ -9,7 +9,7 @@ import java.util.TimeZone
 import kotlin.math.abs
 
 /**
- * E44「明月」**T5 相位阴影**的门禁（`docs/moonlit-visualizer-plan.md` §4.2 末 + §4.4，
+ * E44「明月」**T5 相位阴影**的门禁（`docs/archive/moonlit-visualizer-plan.md` §4.2 末 + §4.4，
  * 含 §十一 T5 明写的三条产出断言）。
  *
  * ## 为什么这套断言走解析式而不是截图

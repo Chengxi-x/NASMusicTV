@@ -14387,7 +14387,7 @@ input device，不会同时声明 `SOURCE_TOUCHSCREEN` ⇒ 该排除**不会**�
 
 **背景**：枚举 `MOONLIT(R.string.visualizer_theme_moonlit, "明月", Tier.ADV, "44", needsParticleBudget = false)` ⇒ **三档全开**（`"44"` 是空闲编号，E41 旧 2D 版删除后留空位不回收）。四条需求：① 月亮用**真实月球图**（月相那一半原写"按当天农历日期"，**2026-10-10 真机裁决改为固定满月**，见本节「八」）；② 云在动，遮月时月盘/光柱/粼光**同帧**变暗；③ 海面有月光；④ 随音乐律动但**克制**。效果数量 21 → **22**（`FxCoverageScanTest` 类头计数 22，`covered` 14 → 15）。
 
-方案唯一依据是 `docs/moonlit-visualizer-plan.md` **v2.0**（原型 `docs/moonlit-preview.html` 经**七轮**判读定稿）。⛔ 该文档 §十五 逐条记了 **35 条实现期偏离 D1–D35**，本节不重复流水账，只沉淀有迁移价值的八件。
+方案唯一依据是 `docs/archive/moonlit-visualizer-plan.md` **v2.0**（原型 `docs/archive/moonlit-preview.html` 经**七轮**判读定稿）。⛔ 该文档 §十五 逐条记了 **35 条实现期偏离 D1–D35**，本节不重复流水账，只沉淀有迁移价值的八件。
 
 #### 一、架构：八个文件，「数学」与「绘制」分家（承 §10.209 E43 的先例）
 
@@ -14504,6 +14504,6 @@ G2 的 §4.6 十五日期向量表与 G12 的「暗区/整盘 = `(R+v)/(2R)`」�
 ⛔ 全部未推送、未打 tag。
 
 **遗留（发现但未修，不在本轮范围）**：① U1 只剩 **LOW / MED 两档**与"连续 60 s 无下滑"那半句（HIGH 档同日已补，见本节「八」），**U2 首帧延迟**与 **U3 native 堆增量**仍未采（若要用它们做降档决策必须按 §十三 口径重测）；
-② `docs/moonlit-visualizer-plan.md` 仍在 `docs/` 根 —— T10 已过，按文档生命周期可归档，但它是 E44 最完整的交付规格，暂留；
+② ~~该方案文档「仍在 `docs/` 根、暂留」~~ —— **2026-10-10 经所有者指示已归档**：`moonlit-visualizer-plan.md` 与原型 `moonlit-preview.html` 一并移入 `docs/archive/`（T10/T11 已闭合 ⇒ 生命周期判据满足，记入 `docs/archive/README.md` 第六轮）。⚠️ 归档**不改职责**：原型仍是 G3 云场基线的**唯一再生源**，`moonlit_cloud_golden.js` 已按新路径取页面并**复跑逐位相同**（`MoonlitCloudBaseline.kt` 一字未变），E44 交付规格仍以该文档为准，只是不再作为在办文档维护；
 ③ E44 的 4 个验证脚本只在 `moonlit_cloud_golden.js` 上有 CI 化的再生契约，另三个（`moonlit_visual_driver.mjs` / `moonlit_ref_match_check.py` / `moonlit_water_zoom.py`）是判读工具，无门禁绑定；
 ④ 解除 D35 时 §6.5 与 V1/V2/V3/V5 四条判读要重新跑（它们在固定满月下不可判读）。

@@ -26,7 +26,7 @@ from PIL import Image
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 REF = os.path.join(ROOT, 'output', 'moonlit_frames', 'ref_input_gold.png')
-HTML = os.path.join(ROOT, 'docs', 'moonlit-preview.html')
+HTML = os.path.join(ROOT, 'docs', 'archive', 'moonlit-preview.html')
 # 参考图实测（PIL，2026-10-08）：月盘 >205 亮区包围盒 x 1147..2000 / y 227..1065，画面 2500x1875
 REF_GEOM = dict(cxk=0.6294, cyk=0.3445, rk=0.2275, hzk=0.55)   # rk 占 H（参考图近 4:3，minDim=H）
 

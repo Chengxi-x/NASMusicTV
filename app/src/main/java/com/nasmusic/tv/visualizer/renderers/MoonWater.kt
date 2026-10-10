@@ -17,7 +17,7 @@ import kotlin.math.sin
  * 本文件只有数据与函数，[MoonlitRenderer] 只负责把这里算出的几何画出来。
  *
  * ## 与原型的关系（逐字对齐的对象）
- * `docs/moonlit-preview.html:1153-1160`（地平带）、`:1183-1207`（光柱）、
+ * `docs/archive/moonlit-preview.html:1153-1160`（地平带）、`:1183-1207`（光柱）、
  * `:1221-1273`（粼光双层循环）、`:354-379`（`hash1` / `noise1` / `fbm1`）、
  * `:926-933`（`hotOf` / `whiteOf` 色尺，落在 [MoonDiskBake]）。
  * ⛔ [hash1] 的三个魔数与移位次序**必须逐位一致** —— 换一版哈希 = 换一整场粼光的站位，

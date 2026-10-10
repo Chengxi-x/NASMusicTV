@@ -223,6 +223,9 @@
 > 的现役效果名册，随效果增删持续维护 ⇒ 属活文档性质，但不在下表的「约定类活文档」里）。
 > ⇒ ⛔ 原文「**在办方案 2 篇**（`visualizer-texture-upgrade-plan.md` 仍在办，故**不满足**归档判据）」
 > 那句**已作废**：该方案已于 2026-10-08 经所有者裁决整篇归档，遗留四项见**第五轮**。
+> ⚠️ **2026-10-10 第六轮之后**：`docs/` 根 = **3 篇 Markdown / 0 份原型 html**（`moonlit-visualizer-plan.md`
+> 与 `moonlit-preview.html` 移入本目录），下表**未变** —— `moonlit-*` 两份从来不是活文档。
+> `docs/slow-roads-verify/` 是验证素材目录，不计入文档数。
 > `docs/snapshot/`（16 张截图）不是文档，不计入。
 > `docs/*.miora` / `docs/*_assets/`（gitignored 的 WorkBuddy 设计画布素材）已于
 > 2026-09-20 经所有者确认删除（对应功能早已上线，素材无引用）。
@@ -292,6 +295,8 @@
 | `permission-and-signing-plan.md` | 权限与签名统一方案 v1.5。**已 shipped**（S0–S8 全批次实施，v2.38.3；`ReleaseSigningGateTest` / `LocalMusicGateTest` 三道门禁 + CI fail-fast 全部落地）。**归档时待裁决项为 0**（§状态自述「可开工，无待裁决项」，`technical-overview.md` §10.214 已回填实施结果）。⚠️ **它的引用密度是全 `docs/` 最高的**：`AGENTS.md`、`.github/workflows/build.yml`、`app/build.gradle.kts`、3 个门禁测试的**断言失败消息**都在引它 ⇒ 全部已改写为 `docs/archive/` 路径（12 处里占 6 处） |
 | `e41-tv-blackscreen-fix-plan.md` | E41「世界」电视端黑屏的**诊断与裁决记录**。**❌ 修复已永久放弃**（所有者 2026-10-07 裁决：方案 A / B 均否决，「改回原来很好效果的代码……就是黑屏吧」）。定位到的真根因是**宿主**而非渲染层：该机 WebView 被 Compose `AndroidView` 承载时**只画首帧、永不更新**（2D canvas 同样不上屏），故任何页面内改动都救不了。**最终落地**：`WORLD` 由 `Tier.ADV` 提到 `Tier.ULTRA`，仅最高画质档提供（v2.38.4）。**归档时仍带未决项**：§八 的**真机验收 U1/U2** 待所有者执行——① 电视上确认 MEDIUM/LOW 档不再出现 E41；② 手机上确认观感与回退前一致。全部已验证结论已落 `technical-overview.md` §10.215 |
 | `solar-system-upgrade-plan.md` | E29 太阳系程序化质感增强**功能清单 + 当时的编译错误清单**。**已 shipped**（2026-10-08：功能 ①–⑥ 全部落地，22 处错误清零，`OrbitalProceduralEnhanceTest` 11 例门禁；版本号按所有者指示**未提升**）。⚠️ **归档时必须提醒的两点**：① 本文第二节那张错误表**已过期**，头部与二级标题均已标注「历史快照」，⛔ 不要再照它排查；② 实现**偏离原规格 6 处**（预烘 16 档角度→连续角度、原色夜色→压暗、sweepGradient→径向渐变、1.04→1.18、smoothstep 边缘柔化→半径调制、楔形缝→整圈同心内圈），理由逐条记在 `technical-overview.md` §10.219 的表里 —— 原规格里 ①②④⑤ 四项**照写就会画错**。**归档时仍带未决项**：§四 的每档新增提交（LOW +2 / MED +18 / HIGH +38）是**静态估算**，真机帧率待所有者上机（§九 R18）|
+| `moonlit-visualizer-plan.md` | E44「明月」开发方案 **v2.0**。**已 shipped**（T0–T11 全部闭合：`MoonlitRenderer.kt` + `MoonPhase` / `MoonClouds` / `MoonWater` / `MoonDiskBake` / `MoonSeascape` / `MoonAudio` / `MoonOpBudget`，v2.38.6 / versionCode 175；**2026-10-10 所有者在创维 API 22 真机验收通过**，裁决「其他没有问题，这个版本收尾完结」；月相按裁决改**强制满月** = 偏差 **D35**，§十六 Q1–Q9 全部关闭）。**⚠️ 归档时仍带未决项（所有者知悉，非阻塞）**：① §十三 的 **U2 首帧延迟**与 **U3 native 堆增量**从未采集，**U1 只有 HIGH 档**（23.2~29.5 fps / 19 点，LOW / MED 未测）⇒ 若要用它们做降档决策必须按 §十三 抬头三条口径重测，⛔ 不许手抄；② **解除 D35**（恢复真实月相）时 §6.5 与 V1/V2/V3/V5 四条判读必须重跑（固定满月下不可判读）；③ 4 个验证脚本里只有 `moonlit_cloud_golden.js` 有 CI 化的再生契约。接替记录：全部已验证结论已落 `technical-overview.md` §10.224；⚠️ 本文**仍是 E44 最完整的交付规格**，归档只意味着「不再作为在办文档维护」 |
+| `moonlit-preview.html` | E44 明月的**浏览器原型**（1726 行单文件，所有者 2026-10-08 宣布定稿）。⭐ **与 E43 `seaside-preview.html` 不同：它仍是活的再生源，不是纯历史快照** —— `docs/archive/verification/scripts/moonlit_cloud_golden.js` 在 `vm` 沙箱里从它**原文抽出**云场函数（播种 / `layoutPuffs` / `stepClouds` / `occlusion`）生成 G3 基线 `MoonlitCloudBaseline.kt`，因此 ⛔ **不得删除、不得手工改其云场数学**（改一段必须重跑生成器并同一提交带走再生结果）。移动后已复跑：基线**逐位相同**。⚠️ 源码侧 **100+ 处 `moonlit-preview.html:NNNN` 裸文件名 + 行号引用**（`MoonClouds` / `MoonWater` / `MoonDiskBake` / `MoonPhase` / `MoonSeascape` / `MoonlitRenderer` + 对应测试）—— 归档是纯移动、内容一字未动 ⇒ 行号**仍然为真**；但按 D35 后的现状读法与 E43 一致：**真机实现是唯一权威**，不要再拿原型去「对齐」真机。⚠️ 已知定稿盲区（文档内已记录）：七轮判读**全部在 `phaseLock:'full'` 下调参** ⇒ 非满月观感从未被判读，这一条正是 D35 的可查背景 |
 
 > **2026-10-05 追加归档 2 份**（所有者裁决）：`seaside-visualizer-plan.md`、`photo-spectrum-effect-plan.md` → `docs/archive/`。同步改写引用 **5 处 / 4 文件**（`SeasideWaves.kt`、`PhotoWallSettingsSection.kt`、`docs/archive/README.md`、`docs/archive/starry-sky-visualizer-plan.md`）。⚠️ 其中 **1 处是真正会跑坏的脚本**：`verification/scripts/seaside_doc_consistency_check.py` 的硬编码绝对路径用的是**反斜杠**，因此 `docs/` 正斜杠扫描扫不到——归档时必须手动扫**裸文件名**。⇒ 此论在本轮已被实证两次。
 
@@ -323,8 +328,23 @@
 > —— 那两个文件当时正被蟹迹 lane 占用；它们是**裸文件名 + 行号**（非路径），归档不改内容 ⇒ 引用**仍然为真**，
 > 但请按上面那行的告诫读：**原型已冻结，不再是真机基准**。
 
+> **2026-10-10 追加归档 2 份（第六轮，所有者指示「这两个文件归档吧」）**：`moonlit-visualizer-plan.md`、
+> `moonlit-preview.html` → `docs/archive/`（E44「明月」，T0–T11 闭合 + 同日真机验收通过 ⇒ 满足「已 shipped」）。
+> 移动方式 = `git mv`（两份均已入库，`f697c93`），内容一字未删。
+> 引用改写 **33 处 / 21 文件**：`AGENTS.md`（云场基线那条）、`technical-overview.md`（§10.224 依据行 + 遗留 ② 改为「已归档」）、
+> `visualizer-effects-list.md`、**13 个 Kotlin 文件的 KDoc**（7 主源 `AppSettings` / `MoonClouds` / `MoonOpBudget` /
+> `MoonPhase` / `MoonWater` / `MoonlitRenderer` + 6 测试）、两份文档互引 9 + 1 处、**3 个脚本的路径**。
+> ⚠️ **上一轮 seaside 的坑本轮按规矩单独排查过**：三个脚本都**按路径分段**定位原型
+> （`moonlit_cloud_golden.js:17` `path.join(root,'docs',…)`、`moonlit_ref_match_check.py:29` `os.path.join(ROOT,'docs',…)`、
+> `moonlit_visual_driver.mjs:30` `resolve(ROOT,'docs',…)`），`docs/` 前缀扫描**一律扫不到** ⇒ 三处已改为 `('docs','archive',…)`。
+> ✅ **验收是量出来的不是推断**：改完复跑 `node docs/archive/verification/scripts/moonlit_cloud_golden.js`，
+> 再生的 `MoonlitCloudBaseline.kt` 与入库版**逐位相同**（97 行；参考帧 `occl = 0.20890827081355456`、`tSec = 12.499999999999972`、
+> `occl` 分布五项不变）⇒ 「原型仍是 G3 基线唯一再生源」这条契约在新路径下成立。
+> ⚠️ `logs_temp/` 下的 `check_tables.py` / `doc_table_check.py` / `moonlit-preview.bak.html` 仍指旧路径 ——
+> gitignored 一次性脚本，**未改**。
+
 > 上表只计「三轮归档」。另有 **2 份审查报告**自 `logs_temp/` 迁入 `docs/archive/`
-> （见上文「附：验证证据迁移」），故 `docs/archive/` 现共 **60 篇文档 + 本索引**。
+> （见上文「附：验证证据迁移」），故 `docs/archive/` 现共 **62 篇文档 + 本索引**（含第六轮 2 份）。
 
 ## 回滚
 

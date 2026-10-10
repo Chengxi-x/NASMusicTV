@@ -10,7 +10,7 @@ import kotlin.math.tan
 /**
  * E44「明月」的真实月相历算：由 **UTC 毫秒时刻**算出照度、距角、亮 limb 位置角与天平动。
  *
- * 规格见 `docs/moonlit-visualizer-plan.md` §四。⛔ 全部纯函数、`Double` 内部、零对象分配
+ * 规格见 `docs/archive/moonlit-visualizer-plan.md` §四。⛔ 全部纯函数、`Double` 内部、零对象分配
  * （[of] 例外，它按 §4.5 每 60 s 才调一次）、不读时区/`Calendar`/`ctx`、不用 `java.time`
  * （minSdk 22 不可用）—— 所以能脱离渲染单测（门禁 G2 = `MoonPhaseTest`）。
  *

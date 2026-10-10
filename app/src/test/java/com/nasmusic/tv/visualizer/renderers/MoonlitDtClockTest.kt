@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 门禁 **G5 `MoonlitDtClockTest`**（`docs/moonlit-visualizer-plan.md` §10.2）——
+ * 门禁 **G5 `MoonlitDtClockTest`**（`docs/archive/moonlit-visualizer-plan.md` §10.2）——
  * E44「明月」的**时基红线**，正则扫描真实源码（仿 `RendererBaseContractTest:167` 的做法）。
  *
  * ## 四条判据

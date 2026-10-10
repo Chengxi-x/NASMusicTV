@@ -90,7 +90,7 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" \
   ⭐ **Kotlin 端的单测可以直接照抄 harness 的断言口径**（它测的都是纯函数：位置映射、噪声连续性、cull 阈值、每帧位移上限），不需要图形设备。
   ⚠️ 这类 harness 的探针**必须挂在目标变量赋值之后**：挂错作用域会读到上一帧的残留值，量出「间距恒等于 0」这类假结论（真实发生过）。
 - **E44「明月」云场基线：数字只能由脚本再生，⛔ 不许手抄**（`docs/archive/verification/scripts/moonlit_cloud_golden.js` → `app/src/test/…/MoonlitCloudBaseline.kt`）。
-  该脚本在 `vm` 沙箱里跑 `docs/moonlit-preview.html` 的**原文**（播种 / `layoutPuffs` / `stepClouds` / `occlusion`），再生成 G3 逐位对账用的基线与 `occl` **分布**五项。
+  该脚本在 `vm` 沙箱里跑 `docs/archive/moonlit-preview.html` 的**原文**（播种 / `layoutPuffs` / `stepClouds` / `occlusion`），再生成 G3 逐位对账用的基线与 `occl` **分布**五项。
   ⚠️ 改云场数学（rng 调用次序、包络式、`OCCL_PAD`）必须重跑它并一起提交再生结果；把数**抄进 Kotlin 注释或测试**就是偏差 **D24** 的重演 ——
   那次的成因是一个 `const minDim` 遮蔽了沙箱全局，缕尺寸按 0 算，得到的假峰值（`occl ≤ 0.33`）在文档里活了整个定稿流程。
   脚本自带两条防退化自检（`minDim` 没进上下文全局就抛、包络半轴全 0 就抛），⚠️ 探针若跨作用域读变量，一律**赋在全局**再读。

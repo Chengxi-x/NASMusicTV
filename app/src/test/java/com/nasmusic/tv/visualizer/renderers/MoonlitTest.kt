@@ -8,7 +8,7 @@ import java.io.File
 import kotlin.math.abs
 
 /**
- * 门禁 **G3 `MoonlitTest`**（`docs/moonlit-visualizer-plan.md` §10.2）—— E44「明月」§六
+ * 门禁 **G3 `MoonlitTest`**（`docs/archive/moonlit-visualizer-plan.md` §10.2）—— E44「明月」§六
  * 云场的**对账 + 形状 + 接线**判据。
  *
  * ## 四组判据在防什么

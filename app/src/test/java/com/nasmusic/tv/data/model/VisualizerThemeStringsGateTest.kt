@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 门禁 **G1**（`docs/moonlit-visualizer-plan.md` §10.1）：每个效果的 `displayNameRes`
+ * 门禁 **G1**（`docs/archive/moonlit-visualizer-plan.md` §10.1）：每个效果的 `displayNameRes`
  * 必须**同时**存在于 `values/strings.xml` 与 `values-en/strings.xml`。
  *
  * ## 为什么要有这条门
