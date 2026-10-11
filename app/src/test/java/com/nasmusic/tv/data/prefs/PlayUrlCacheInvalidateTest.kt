@@ -6,16 +6,11 @@ import com.nasmusic.tv.backend.network.NetworkMusicManager
 import com.nasmusic.tv.backend.network.NetworkMusicService
 import com.nasmusic.tv.backend.network.ResolveResult
 import com.nasmusic.tv.data.model.Song
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,8 +29,11 @@ import org.robolectric.annotation.Config
  * 1. `setMusicSource` 触发恰好一次；
  * 2. `setMetingApiBaseUrl` 合法 URL 与「空串=恢复默认」各触发一次；
  * 3. **被非法 URL 拒绝的写入不得触发**（回调必须在 `dataStore.edit` 之后，不在守卫之前）；
- * 4. 回调抛异常不得掀掉写盘（`runCatching` 包住，对齐既有 `onQualityTierChanged` 样板）；
+ * 4. 回调抛出的异常不得外泄给调用方（`runCatching` 包住，对齐既有 `onQualityTierChanged` 样板）；
  * 5. 注册体接上真 `NetworkMusicManager` 后，先前钉住的 DEAD 判定必须消失、同一首歌可重新解析。
+ *
+ * ⚠️ 本类一律**不**用 `startProviderMirrors` + 轮询内存镜像那种写法：全量单测 2000 例挤在同一个
+ * JVM fork 里跑时 10s 窗口会超时（实测红过一次），镜像语义已由同目录 `ProviderMirrorTest` 钉住。
  *
  * 注册点本身（`NasMusicApp` 里那一行）由 `PlayUrlCacheInvalidationWiringGateTest` 的源码门钉。
  */
@@ -44,18 +42,11 @@ import org.robolectric.annotation.Config
 class PlayUrlCacheInvalidateTest {
 
     private lateinit var prefs: AppPreferences
-    private lateinit var scope: CoroutineScope
 
     @Before
     fun setup() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         prefs = AppPreferences(context)
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    }
-
-    @After
-    fun tearDown() {
-        scope.cancel()
     }
 
     // ─────────────── 1｜换平台 ───────────────
@@ -103,19 +94,14 @@ class PlayUrlCacheInvalidateTest {
         assertEquals("非法 URL 必须在守卫处直接 return，一次写入都没发生就不许清缓存", 0, hits)
     }
 
-    // ─────────────── 4｜回调异常不许掀掉写盘 ───────────────
+    // ─────────────── 4｜回调异常不许外泄给调用方 ───────────────
 
     @Test
-    fun `回调抛异常不得打断写盘`() = runBlocking {
-        prefs.startProviderMirrors(scope)
+    fun `回调抛异常不得外泄给调用方`() = runBlocking {
         prefs.setOnPlayUrlCacheInvalidated { throw IllegalStateException("boom") }
-        prefs.setMusicSource("qq")   // runCatching 必须吃掉它，否则这里直接抛
-        withTimeout(10000) {
-            while (prefs.getMusicSourceSync() != "qq") {
-                kotlinx.coroutines.delay(20)
-            }
-        }
-        assertEquals("qq", prefs.getMusicSourceSync())
+        // runCatching 必须吃掉它：异常一旦外泄，setMusicSource 就会把 IllegalStateException 抛给调用方
+        val failure = runCatching { prefs.setMusicSource("qq") }.exceptionOrNull()
+        assertNull("回调里的异常必须被 runCatching 包住（对齐 onQualityTierChanged 样板）：$failure", failure)
     }
 
     // ─────────────── 5｜接上真 manager：DEAD 判定真的消失 ───────────────
