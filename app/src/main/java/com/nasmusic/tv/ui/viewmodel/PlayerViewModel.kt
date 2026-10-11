@@ -418,7 +418,8 @@ class PlayerViewModel(
                 // 强制走完整降级链重新解析（链接过期重获的核心修复）。
                 var playUrl = resolveStreamUrl(song, forceRefresh = true)
                 // 初次解析失败（网络瞬时抖动/端点超时）：延迟 1.5s 自动重试一次
-                if (playUrl.isNullOrBlank()) {
+                // DEAD 是判据确认的结论，重试只会把全部端点×档位再扫一遍（终审 B4）
+                if (playUrl.isNullOrBlank() && !nasMusicApp.networkMusicManager.isProbedDead(song)) {
                     AppLog.w("PlayerViewModel", "resolveAndPlayByIndex: initial resolve failed for ${song.title}, retrying in 1.5s")
                     delay(1500)
                     playUrl = resolveStreamUrl(song, forceRefresh = true)
@@ -531,7 +532,8 @@ class PlayerViewModel(
         if (generation != resolveGeneration) return null
         val result = nasMusicApp.networkMusicManager.resolvePlayUrlWithCrossSourceFallback(
             song = song,
-            forceRefresh = true
+            // 已知判定（正面或负面）都该被尊重，未知才重探——原曲已被判 DEAD 时再刷一遍等于全端点重扫（终审 B4）
+            forceRefresh = false
         ) ?: return null
         if (generation != resolveGeneration) return null
         return result.replacement

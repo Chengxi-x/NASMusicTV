@@ -16,6 +16,10 @@ import org.robolectric.annotation.Config
  *
  * 三件事必须成立：DEAD 在 TTL 内不重探、**forceRefresh 与切档位必须重探**、
  * 普通失败（probedDead=false）⛔ 不进缓存。
+ *
+ * 末段另钉 `isProbedDead`（终审 B4 给 `PlayerViewModel` 的只读判据）：
+ * 它必须与写入侧共用 `playUrlKey(song, effectiveQuality(song))` 同一条 key 路径，
+ * 且非网络歌一律 false。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -101,5 +105,50 @@ class NetworkDeadProbeCacheTest {
         val second = manager.resolvePlayUrlDetailed(song, 320)
         assertEquals(listOf(320), svc.calls)
         assertEquals("https://cdn/320.mp3", second.url)
+    }
+
+    // ─────────────── isProbedDead（终审 B4：VM 侧跳过重试的只读判据） ───────────────
+
+    @Test
+    fun `isProbedDead 钉住后为 true，clearPlayUrlCache 后为 false`() = runBlocking {
+        assertFalse("没探测过不得判 DEAD（Q4：UNKNOWN ≠ DEAD）", manager.isProbedDead(song))
+        manager.resolvePlayUrlDetailed(song, 320)
+        assertTrue("判据确认的假 302 必须查得到", manager.isProbedDead(song))
+        manager.clearPlayUrlCache()
+        assertFalse("清缓存后判定必须消失", manager.isProbedDead(song))
+    }
+
+    @Test
+    fun `isProbedDead 必须与 resolvePlayUrlDetailed 共用同一 key 路径（含有效档位）`() = runBlocking {
+        // 有效档位是覆盖档 999，而 320 档被钉住 ⇒ key 拼错（手拼固定档/漏档位）时本例会红
+        val mgr = NetworkMusicManager(
+            services = mapOf("meting" to svc),
+            defaultSourceProvider = { "meting" },
+            qualityTierProvider = { 320 },
+            songQualityOverrideProvider = { _, _ -> 999 }
+        )
+        mgr.resolvePlayUrlDetailed(song, 320)
+        assertFalse("只钉了 320 档，有效档 999 不得跟着判 DEAD", mgr.isProbedDead(song))
+        mgr.resolvePlayUrlDetailed(song, 999)
+        assertTrue("有效档被钉住后必须判 DEAD", mgr.isProbedDead(song))
+    }
+
+    @Test
+    fun `普通失败不进 isProbedDead（偶发故障不许跳过重试）`() = runBlocking {
+        svc.verdict = ResolveResult.failure(320, probedDead = false)
+        manager.resolvePlayUrlDetailed(song, 320)
+        assertFalse(manager.isProbedDead(song))
+    }
+
+    @Test
+    fun `非网络歌一律 false——即使 networkSource 与 networkId 与被钉曲目相同`() = runBlocking {
+        manager.resolvePlayUrlDetailed(song, 320)
+        assertTrue("前置条件：原网络曲已被钉住", manager.isProbedDead(song))
+        // imported_ stub / NAS 曲的镜像字段：isNetworkSong=false 时绝不许读到负面判定
+        val nonNetwork = Song(
+            id = "nas-1", title = "晴天", artist = "周杰伦",
+            isNetworkSong = false, networkSource = "meting", networkId = "1001"
+        )
+        assertFalse("非网络歌必须短路为 false（保持改造前的重试行为）", manager.isProbedDead(nonNetwork))
     }
 }

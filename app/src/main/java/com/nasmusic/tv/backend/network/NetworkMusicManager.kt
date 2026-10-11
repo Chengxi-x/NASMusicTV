@@ -110,6 +110,16 @@ class NetworkMusicManager(
         if (size > 0 || deadSize > 0) AppLog.d(TAG, "clearPlayUrlCache: cleared $size url + $deadSize dead entries")
     }
 
+    /**
+     * 该曲是否被负面探测缓存钉住（判据确认的假 302）。只读，⛔ 不写、不清。
+     *
+     * key 计算必须与 [resolvePlayUrlDetailed] 用同一条 `playUrlKey(song, effectiveQuality(song))` 路径，
+     * 手拼字符串会让调用方永远读不到判定（静默失效）。
+     * 非网络歌曲一律 false——`imported_` stub 补全前 isNetworkSong 为 false，不得因此跳过重试。
+     */
+    fun isProbedDead(song: Song): Boolean =
+        song.isNetworkSong && deadProbeCache.containsKey(playUrlKey(song, effectiveQuality(song)))
+
     /** 获取当前默认源 ID */
     val defaultSource: String
         get() = defaultSourceProvider()
