@@ -496,4 +496,27 @@ class NetworkMusicManager(
         AppLog.w(TAG, "cross-source: 所有源均无可播替代曲")
         return null
     }
+
+    /**
+     * 同源重搜替换（艺人全量方案 §3.8 第 2 步）。
+     *
+     * 与 [resolvePlayUrlWithCrossSourceFallback] 的区别是方向：这里**只在原注册源内**取候选
+     * （`services[networkSource]`，不走 [orderedServices] 的 fallback），语义是
+     * "同一首歌的另一个版本"，而不是"另一位演唱者的同名歌"。
+     *
+     * 请求量：1 次搜索 + ≤3 次解析（§6 验收 16 ③），解析全部 `forceRefresh=true`
+     * ——Task 5 的负面缓存会把原曲钉成 DEAD，候选若不强制刷新就可能整批复用旧判定。
+     *
+     * @return 替代曲与已解析直链；无可播替代 / 未注册源返回 null
+     */
+    suspend fun resolveSameSourceReplacement(song: Song): CandidatePicker.Replacement? {
+        if (!song.isNetworkSong) return null
+        val src = song.networkSource ?: return null
+        val svc = services[src] ?: return null
+        val quality = effectiveQuality(song)
+        return CandidatePicker(
+            search = { query -> svc.search(query) },
+            resolve = { candidate -> resolvePlayUrlDetailed(candidate, quality, forceRefresh = true) }
+        ).pick(title = song.title, artist = song.artist, excludeId = song.id)
+    }
 }
