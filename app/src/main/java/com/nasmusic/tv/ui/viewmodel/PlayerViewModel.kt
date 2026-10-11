@@ -473,7 +473,7 @@ class PlayerViewModel(
         if (!song.isNetworkSong) return false
         val layers = ReplaceChain.plan(song.id, lastReplacedSongId)
         if (layers.isEmpty()) {
-            AppLog.w("PlayerViewModel", "tryReplaceByReSearch: ${song.title} 已是替换产物且仍失败，放弃替换")
+            AppLog.e("PlayerViewModel", "tryReplaceByReSearch: ${song.title} 已是替换产物且仍失败，放弃替换")
             return false
         }
         val hit = ReplaceChain.run(layers) { layer ->
@@ -485,7 +485,7 @@ class PlayerViewModel(
             }
         }
         if (hit == null) {
-            AppLog.w("PlayerViewModel", "tryReplaceByReSearch: ${song.title} 两层替换均无可用替代")
+            AppLog.e("PlayerViewModel", "tryReplaceByReSearch: ${song.title} 两层替换均无可用替代")
             return false
         }
         val (usedLayer, replacement) = hit
