@@ -200,7 +200,11 @@ class SearchViewModel(
                 }
                 // 未展开时**直接用聚合器的原序**（它已按来源优先级排好）：
                 // mergeWithExpansion 会把非网络段整体提到前面，那是"有展开才有必要"的重排。
-                val merged = if (skipExpansion) songs
+                // F9：判据必须是 `isActive()`（展开**真的产出了艺人段**）而不是 `skipExpansion`——
+                // 网络源亮着但没命中艺人时 skipExpansion 仍是 false，那条重排会把
+                // 百度/Jamendo/本地行整体提到网络行之前，覆盖聚合器的来源优先级（NAS=1、网络=2）。
+                // I2（命中艺人但首页零行 → reset 后交回原段）也靠这同一个条件保住。
+                val merged = if (skipExpansion || !artistExpansion.isActive()) songs
                     else NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
                 // 终审 B2（同一手法）：两次搜索重叠 ⇒ 只有最后一次能发布，
                 // ⛔ 先发的结果不得覆盖后发的（否则"改词后看到的是上一个词的行"）

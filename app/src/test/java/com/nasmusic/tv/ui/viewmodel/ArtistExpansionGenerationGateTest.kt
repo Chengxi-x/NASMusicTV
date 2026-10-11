@@ -286,7 +286,56 @@ class ArtistExpansionGenerationGateTest {
         assertTrue(titles().all { it.startsWith("tjolin") || it == "seed" })
     }
 
-    // ───────────────────────── F9（下一条提交）─────────────────────────
+    // ───────────────────────── F9 ─────────────────────────
+
+    /** 一条**非 Meting 家族**的网络行（`splitMetingSegment` 会把它归入 otherPart） */
+    private fun baiduSong(netId: String, title: String, artist: String) = Song(
+        id = "baidu_$netId",
+        title = title,
+        artist = artist,
+        isNetworkSong = true,
+        networkSource = "baidu",
+        networkId = netId
+    )
+
+    /**
+     * 终审 I-1：网络源亮着但**没命中艺人**时，⛔ 不得把非网络段整体提到网络行前面。
+     * `skipExpansion` 在这种场景仍是 false（有 Meting 行），旧代码因此照样走 `mergeWithExpansion`
+     * ⇒ 百度/本地行从聚合器原序的「网络之后」被搬到「网络之前」，覆盖来源优先级（NAS=1、网络=2）。
+     */
+    @Test
+    fun `F9 未命中艺人时保持聚合器原序——网络行不被整体沉底`() = runBlocking {
+        // 原序：[Meting 行, 百度行]（artistId=null ⇒ 不命中艺人，findArtist 也回 null）
+        service.rowsByKeyword["周杰伦"] = listOf(
+            metingSong("net-1", "tmting-1", "周杰伦", null),
+            baiduSong("bd-1", "tbaidu-1", "周杰伦")
+        )
+        vm = newVm()
+
+        vm.searchSongsOnServer("周杰伦")
+        awaitUntil("两行都已发布") { results().size == 2 }
+
+        assertEquals(listOf("tmting-1", "tbaidu-1"), titles())
+        assertTrue("未命中艺人时 expansion 必须是不活跃态", vm.artistPaging.value.songs.isEmpty())
+    }
+
+    /** 对偶用例：真的命中艺人时段替换语义不动（m2 裁定），非网络段仍在艺人段之前 */
+    @Test
+    fun `F9 命中艺人时仍走段替换——非网络段前置语义不回归`() = runBlocking {
+        service.rowsByKeyword["周杰伦"] = listOf(
+            metingSong("net-1", "tmting-1", "周杰伦", "6452"),
+            baiduSong("bd-1", "tbaidu-1", "周杰伦")
+        )
+        service.pagesByArtist["6452"] = mutableMapOf(0 to artistPage("jay", "周杰伦", "6452"))
+        vm = newVm()
+
+        vm.searchSongsOnServer("周杰伦")
+        awaitUntil("艺人段 100 行 + 百度行已发布") { results().size == 101 }
+
+        assertEquals("tbaidu-1", titles().first())
+        assertTrue(titles().drop(1).all { it.startsWith("tjay") })
+        assertEquals(100, vm.artistPaging.value.songs.size)
+    }
 
     private companion object {
         /** 红线 2：这类歌曲的 networkSource 恒为字面 meting（NetworkSongId 的注册源 key） */
