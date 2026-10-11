@@ -9,6 +9,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -206,4 +207,26 @@ class NeteasePrioritySearchTest {
         id = NetworkSongId.forNetworkSong("plain", "1"), title = "t", artist = "a",
         isNetworkSong = true, networkSource = "plain", networkId = "1"
     )
+
+    // ── F8（终审 M-B4）：searchCoverUrl 的空关键词短路 ─────────────────────
+    // keyword.isBlank() 的检查原本只留在 search()，searchCoverUrl 直接喂 searchViaEndpoints
+    // ⇒ 空标题的 NAS 曲会打满 3 个 name= 为空的公网端点请求。
+
+    @Test
+    fun `F8 标题与歌手都为空必须短路返回 null 且一个端点请求都不发`() = runBlocking {
+        val cover = service().searchCoverUrl("", "")
+        assertNull("F8：空关键词必须短路返回 null", cover)
+        assertEquals("F8：短路后不得打端点链（mock 计数必须为 0）", 0, endpointCalls.get())
+        assertEquals(0, nativeCalls.get())
+    }
+
+    @Test
+    fun `F8 只有歌手名非空不得被短路挡掉（封面补全能力不回归）`() = runBlocking {
+        val cover = service().searchCoverUrl("", "周杰伦")
+        assertEquals(
+            "短路条件是**两个都空**；title 空但 artist 非空时 keyword 仍非空，必须照常走端点链拿 pic",
+            "http://x/api?server=netease&type=pic&id=2002", cover
+        )
+        assertTrue(endpointCalls.get() >= 1)
+    }
 }

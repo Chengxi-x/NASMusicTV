@@ -409,6 +409,11 @@ class MetingApiService(
      * 的轮询也救不了——其余服务无条件返回 null。
      */
     override suspend fun searchCoverUrl(title: String, artist: String): String? {
+        // F8（终审 M-B4）：空关键词短路。searchViaEndpoints 会打满整条公网端点链，
+        // 空标题 + 空歌手的 NAS 曲不该白烧 3 个 name= 为空的请求。
+        // ⚠️ 条件是**两个都空**才短路：title 空但 artist 非空时 keyword 仍非空，
+        // 那是合法的「只有歌手名」补封面查询，⛔ 不得挡掉。
+        if (title.isBlank() && artist.isBlank()) return null
         val keyword = if (artist.isNotBlank()) "$title $artist" else title
         val items = searchViaEndpoints(keyword)
         return items.firstOrNull()?.coverUrl
