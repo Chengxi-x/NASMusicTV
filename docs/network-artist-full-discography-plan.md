@@ -1,6 +1,6 @@
 # 网络艺人全量歌曲开发方案（突破统一搜索 30 首上限）
 
-- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–5 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`），Task 6–9 待开发。
+- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–6 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`/`7573e1f`），Task 7–9 待开发。
 - **日期**：2026-10-10
 - **目标模块**：`backend/network/netease/`（新增网易免鉴权接口层 `NeteaseOpenApi`）、`backend/network/`（`NetworkSongId`/`NetworkArtistTypes`/`NetworkArtistExpansion`/`PlayabilityProbe`/`CandidatePicker`/`ReplaceChain` 六个新件 + `MetingApiService` 搜索改网易优先与可播判据做实 + `NetworkMusicService` 接口扩展 + `NetworkMusicManager` 路由/负面缓存/同源重搜）、`backend/SearchAggregator.kt`（一行超时）、`ui/viewmodel/`（**不新增 VM**，改 `SearchViewModel` 与 `PlayerViewModel`）、`ui/screens/library/SearchTab.kt` + `ui/components/song/UnifiedSongRow.kt`（显示侧）。逐文件清单见 §11 的 File map
 - **数字来源**：`docs/archive/verification/scripts/netease_artist_probe.py`（可复跑仪表）。本文数字**只允许**抄自以下四轮已存档日志（UTF-8 + LF，随文档入库；`logs_temp/` 里那些是临时件，会被清理）。目录 `docs/archive/verification/netease_artist_probe/`：
@@ -9,7 +9,7 @@
   - **23:43 延迟轮** `--latency 8 --pacing 1.2` → **46 断言 / exit 0 / FAIL 0 / WARN 5** → `probe_v4_latency.log`：§2 L 组 → §10.3 的 5s 预算分配；**并复现了 23:28 轮的字段覆盖结论**（`privilege.st` 0/100、`album.picUrl` 0/100 两轮一致）
   - ⚠️ **唯一例外**：§2 E 组（判据验证）来自同日 21:32 的 `--play 12` 轮、22:13 轮未复跑，引用时注意
   - ⛔ **改任何结论必须重跑脚本再改文档**，不许手抄、不许凭记忆
-- **版本**：**v2.0** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块）。修订说明见 §附录 C
+- **版本**：**v2.1** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块**；v2.1：Task 6 落码后的入口形态（成员函数而非扩展）、两条 plan 级匹配风险与锚点漂移，见 §11 Task 6 末尾 as-built 块）。修订说明见 §附录 C
 - **前置阅读**：`docs/archive/multi-bitrate-playback-download-plan.md`（音质档位与直链缓存语义）、`docs/archive/network-music-upgrade-plan.md`
 
 ---
@@ -3154,6 +3154,22 @@ git add app/src/main/java/com/nasmusic/tv/backend/network/CandidatePicker.kt \
         app/src/test/java/com/nasmusic/tv/backend/network/CandidatePickerTest.kt
 git commit -m "feat(network): 新增同源重搜候选挑选与播放替换入口"
 ```
+
+#### v2.1 as-built（7573e1f，评审 Approved：0 Critical / 0 Important / 4 Minor）
+
+**① 入口是成员函数，不是扩展函数**：落地为 `NetworkMusicManager.resolveSameSourceReplacement(song)`（`NetworkMusicManager.kt:512`），Produces 文本写的是 `suspend fun NetworkMusicManager.…` 扩展形态。**对 Task 7 的调用形状无差别**（`manager.resolveSameSourceReplacement(song)`），但 ⛔ 别去 import 一个不存在的顶层扩展。内部走 `services[networkSource]` **只在原注册源内**取候选（不经 `orderedServices` 的 fallback），解析一律 `forceRefresh = true` —— 否则 Task 5 的负面缓存会把整批候选钉成 DEAD。
+
+**② 请求量与次序**（评审核实）：1 次搜索 + ≤3 次解析，次序是 `排除原曲 → titleMatches → distinctBy(id) → take(3)`，**排除先于截断**（否则第 4 个候选永远没机会，且原曲自己占额度）。解析失败继续下一候选，首个成功即返回。
+
+**③ 测试侧两处必要偏离**：fixture 的 id 由 `NetworkSongId.forNetworkSong("meting", id)` 生成（红线 1 的正解，比文本里手拼 `"ntwk_meting_$id"` 更严），断言里的字面量保持逐字节一致；补了文本漏掉的 `assertFalse` import。
+
+**④ 两条 plan 级风险（评审判定 = Minor，挂分支终审并明示 owner，⛔ 不是"实现者没做完"）**：
+- **前缀方向无护栏**：`titleMatches("晴天娃娃", "晴天")` 为 **true**，即同艺人下一首"标题以原曲开头"的不同歌可被自动替换（`告白`→`告白气球` 是真实可达面）。**不能**在 Task 6 里加"下一个字符必须是空格/括号/破折号"的护栏——本 Task 自己的测试 `CandidatePickerTest.kt:131` 钉死了 `m("晴天MV","晴天")==true`，加护栏即违反规格。若 owner 要收紧，改的是**规格**（§3.8 第 2 步的匹配定义）+ 那条测试，单位是 plan 级。
+- **候选不校验艺人**：query 已带 `title + artist` 收窄，但过滤只看标题。失败模式是"播了同名翻唱"对比"什么都不播"，属既定取舍；日后收紧可用 `ArtistSplitter.containsArtist`（`pick` 已有 artist 形参，不动签名），但必须**双趟**（先严格后宽松），否则合唱/Live 变体会被误杀。
+
+**⑤ 锚点漂移**：`resolvePlayUrlWithCrossSourceFallback` 现起 **:439**（文本 :405）、`if (svc.sourceId == src) continue` **:462**；`PlayerViewModel` 的"层级1"KDoc **:464** / `tryReplaceByReSearch` **:471**（文本 :462-467 / :471-498，基本准）。`ArtistSplitter.normalizeKey` :47 至今准确。
+
+**⑥ 测量**：聚焦 `CandidatePickerTest` 9 例全绿；全量 **179 类 / 1977 例 / 0 失败**（= 1968 + 9）；`lintDebug` 0 errors / 128 既有警告。
 
 ---
 
