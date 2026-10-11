@@ -167,12 +167,13 @@ fun SearchTab(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 命中艺人时显示"已加载/总数"，让用户知道这不是搜索前 30 条而是全量目录
-                if (artistPaging.totalCount > 0) {
+                // 计数口径：分子＝艺人段已加载行数、分母＝同一艺人段的目录总数（同源；区间门使未命中艺人/首页无行时不显示该行）
+                val artistLoadedCount = artistPaging.songs.size
+                if (artistLoadedCount in 1..artistPaging.totalCount) {
                     Text(
                         text = stringResource(
                             R.string.library_songs_count_with_total,
-                            searchResults.size, artistPaging.totalCount
+                            artistLoadedCount, artistPaging.totalCount
                         ),
                         color = NasMusicColors.TextSecondary,
                         fontSize = FontSize.small(),
