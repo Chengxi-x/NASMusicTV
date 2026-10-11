@@ -8,7 +8,9 @@ import com.nasmusic.tv.util.ArtistSplitter
  * 艺人全量展开的**状态件**（艺人全量方案 §3.5）。
  *
  * 装进独立类而不是往 `SearchViewModel` 堆字段：VM 已 359 行、刚做完 R-1 拆分，
- * 且 AndroidViewModel 在本仓库**不可单测**——本类无 Android 依赖，纯 JVM 测试直接打。
+ * 且本类无 Android 依赖，纯 JVM 测试直接打。⚠️ 「`SearchViewModel` 是 `AndroidViewModel`、
+ * 本仓库不可单测」是**旧结论，已作废**——VM 侧的行为门由 Robolectric 跑通，
+ * 见 `ArtistExpansionGenerationGateTest`。
  *
  * ⛔ 不做 IO：所有取数走构造期注入的两个 suspend lambda，
  * 由 `SearchViewModel` 接到 `NetworkMusicManager`（存在理由同 `NetworkPlaybackResolver`）。
