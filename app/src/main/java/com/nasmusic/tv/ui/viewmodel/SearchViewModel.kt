@@ -60,6 +60,11 @@ class SearchViewModel(
     val artistPaging: StateFlow<SongsPagingState> = _artistPaging.asStateFlow()
     /** 融合结果里非网络段的那一部分：续页时与展开段重新合并（网络段整体替换） */
     private var lastNonNetworkSongs: List<Song> = emptyList()
+    /**
+     * 搜索代数闸门：换词 / 清空都递增，在途的展开与续页协程回写前必须比对。
+     * 与 PlayerViewModel 的 `resolveGeneration` 同一手法（终审 B2）。
+     */
+    private var searchGeneration = 0
 
     // --- 网络音乐搜索结果（NetworkMusicManager 搜索）---
     private val _networkSearchResults = MutableStateFlow<UiState<List<Song>>>(UiState.Success(emptyList()))
@@ -159,6 +164,7 @@ class SearchViewModel(
         }
         lastSearchedKeyword = query
         lastSearchType = currentSearchType
+        val gen = ++searchGeneration
         _searchResults.value = UiState.Loading
         viewModelScope.launch {
             // 跨源融合搜索：NAS + 网络音乐 + 百度网盘 + Jamendo + 本地 并行搜索，合并去重
@@ -196,6 +202,9 @@ class SearchViewModel(
                 // mergeWithExpansion 会把非网络段整体提到前面，那是"有展开才有必要"的重排。
                 val merged = if (skipExpansion) songs
                     else NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
+                // 终审 B2（同一手法）：两次搜索重叠 ⇒ 只有最后一次能发布，
+                // ⛔ 先发的结果不得覆盖后发的（否则"改词后看到的是上一个词的行"）
+                if (gen != searchGeneration) return@launch
                 _searchResults.value = UiState.Success(merged)
                 _searchUnplayableIds.value = artistExpansion.unplayableIds
                 _artistPaging.value = artistExpansion.paging
@@ -212,6 +221,7 @@ class SearchViewModel(
                 )
             } catch (e: Exception) {
                 AppLog.e("SearchViewModel", "searchSongsOnServer failed", e)
+                if (gen != searchGeneration) return@launch
                 _searchResults.value = UiState.Error(
                     message = getApplication<Application>().getString(R.string.network_search_error, e.message?.take(50))
                 )
@@ -223,6 +233,7 @@ class SearchViewModel(
      * 清除搜索结果
      */
     fun clearSearch() {
+        searchGeneration++
         lastSearchedKeyword = null
         artistExpansion.reset()
         lastNonNetworkSongs = emptyList()
@@ -238,11 +249,15 @@ class SearchViewModel(
         // ⛔ 不要再拿 StateFlow 里的 isLoading 当判据（改造前它是硬编码 false，那道门恒不生效），
         //   并发两次 loadMore 会读同一个 offset 并各自 accumulate，下一页 offset 被永久抬高（静默丢一整页）。
         if (!artistExpansion.paging.hasMore || artistExpansion.isLoadingMore()) return
+        val gen = searchGeneration
         viewModelScope.launch {
+            if (gen != searchGeneration) return@launch
             _artistPaging.value = artistExpansion.paging.copy(isLoading = true)
             val merged = NetworkArtistExpansion.mergeWithExpansion(
                 lastNonNetworkSongs, artistExpansion.loadMore()
             )
+            // 终审 B2：在途期间换词 / clearSearch() ⇒ 这一页属于上一个艺人，⛔ 不得发布
+            if (gen != searchGeneration) return@launch
             _searchResults.value = UiState.Success(merged)
             _searchUnplayableIds.value = artistExpansion.unplayableIds
             _artistPaging.value = artistExpansion.paging

@@ -126,6 +126,10 @@ class NetworkArtistExpansion(
                 more = false
                 return playableFirst(fetched.toList(), unplayable)
             }
+            // 终审 B2 的**状态侧**：取页在途期间 `expand()`/`clearSearch()` 已 reset 或换了艺人
+            // ⇒ 这一页属于上一个艺人，⛔ 不得 accumulate（混进 fetched、覆盖 total/more，
+            //   且 VM 的代数门只挡发布、挡不住这里的污染——后续续页会带着它一起少一整页）。
+            if (artistId != artist) return playableFirst(fetched.toList(), unplayable)
             accumulate(page)
             return playableFirst(fetched.toList(), unplayable)
         } finally {
