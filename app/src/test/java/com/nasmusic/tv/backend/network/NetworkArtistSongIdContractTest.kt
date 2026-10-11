@@ -48,4 +48,26 @@ class NetworkArtistSongIdContractTest {
         // 负面自检：若有人把 sourceId 写成 netease，本断言会抓住格式漂移（红线 2 的姊妹条）
         org.junit.Assert.assertNotEquals("ntwk_meting_1001", NetworkSongId.forNetworkSong("netease", "1001"))
     }
+
+    @Test
+    fun `同一 netId 下网易侧与 Meting 侧生成的 id 必须逐字符相等`() {
+        // 红线 1 的正体：两条链路共用 NetworkSongId，任何一侧改写格式都会在这里被抓到
+        val netease = com.nasmusic.tv.backend.network.netease.NeteaseOpenApi(
+            baseUrlProvider = { "https://music.163.com" }
+        )
+        val item = com.google.gson.JsonObject().apply {
+            addProperty("id", 1001L)
+            addProperty("name", "晴天")
+            addProperty("duration", 269000L)
+            add("artists", com.google.gson.JsonArray().apply {
+                add(com.google.gson.JsonObject().apply {
+                    addProperty("id", 6452L); addProperty("name", "周杰伦")
+                })
+            })
+        }
+        val s = netease.toSong(item)!!
+        assertEquals(NetworkSongId.forNetworkSong("meting", "1001"), s.id)
+        assertEquals("ntwk_meting_1001", s.id)
+        assertEquals("meting", s.networkSource)   // 红线 2
+    }
 }
