@@ -324,6 +324,8 @@ val baiduOAuthClient: BaiduOAuthClient by lazy { BaiduOAuthClient(this, baiduOkH
         )
         // v2.35.0 多码率（修 G5）：档位变化 → 清空播放直链缓存，避免切档后仍命中旧档直链
         appPreferences.setOnQualityTierChanged { networkMusicManager.clearPlayUrlCache() }
+        // 终审 B3：换平台 / 换 Meting 端点同样要清——缓存 key 不认识这两维，旧 DEAD 会套到另一首歌上
+        appPreferences.setOnPlayUrlCacheInvalidated { networkMusicManager.clearPlayUrlCache() }
         // 百度网盘：仅在总开关开启且已登录时注册（运行时切换开关时动态注册/注销）
         // T2 第一批（2026-09-14）：onCreate 需同步拿配置，用 runBlocking{first()}（不带 IO 调度器，
         // 不占 Default/IO 线程池；阻塞主线程仅限启动初始化阶段，可接受）

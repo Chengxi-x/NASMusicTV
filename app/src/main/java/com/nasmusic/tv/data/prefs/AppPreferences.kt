@@ -973,6 +973,9 @@ class AppPreferences internal constructor(private val context: Context) {
             return
         }
         dataStore.edit { it[keyMetingApiBaseUrl] = normalized.orEmpty() }
+        // 换端点＝换可播性判据的来源：被拒绝的写入走上面的 return，绝不进这里（终审 B3）
+        runCatching { onPlayUrlCacheInvalidated?.invoke() }
+            .onFailure { AppLog.w(TAG, "onPlayUrlCacheInvalidated failed: ${it.message}") }
     }
 
     suspend fun setMvApiBaseUrl(url: String) {
@@ -996,6 +999,9 @@ class AppPreferences internal constructor(private val context: Context) {
 
     suspend fun setMusicSource(sourceKey: String) {
         dataStore.edit { it[keyMusicSource] = sourceKey }
+        // 平台换了同一个 networkId 指的是另一首歌，旧判定必须随之消失（终审 B3）
+        runCatching { onPlayUrlCacheInvalidated?.invoke() }
+            .onFailure { AppLog.w(TAG, "onPlayUrlCacheInvalidated failed: ${it.message}") }
     }
 
     // --- Jamendo（CC 独立音乐）设置 ---
@@ -1167,6 +1173,23 @@ class AppPreferences internal constructor(private val context: Context) {
         // 缓存上限仅 500 条，全量清除代价可忽略（方案 §2.4）。
         runCatching { onQualityTierChanged?.invoke() }
             .onFailure { AppLog.w(TAG, "onQualityTierChanged failed: ${it.message}") }
+    }
+
+    /**
+     * 终审 B3：直链缓存失效回调（正面直链 + 负面探测判定一起清）。
+     *
+     * 缓存 key 是 `networkSource:networkId:quality`，**不认识端点与平台**：
+     * Meting 端点换掉、或平台从 netease 切到 qq 后，旧 key 上的 DEAD 判定会在 TTL 内
+     * 套到新端点/新平台的另一首歌上（§4 的「换自建端点」补救最长 5 分钟无效）。
+     * 与 [onQualityTierChanged] 同一去处，由 NasMusicApp 注册为
+     * `{ networkMusicManager.clearPlayUrlCache() }`；同样用回调避免 data/prefs 反向依赖 backend/network。
+     */
+    @Volatile
+    private var onPlayUrlCacheInvalidated: (() -> Unit)? = null
+
+    /** 注册直链缓存失效回调（仅 NasMusicApp 调用一次） */
+    fun setOnPlayUrlCacheInvalidated(cb: () -> Unit) {
+        onPlayUrlCacheInvalidated = cb
     }
 
     /**
