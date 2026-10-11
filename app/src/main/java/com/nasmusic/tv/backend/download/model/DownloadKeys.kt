@@ -44,12 +44,9 @@ fun Song.downloadKeyOf(quality: Int): String {
     if (quality <= QualityTiers.AUTO) return downloadKey
     if (isLocalSong || !isNetworkSong) return downloadKey
     // 仅 Meting 源支持多码率（见方案 §2.5）
-    if (networkSource != METING_SOURCE) return downloadKey
+    if (networkSource != NetworkSongId.METING_SOURCE) return downloadKey
     return "$downloadKey:q$quality"
 }
-
-/** Meting 源标识：权威常量 NetworkSongId.METING_SOURCE 的本地别名（F5 收口，红线 2） */
-private const val METING_SOURCE = NetworkSongId.METING_SOURCE
 
 /**
  * 在下载状态表中查询某曲的 UI 状态（多码率方案 §4.2.2 配套）。
@@ -69,7 +66,7 @@ private const val METING_SOURCE = NetworkSongId.METING_SOURCE
 fun Map<String, DownloadState>.stateOfSong(song: Song): DownloadState {
     // 1. AUTO / 存量格式精确命中（最常见）
     this[song.downloadKey]?.let { return it }
-    if (!song.isNetworkSong || song.networkSource != METING_SOURCE) return DownloadState.None
+    if (!song.isNetworkSong || song.networkSource != NetworkSongId.METING_SOURCE) return DownloadState.None
     // 2. 前缀匹配该曲的所有档位（`ntwk_meting_<id>:q*`）
     val prefix = "${song.downloadKey}:q"
     val candidates = this.filterKeys { it.startsWith(prefix) }.values

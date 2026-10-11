@@ -56,8 +56,11 @@ class CandidatePicker(
                 return Replacement(c.copy(streamUrl = url), url)
             }
         }
-        // F6（终审 M-B1）：降级链的最终放弃路径，release 下 d/i/w 连字符串都被折掉，必须用 e 留痕
-        AppLog.e(DIAG, "CandidatePicker: 候选全不可播（pool=${pool.size} 校验=${candidates.size}）title='$title' artist='$artist'")
+        // F6（终审 M-B1）：降级链的最终放弃路径。release 下 `AppLog.d/i/w` 因方法体里的
+        // `if (BuildConfig.DEBUG)` 常量守卫被 R8 整块折掉（连字符串一起），只有 `e` 必然存活，
+        // 所以放弃必须用 e 留痕。⚠️ 文案不预设「一定有候选」——pool=0（上游搜索挂了）与
+        // 「有候选但全部解不出直链」是两种成因，靠 pool/校验 两个数区分。
+        AppLog.e(DIAG, "CandidatePicker: 无可替换候选（pool=${pool.size} 校验=${candidates.size}）title='$title' artist='$artist'")
         return null
     }
 

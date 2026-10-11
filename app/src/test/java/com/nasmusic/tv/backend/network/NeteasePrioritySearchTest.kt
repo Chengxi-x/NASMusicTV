@@ -209,8 +209,8 @@ class NeteasePrioritySearchTest {
     )
 
     // ── F8（终审 M-B4）：searchCoverUrl 的空关键词短路 ─────────────────────
-    // keyword.isBlank() 的检查原本只留在 search()，searchCoverUrl 直接喂 searchViaEndpoints
-    // ⇒ 空标题的 NAS 曲会打满 3 个 name= 为空的公网端点请求。
+    // keyword.isBlank() 的检查原本只留在 search() 与 searchNativeFirst()，searchCoverUrl 直接喂
+    // searchViaEndpoints ⇒ 空标题的 NAS 曲会打满整条端点链（当前端点 + 3 预设 = 最多 4 跳）`id=` 为空的请求。
 
     @Test
     fun `F8 标题与歌手都为空必须短路返回 null 且一个端点请求都不发`() = runBlocking {

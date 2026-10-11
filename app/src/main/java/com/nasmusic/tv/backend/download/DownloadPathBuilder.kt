@@ -99,11 +99,11 @@ class DownloadPathBuilder(private val rootProvider: () -> File) {
      * 而 downloadKeyOf 已对非 Meting 源忽略档位——extOf / baseNameWithQuality
      * 若不同样忽略，NAS / 网盘歌曲会被存成 "(320).mp3" 的错误容器名
      * （FLAC 内容 + mp3 扩展名：媒体扫描误识、内嵌必败、档位后缀是假的）。
-     * 与 download/model/DownloadKeys.METING_SOURCE 保持一致
-     * （该常量为 private，此处按同法本地硬编码，注释同步）。
+     * 档位后缀只对 Meting 源成立——判据直接用权威常量
+     * `NetworkSongId.METING_SOURCE`（F5 收口，红线 2；同值由编译器保证，不靠注释纪律）。
      */
     private fun tierOf(song: Song, quality: Int): Int =
-        if (song.isNetworkSong && song.networkSource == METING_SOURCE) quality else QualityTiers.AUTO
+        if (song.isNetworkSong && song.networkSource == NetworkSongId.METING_SOURCE) quality else QualityTiers.AUTO
 
     /**
      * 从 URL 路径或 Content-Type 推断扩展名
@@ -181,9 +181,6 @@ class DownloadPathBuilder(private val rootProvider: () -> File) {
     }
 
     companion object {
-        /** Meting 源标识：权威常量 NetworkSongId.METING_SOURCE 的本地别名（F5 收口，红线 2） */
-        private const val METING_SOURCE = NetworkSongId.METING_SOURCE
-
         private val ILLEGAL = Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]")
         private const val MAX_SEGMENT = 80
         const val TMP_DIR = ".tmp"

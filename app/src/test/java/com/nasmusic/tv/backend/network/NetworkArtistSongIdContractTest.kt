@@ -9,6 +9,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -114,8 +115,10 @@ class NetworkArtistSongIdContractTest {
         val svc = MetingApiService(baseUrlProvider = { "https://invalid.invalid/api" })
         assertEquals(NetworkSongId.METING_SOURCE, svc.sourceId)
         // 注册表 key（NasMusicApp services map 的键）就是同一个常量；负自检：
-        // 若有人把枚举 key 或 sourceId 改漂，上面两条断言之一必红
-        assertNotEquals(NetworkSongId.METING_SOURCE, NetworkSource.ALAPI.key)
+        // 若有人把枚举 key 或 sourceId 改漂，上面两条断言之一必红。
+        // ⚠️ 这里⛔ 不用 assertNotEquals(…, ALAPI.key)：常量退化成 "" 时它照样通过，
+        //   真正钉住值的是上面那条字面量断言 + 下面这条非空断言。
+        assertTrue("红线 2 合法值不得为空串", NetworkSongId.METING_SOURCE.isNotBlank())
     }
 
     @Test
