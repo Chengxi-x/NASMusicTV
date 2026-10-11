@@ -1,6 +1,6 @@
 # 网络艺人全量歌曲开发方案（突破统一搜索 30 首上限）
 
-- **状态**：✅ **已裁决、可开发** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**，任务分解与逐文件代码见 **§11**。尚未写任何 Kotlin
+- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–4 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`），Task 5–9 待开发。
 - **日期**：2026-10-10
 - **目标模块**：`backend/network/netease/`（新增网易免鉴权接口层 `NeteaseOpenApi`）、`backend/network/`（`NetworkSongId`/`NetworkArtistTypes`/`NetworkArtistExpansion`/`PlayabilityProbe`/`CandidatePicker`/`ReplaceChain` 六个新件 + `MetingApiService` 搜索改网易优先与可播判据做实 + `NetworkMusicService` 接口扩展 + `NetworkMusicManager` 路由/负面缓存/同源重搜）、`backend/SearchAggregator.kt`（一行超时）、`ui/viewmodel/`（**不新增 VM**，改 `SearchViewModel` 与 `PlayerViewModel`）、`ui/screens/library/SearchTab.kt` + `ui/components/song/UnifiedSongRow.kt`（显示侧）。逐文件清单见 §11 的 File map
 - **数字来源**：`docs/archive/verification/scripts/netease_artist_probe.py`（可复跑仪表）。本文数字**只允许**抄自以下四轮已存档日志（UTF-8 + LF，随文档入库；`logs_temp/` 里那些是临时件，会被清理）。目录 `docs/archive/verification/netease_artist_probe/`：
@@ -9,7 +9,7 @@
   - **23:43 延迟轮** `--latency 8 --pacing 1.2` → **46 断言 / exit 0 / FAIL 0 / WARN 5** → `probe_v4_latency.log`：§2 L 组 → §10.3 的 5s 预算分配；**并复现了 23:28 轮的字段覆盖结论**（`privilege.st` 0/100、`album.picUrl` 0/100 两轮一致）
   - ⚠️ **唯一例外**：§2 E 组（判据验证）来自同日 21:32 的 `--play 12` 轮、22:13 轮未复跑，引用时注意
   - ⛔ **改任何结论必须重跑脚本再改文档**，不许手抄、不许凭记忆
-- **版本**：**v1.7** — v1.5：按 owner 三连问补测 F·G·H 组，"8.7% 可播率"作废替换为实测 15.0%，`privilege.st` 降级为"仅作分布参考"，新增 §2 I 组。v1.6：新增 §3.8 播放降级链 + R10 + P4 + Q9。**v1.7：owner Q1–Q9 裁决入账（§9）**、新增 §2 C 组字段覆盖与 L 组延迟分布、答复 Q3（§10 界面影响与改动量）、按裁决把本文改写为**可开发粒度**（§11 九个 Task、逐步骤真实代码与测试，Task 9 是全量回归 + 文档同步）、附录 A 换成完整可复跑命令表、附录 C.3 记 v1.7 的八条自我更正。修订说明见 §附录 C
+- **版本**：**v1.9** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块）。修订说明见 §附录 C
 - **前置阅读**：`docs/archive/multi-bitrate-playback-download-plan.md`（音质档位与直链缓存语义）、`docs/archive/network-music-upgrade-plan.md`
 
 ---
@@ -2010,11 +2010,22 @@ class NetworkArtistExpansion(
 
 ```kotlin
                 val songs = result.allResults.map { it.song }
-                // 网络段（含网易原生/Meting 兜底）整体交给 expansion，非网络段原样保留
-                val (networkPart, otherPart) = songs.partition { it.isNetworkSong }
+                // ⚠️ v1.8 修正（评审 C1）：**不能**用 `isNetworkSong` 划网络段——
+                // Jamendo（`JamendoService.kt:155`）与百度网盘歌曲同样是 `isNetworkSong = true`，
+                // 整段替换会把它们的命中结果凭空删掉（Q5「其他页面功能不受影响」被违反）；
+                // 反向问题：NETWORK_MUSIC 未点亮时网络段为空，旧写法仍会发一次 type=100 并把 100 首网易歌
+                // 塞进用户明确关掉的源。判据改为「Meting 家族」并加点亮来源闸门。
+                val (metingPart, otherPart) = NetworkArtistExpansion.splitMetingSegment(songs)
+                val skipExpansion = metingPart.isEmpty() ||
+                    MusicSourceType.NETWORK_MUSIC !in _enabledSearchSources.value
                 lastNonNetworkSongs = otherPart
-                val expanded = artistExpansion.expand(query, networkPart)
-                val merged = NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
+                val merged = if (skipExpansion) {
+                    artistExpansion.reset()
+                    songs                                  // 原序返回，不重排（保持聚合器的优先级序）
+                } else {
+                    val expanded = artistExpansion.expand(query, metingPart)
+                    NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
+                }
                 _searchResults.value = UiState.Success(merged)
                 _searchUnplayableIds.value = artistExpansion.unplayableIds
                 _artistPaging.value = artistExpansion.paging
@@ -2054,7 +2065,9 @@ class NetworkArtistExpansion(
     }
 ```
 
-> ⚠️ **`artistPaging` 的 `isLoading` 是 `copy(isLoading = true)` 造出来的临时值**，`NetworkArtistExpansion` 自己没有 `isLoading` 字段——所以 `_artistPaging` 在请求返回前必须至少有一次 `isLoading = false` 的落值（上面代码里就是 `loadMore()` 之后那次赋值）。若把 `isLoading` 塞回 expansion 内部，§8 的"少则不分页"结论（`hasMore=false → shouldLoadMore` 恒 false）不受影响，但 Task 8 的 `remember(songs, paging, isSearching)` key 会因每次 `copy` 产生新实例而**每帧重算**，别这样写。
+> ⚠️ **v1.9 修正（Task 4 评审 I1）**：本段原文写"`artistPaging` 的 `isLoading` 是 `copy(isLoading = true)` 造出来的临时值，`NetworkArtistExpansion` 自己没有 `isLoading` 字段"——该设计**已被否决**：VM 的续页防抖门读的正是 `paging.isLoading`，而 `paging` 把 `isLoading` 硬编码为 `false`，那道门**恒不生效**。as-built 是 `NetworkArtistExpansion` 自持 `private var loadingMore` + `fun isLoadingMore()`，`paging.isLoading = loadingMore`（真实值），VM 的门改读 `artistExpansion.isLoadingMore()`。`loadMore()` 全程 `try/finally` 清标志（含取页失败与异常路径），所以一次失败不会永久卡住续页。Task 8 的 `shouldLoadMore` **不需要**自己再加互斥，也不要去读 `paging.isLoading` 当门。
+
+> ⚠️ **v1.9 修正（Task 4 评审 C2）**：`searchCoverUrl()` 原本直接吃 `search()`，而 `search()` 现在网易优先 —— 网易 `type=1` **恒无** `album.picUrl`（§2 C.1 实测 0/100），于是 NAS 歌曲切网络歌词时的封面轮播（`MainViewModel.kt:2845/2905/3020`）与下载封面兜底链（`CoverFileWriter.kt:110`）会拿到 null。as-built 把 `search()` 的端点链体**逐字节**抽成 `private suspend fun searchViaEndpoints(keyword, limit)`：`search()` = 原生优先 ?: `searchViaEndpoints()`，`searchCoverUrl()` **只走** `searchViaEndpoints()`。⛔ 新增功能一律不得改动端点链本体（抽函数是纯搬运，`return@withContext` 的宿主 lambda 变了但值与日志不变）。
 
 - [ ] **Step 7：`SearchAggregator` 预算放宽一行**（`backend/SearchAggregator.kt:75`）
 
@@ -2087,6 +2100,15 @@ git add app/src/main/java/com/nasmusic/tv/backend/network/NetworkArtistExpansion
         app/src/test/java/com/nasmusic/tv/backend/network/ArtistSongsPagingTest.kt
 git commit -m "feat(network): 统一搜索接入网易免鉴权优先与艺人全量展开"
 ```
+
+> **v1.9 as-built（2026-10-11，commit a861880 + 89684d4）**：本 Task 落地后全量 **1952 例 / 0 失败**
+> （`NeteasePrioritySearchTest` 5 + `ArtistSongsPagingTest` 14，原写 3 + 8 是修正前的形状），lint 0 errors。
+> 评审除上面两条（C1 判据 / C2 封面）外还改了四处 brief 自身缺陷，全部已进代码：
+> ① `NetworkArtistExpansion` 增 `internal fun splitMetingSegment(songs)`（判据 `isNetworkSong && networkSource == "meting"`）；
+> ② `expand()` 首行 `if (networkPart.isEmpty()) return networkPart` —— 空段连一次 `findArtist` 都不发；
+> ③ I2：`NATIVE_FIELD` 命中即 `artistId = id`，首页零行时 `reset()` 后交回 `networkPart`（不再产生 `isActive()=false / hasMore=true` 的卡死态，也不再丢段）；
+> ④ I1：真实 `loadingMore` 单飞标志（详见上文 ⚠️）。
+> Task 8 的消费面**未改名**：`searchUnplayableIds` / `artistPaging` / `loadMoreArtistSongs()` 三个 API 原样可用，且 `loadMoreArtistSongs()` 已自防抖。
 
 ---
 
