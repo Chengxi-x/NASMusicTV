@@ -40,6 +40,8 @@ class NetworkMusicManager(
         private const val PLAY_URL_CACHE_TTL_MS = 5 * 60 * 1000L
         /** 播放链接缓存容量上限（超出按时间淘汰最旧，防止超长会话内存只增不减） */
         private const val PLAY_URL_CACHE_MAX = 500
+        // 艺人全量方案 §3.8 第 1 步：确认过的"假 302"负面判定，与直链缓存同 TTL（避免同一首反复探测）
+        private const val DEAD_PROBE_TTL_MS = PLAY_URL_CACHE_TTL_MS
     }
 
     /**
@@ -65,6 +67,12 @@ class NetworkMusicManager(
 
     /** 播放链接内存缓存：cacheKey → CachedPlayUrl（线程安全，resolvePlayUrl 在 IO 线程并发访问） */
     private val playUrlCache = ConcurrentHashMap<String, CachedPlayUrl>()
+
+    /**
+     * 负面探测缓存：cacheKey → 判定时间戳（§3.8 第 1 步）。
+     * key 与 [playUrlKey] 同构（含档位）→ **切档位必然重探**，对齐验收 13。
+     */
+    private val deadProbeCache = ConcurrentHashMap<String, Long>()
 
     /**
      * 播放直链缓存 key：`networkSource:networkId:quality`。
@@ -93,11 +101,13 @@ class NetworkMusicManager(
         return override ?: qualityTierProvider()
     }
 
-    /** 清空全部播放直链缓存。档位变化时由 AppPreferences.setQualityTier() 调用（修 G5）。 */
+    /** 清空全部播放直链缓存（含负面探测缓存）。档位变化时由 AppPreferences.setQualityTier() 调用（修 G5）。 */
     fun clearPlayUrlCache() {
         val size = playUrlCache.size
+        val deadSize = deadProbeCache.size
         playUrlCache.clear()
-        if (size > 0) AppLog.d(TAG, "clearPlayUrlCache: cleared $size entries")
+        deadProbeCache.clear()
+        if (size > 0 || deadSize > 0) AppLog.d(TAG, "clearPlayUrlCache: cleared $size url + $deadSize dead entries")
     }
 
     /** 获取当前默认源 ID */
@@ -190,12 +200,19 @@ class NetworkMusicManager(
         // 清理过期缓存条目
         val now = System.currentTimeMillis()
         playUrlCache.entries.removeAll { (_, v) -> now - v.timestamp >= PLAY_URL_CACHE_TTL_MS }
+        deadProbeCache.entries.removeAll { (_, ts) -> now - ts >= DEAD_PROBE_TTL_MS }
         // 容量上限：超出后按时间淘汰最旧条目（近似 LRU，避免缓存无界增长）
         if (playUrlCache.size > PLAY_URL_CACHE_MAX) {
             playUrlCache.entries
                 .sortedBy { it.value.timestamp }
                 .take(playUrlCache.size - PLAY_URL_CACHE_MAX)
                 .forEach { playUrlCache.remove(it.key) }
+        }
+        if (deadProbeCache.size > PLAY_URL_CACHE_MAX) {
+            deadProbeCache.entries
+                .sortedBy { it.value }
+                .take(deadProbeCache.size - PLAY_URL_CACHE_MAX)
+                .forEach { deadProbeCache.remove(it.key) }
         }
 
         // 检查缓存（forceRefresh 时跳过——重试路径绝不命中旧缓存）
@@ -205,9 +222,16 @@ class NetworkMusicManager(
                 AppLog.d(TAG, "resolvePlayUrl: cache hit for key=$cacheKey")
                 return ResolveResult(cached.url, cached.actualQuality)
             }
+            // §3.8 第 1 步：已确认的假 302 在 TTL 内不再重复跟链探测（一次点播 = 最多一次探测）
+            if (deadProbeCache.containsKey(cacheKey)) {
+                AppLog.d(TAG, "resolvePlayUrl: dead-probe cache hit for key=$cacheKey")
+                return ResolveResult.failure(quality, probedDead = true)
+            }
         } else {
-            // 强制刷新：清除旧缓存条目，确保下面走完整降级链
+            // 强制刷新：清除旧的直链缓存**与负面判定**，确保下面走完整降级链
+            //（重试路径必须能重探——Task 6/7 的候选校验就是靠这条拿到新结论）
             playUrlCache.remove(cacheKey)
+            deadProbeCache.remove(cacheKey)
         }
 
         return try {
@@ -219,6 +243,11 @@ class NetworkMusicManager(
             } else {
                 // 解析失败：移除缓存条目，避免下次又命中过期项
                 playUrlCache.remove(cacheKey)
+                // ⚠️ 只有**探测确认的 DEAD** 才进负面缓存；普通失败（端点没给链接）不钉 5 分钟
+                if (result.probedDead) {
+                    deadProbeCache[cacheKey] = now
+                    AppLog.d(TAG, "resolvePlayUrl: cached DEAD verdict for key=$cacheKey")
+                }
             }
             result
         } catch (e: Exception) {

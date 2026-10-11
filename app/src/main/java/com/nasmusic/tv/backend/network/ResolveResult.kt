@@ -13,7 +13,14 @@ package com.nasmusic.tv.backend.network
  */
 data class ResolveResult(
     val url: String?,
-    val actualQuality: Int
+    val actualQuality: Int,
+    /**
+     * 失败是否由**探测确认的 DEAD** 造成（艺人全量方案 §3.8 第 1 步）。
+     *
+     * ⚠️ 只有 true 才允许写负面缓存："端点没给链接"（网络抖动、id 过期）与
+     *   "给了但跟链确认是假 302" 是两件事，前者钉 5 分钟会把偶发失败放大成静默跳曲。
+     */
+    val probedDead: Boolean = false
 ) {
     /** 是否解析成功 */
     val isSuccess: Boolean get() = !url.isNullOrBlank()
@@ -27,8 +34,9 @@ data class ResolveResult(
         isSuccess && requested != QualityTiers.AUTO && actualQuality != requested
 
     companion object {
-        /** 解析失败（无源可降） */
-        fun failure(requested: Int): ResolveResult = ResolveResult(null, requested)
+        /** 解析失败（无源可降）；`probedDead=true` 表示失败原因是探测判定的假 302 */
+        fun failure(requested: Int, probedDead: Boolean = false): ResolveResult =
+            ResolveResult(null, requested, probedDead)
     }
 }
 

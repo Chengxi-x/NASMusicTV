@@ -11,6 +11,7 @@ import com.nasmusic.tv.backend.local.LocalMusicRepository
 import com.nasmusic.tv.backend.local.MusicScanner
 import com.nasmusic.tv.backend.local.StorageMonitor
 import com.nasmusic.tv.backend.local.db.LocalMusicDatabase
+import com.nasmusic.tv.backend.network.HttpPlayabilityProbe
 import com.nasmusic.tv.backend.network.JamendoService
 import com.nasmusic.tv.backend.network.MetingApiService
 import com.nasmusic.tv.backend.network.NetworkMusicManager
@@ -309,7 +310,9 @@ val baiduOAuthClient: BaiduOAuthClient by lazy { BaiduOAuthClient(this, baiduOkH
                 // 艺人全量方案 Q2：网易免鉴权优先。基址复用歌词那个设置项（不新增设置项）
                 netease = NeteaseOpenApi(
                     baseUrlProvider = { appPreferences.lyrics.getLyricsNeteaseBaseUrlSync() }
-                )
+                ),
+                // 艺人全量方案 §3.8 第 1 步（Q4）：判据做实——跟一跳拿最终 Content-Type
+                probe = HttpPlayabilityProbe()
             )
         )
         networkMusicManager = NetworkMusicManager(

@@ -54,7 +54,12 @@ class MetingApiService(
      * 网易免鉴权接口（Task 4 起由 NasMusicApp 注入）。
      * null = 未启用网易优先，行为与改造前逐字符一致（R1 的"新功能全走新增代码路径"）。
      */
-    private val netease: com.nasmusic.tv.backend.network.netease.NeteaseOpenApi? = null
+    private val netease: com.nasmusic.tv.backend.network.netease.NeteaseOpenApi? = null,
+    /**
+     * 可播判据（§3.8 第 1 步，Q4 裁决）。null = 不探测，维持既有"拿到非空 Location 即成功"。
+     * 生产由 NasMusicApp 注入 [HttpPlayabilityProbe]；单测注入假探测（⛔ 不打网络）。
+     */
+    private val probe: PlayabilityProbe? = null
 ) : NetworkMusicService {
 
     override val sourceId = "meting"
@@ -283,6 +288,7 @@ class MetingApiService(
      * 返回的 [ResolveResult.actualQuality] 为**实际命中**的档位，不等于请求档位即表示发生降级。
      *
      * Meting-API 返回 302 重定向，需要获取 Location header。
+     * 注入 `probe` 时，302→Location 取到的直链会跟一跳探测可播性（§3.8 第 1 步）：仅 DEAD 跳过该档位×端点组合，UNKNOWN 与 PLAYABLE 一律放行。
      */
     override suspend fun resolvePlayUrlDetailed(song: Song, quality: Int): ResolveResult =
         withContext(Dispatchers.IO) {
@@ -291,6 +297,7 @@ class MetingApiService(
             val endpoints = buildEndpointFallbackOrder(baseUrl)
             // 档位与降级链（999 → 320 → 192 → 128；AUTO 直接不传 br 走端点默认）
             val brChain = QualityTiers.fallbackChainOf(quality)
+            var probedDead = false
             for (endpoint in endpoints) {
                 for (br in brChain) {
                     try {
@@ -298,18 +305,35 @@ class MetingApiService(
                         val url = "$endpoint?server=$server&type=url&id=${URLEncoder.encode(netId, "UTF-8")}$brParam"
                         val request = Request.Builder().url(url).build()
                         var playUrl: String? = null
+                        var fromRedirect = false
                         noRedirectClient.newCall(request).execute().use { response ->
-                            playUrl = when (response.code) {
-                                302 -> response.header("Location")
-                                200 -> response.body?.string()?.let { extractUrlFromJson(it) }
+                            val location = response.header("Location")
+                            when (response.code) {
+                                302 -> {
+                                    playUrl = location
+                                    fromRedirect = !location.isNullOrBlank()
+                                }
+                                200 -> playUrl = response.body?.string()?.let { extractUrlFromJson(it) }
                                 else -> null
                             }
                         }
-                        if (!playUrl.isNullOrBlank()) {
+                        // 必须复制进一个未被 lambda 捕获的局部 val：playUrl 在 use{} 里被赋值，
+                        // Kotlin 对被闭包捕获的 var **不做智能转换**，直接用会编译不过
+                        val resolved = playUrl
+                        if (!resolved.isNullOrBlank()) {
                             // br == null（AUTO 档）时 actualQuality 记为请求档位本身，不产生降级提示
                             val actual = br ?: quality
+                            // §3.8 第 1 步（Q4）：判据**只加在跟链那一侧**（302 → Location → 跟一跳）。
+                            // 200-JSON 分支不产生重定向链，维持既有"非空即成功"（§6 验收 16 的回归口径，
+                            // 百度网盘 / jamendo 走的是接口默认实现，本方法根本不参与）。
+                            // ⛔ 只有 DEAD 才 continue；UNKNOWN 与 PLAYABLE 一律放行。
+                            if (fromRedirect && probe?.probe(resolved) == Playability.DEAD) {
+                                probedDead = true
+                                AppLog.w(TAG, "resolvePlayUrl: probe DEAD via '$endpoint' br=$br for netId=$netId")
+                                continue   // 只跳内层 for(br)：该端点×该档失败，继续降级链
+                            }
                             AppLog.d(TAG, "resolvePlayUrl: resolved via '$endpoint' br=$br (actual=$actual) for netId=$netId")
-                            return@withContext ResolveResult(playUrl, actual)
+                            return@withContext ResolveResult(resolved, actual)
                         }
                         AppLog.w(TAG, "resolvePlayUrl: empty from '$endpoint' br=$br for netId=$netId")
                     } catch (e: Exception) {
@@ -317,8 +341,8 @@ class MetingApiService(
                     }
                 }
             }
-            AppLog.w(TAG, "resolvePlayUrl: all endpoints failed for netId=$netId (requested=$quality)")
-            ResolveResult.failure(quality)
+            AppLog.w(TAG, "resolvePlayUrl: all endpoints failed for netId=$netId (requested=$quality) probedDead=$probedDead")
+            ResolveResult.failure(quality, probedDead)
         }
 
     /**
