@@ -496,12 +496,13 @@ class PlayerViewModel(
         }
         // 记录本次替换产物 id，防后续对同一首歌无限替换
         lastReplacedSongId = replacement.id
-        val message = if (usedLayer == ReplaceLayer.SAME_SOURCE) {
-            getApplication<Application>().getString(
+        // 穷尽 when：ReplaceLayer 新增成员时必须由编译器报缺分支，不许悄悄落到跨源文案上
+        val message = when (usedLayer) {
+            ReplaceLayer.SAME_SOURCE -> getApplication<Application>().getString(
                 R.string.same_source_replace_playing, song.title, replacement.title
             )
-        } else {
-            getApplication<Application>().getString(
+
+            ReplaceLayer.CROSS_SOURCE -> getApplication<Application>().getString(
                 R.string.cross_source_replace_playing, song.title, replacement.networkSource ?: ""
             )
         }
