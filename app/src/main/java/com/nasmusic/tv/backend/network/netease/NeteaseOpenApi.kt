@@ -36,6 +36,8 @@ class NeteaseOpenApi(
         private const val DIAG = "MetingDiag"
         /** ⛔ 网易侧实测：limit>100 时 total 会随 limit 抖动（§2 D 组 241/194/1070），必须锁 100 */
         private const val MAX_LIMIT = 100
+        /** 顶层 `code` 的成功值；⚠️ 缺失或字符串形态一律**不**拒（见 `parseArtistSongs` KDoc） */
+        private const val HTTP_CODE_OK = 200
         private const val CONNECT_READ_TIMEOUT_MS = 2_500L   // §10.3 子预算（实测 p95 0.368s）
 
         private const val USER_AGENT =
@@ -177,15 +179,68 @@ class NeteaseOpenApi(
         )
     }
 
+    /**
+     * 子数组读取：字段缺失、或该键**不是数组**（对象 / 字符串 / 数字 / JSON null）一律回 null。
+     *
+     * ⚠️ 不用 `getAsJsonArray`：它对非数组值会抛 `IllegalStateException`，而本函数对上游
+     * 必须**绝不抛**（"两种形态都没有 `songs` → `EMPTY_PAGE`" 就包含 `{"songs":null}` 这种）。
+     */
+    private fun JsonObject.arrayOrNull(name: String): JsonArray? =
+        get(name)?.takeIf { it.isJsonArray }?.asJsonArray
+
+    /**
+     * `GET /api/v1/artist/songs` 响应解析（艺人全量分页，§2 D 组：566 首 / more 末页转 false）。
+     *
+     * ⚠️⚠️ **信封容错**——本函数历史上只认一种形态，而线上真实响应是另一种：
+     *
+     * ```
+     * {"songs":[...],"more":true,"total":566,"code":200}   // ⛔ 顶层平铺，没有 "data" 这一层
+     * ```
+     *
+     * **线上实测形态**（2026-10-11 抓取，`GET https://music.163.com/api/v1/artist/songs
+     * ?id=6452&offset=0&limit=100&total=true&order=hot`，带 `Referer: https://music.163.com/`
+     * 与桌面 UA）：顶层字段恰为 `songs, more, total, code`，**`has("data") == false`**，
+     * 顶层 `songs` 数 100、`more=true`、`total=566`、含 `privilege` 的条目 100/100、
+     * `st` 分布 `-200 × 78 / 0 × 22`。
+     *
+     * ⛔ **这个不匹配曾导致艺人全量展开静默失效**：旧实现只取 `data` 子对象，
+     * 对线上真实响应恒定落到 `?: return EMPTY_PAGE`；而 `NetworkArtistExpansion.runExpand`
+     * 拿到的是 `page != null` 但 `fetched.isEmpty()` → 走 `reset()` 并把原始 Meting 段原样交回，
+     * **不打日志、不报错**，于是用户在歌曲条目上永远看不到「可能无版权」角标与可播置顶。
+     * ⛔ **不要把它改回"只认单一形态"**——`data` 包裹形态是历史实现唯一认识的形态，
+     * 保留读取只是不想让它退化成"无数据"，而线上主路径是**顶层平铺**。
+     *
+     * 规则：
+     * - **选信封**：根对象有 `songs` 数组 → 用根对象；否则回退到根对象的 `data` 子对象取 `songs`。
+     * - ⛔ `more` / `total` 必须在**同一个被选中的信封对象**上读，绝不能"songs 读根、分页标志读 `data`"
+     *   ——那会拼出一个线上从不存在的组合。
+     * - 两种形态都取不到 `songs` 数组 → `EMPTY_PAGE`（与既有失败语义一致）。
+     * - 顶层 `code` 存在且 `!= 200` → 按取数失败处理并留一行日志；
+     *   `code` 缺失或 `== 200` 一律照常解析，⛔ 不因缺 `code` 就拒（网易把它当软失败信号，不是必填契约）。
+     */
     internal fun parseArtistSongs(body: String): ArtistSongsPage {
-        val data = runCatching { gson.fromJson(body, JsonObject::class.java)?.getAsJsonObject("data") }
+        val root = runCatching { gson.fromJson(body, JsonObject::class.java) }
             .getOrElse { AppLog.e(TAG, "parseArtistSongs failed", it); return EMPTY_PAGE }
-        val items = data?.getAsJsonArray("songs") ?: return EMPTY_PAGE
+            ?: return EMPTY_PAGE
+
+        // ⚠️ code 是**顶层**字段（与 songs/more/total 同级，见上面实测形态），不是 data 里的
+        val code = root.get("code")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive
+            ?.takeIf { it.isNumber }?.asInt
+        if (code != null && code != HTTP_CODE_OK) {
+            AppLog.w(DIAG, "netease artist/songs code=$code -> treat as fetch failure, return empty page")
+            return EMPTY_PAGE
+        }
+
+        val envelope = root.takeIf { it.arrayOrNull("songs") != null }
+            ?: root.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?.takeIf { it.arrayOrNull("songs") != null }
+            ?: return EMPTY_PAGE
+        val items = envelope.arrayOrNull("songs") ?: return EMPTY_PAGE
         val songs = items.mapNotNull { runCatching { toSong(it.asJsonObject) }.getOrNull() }
         // ⛔ hasMore 只认接口的 more：§2 D 实测末页恰满时 more 已转 false，
         //   照抄 MainViewModel.kt:1143 的 size==pageSize 会多发一次空请求
-        val hasMore = data.get("more")?.asBoolean ?: false
-        val total = data.get("total")?.asInt ?: songs.size
+        val hasMore = envelope.get("more")?.asBoolean ?: false
+        val total = envelope.get("total")?.asInt ?: songs.size
         return ArtistSongsPage(songs, total, hasMore, unplayableIdsOf(items))
     }
 
