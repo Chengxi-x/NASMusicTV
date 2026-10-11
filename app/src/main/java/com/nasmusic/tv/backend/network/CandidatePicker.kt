@@ -56,6 +56,8 @@ class CandidatePicker(
                 return Replacement(c.copy(streamUrl = url), url)
             }
         }
+        // F6（终审 M-B1）：降级链的最终放弃路径，release 下 d/i/w 连字符串都被折掉，必须用 e 留痕
+        AppLog.e(DIAG, "CandidatePicker: 候选全不可播（pool=${pool.size} 校验=${candidates.size}）title='$title' artist='$artist'")
         return null
     }
 

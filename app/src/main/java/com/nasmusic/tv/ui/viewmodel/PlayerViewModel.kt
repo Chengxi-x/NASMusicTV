@@ -507,7 +507,7 @@ class PlayerViewModel(
                 R.string.cross_source_replace_playing, song.title, replacement.networkSource ?: ""
             )
         }
-        AppLog.w("PlayerViewModel", "tryReplaceByReSearch: $usedLayer 替换为 '${replacement.title}' (${replacement.networkSource})")
+        AppLog.e("PlayerViewModel", "tryReplaceByReSearch: $usedLayer 替换为 '${replacement.title}' (${replacement.networkSource})")
         showMessage?.invoke(message)
         playerManager.playQueue(updatedQueue, targetIndex)
         return true

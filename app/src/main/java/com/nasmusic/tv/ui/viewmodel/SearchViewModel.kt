@@ -196,7 +196,17 @@ class SearchViewModel(
                     artistExpansion.reset()
                     metingPart
                 } else {
-                    artistExpansion.expand(query, metingPart)
+                    artistExpansion.expand(query, metingPart).also {
+                        // F6（终审 M-B1）：「周杰伦只回 30 行」的头号静默路径——命中艺人但
+                        // getArtistSongs 返回 null ⇒ 放弃展开。状态件 ⛔ 不做 IO 也不打日志，
+                        // 留痕放在调用侧（VM），文案带关键词便于 logcat 过滤。
+                        if (artistExpansion.lastArtistPageFetchFailed) {
+                            AppLog.e(
+                                "MetingDiag",
+                                "searchSongsOnServer: '$query' 命中艺人但 getArtistSongs 返回 null，放弃展开（交回原网络段 ${metingPart.size} 行）"
+                            )
+                        }
+                    }
                 }
                 // 未展开时**直接用聚合器的原序**（它已按来源优先级排好）：
                 // mergeWithExpansion 会把非网络段整体提到前面，那是"有展开才有必要"的重排。
@@ -212,7 +222,7 @@ class SearchViewModel(
                 _searchResults.value = UiState.Success(merged)
                 _searchUnplayableIds.value = artistExpansion.unplayableIds
                 _artistPaging.value = artistExpansion.paging
-                AppLog.i(
+                AppLog.e(
                     "MetingDiag",
                     "searchSongsOnServer: '$query' merged=${merged.size} (meting ${metingPart.size}→${expanded.size}) hit=${artistExpansion.lastHitSource}"
                 )

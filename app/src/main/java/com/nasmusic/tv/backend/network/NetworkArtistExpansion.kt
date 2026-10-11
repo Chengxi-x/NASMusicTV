@@ -24,6 +24,16 @@ class NetworkArtistExpansion(
     var lastHitSource: HitSource = HitSource.NONE
         private set
 
+    /**
+     * F6（终审 M-B1）：`expand()` **命中艺人但取作品返回 null ⇒ 放弃展开**的专用信号。
+     *
+     * 该类是 ⛔ 不做 IO 的纯状态件、无 AppLog 依赖，自己不打日志；由调用侧（`SearchViewModel`）
+     * 读到 true 时打 `AppLog.e` 留痕。⚠️ `reset()` 会把 `lastHitSource` 清成 NONE，
+     * 这条路径在 VM 侧与「普通未命中艺人」无从区分，所以单独设这个位；每次 `expand()` 开头复位。
+     */
+    var lastArtistPageFetchFailed: Boolean = false
+        private set
+
     private var artistId: String? = null
     private var total = 0
     private var more = false
@@ -78,6 +88,7 @@ class NetworkArtistExpansion(
      */
     suspend fun expand(keyword: String, networkPart: List<Song>): List<Song> {
         reset()
+        lastArtistPageFetchFailed = false   // F6：只反映本次 expand 的结果
         // C1：空段 = 本词压根没有 Meting 行（网络源被熄灭，或首屏全是别的源）。
         // 这时连那**一次** findArtist 兜底都不能发——否则每一次普通歌名搜索都会白打一次
         // music.163.com，并且精确同名命中时还会把用户显式过滤掉的网络源塞回结果里。
@@ -100,6 +111,7 @@ class NetworkArtistExpansion(
         val artist = artistId ?: return networkPart
         val page = getArtistSongs(artist, 0, pageSize) ?: run {
             reset()
+            lastArtistPageFetchFailed = true   // F6：必须在 reset() 之后置位（reset 会清掉本信号）
             return networkPart
         }
         accumulate(page)

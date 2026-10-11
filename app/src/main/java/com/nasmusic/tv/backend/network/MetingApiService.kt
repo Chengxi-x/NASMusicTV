@@ -182,7 +182,7 @@ class MetingApiService(
                 AppLog.i(DIAG, "=== search end ===")
                 return@withContext nativeSongs
             }
-            AppLog.w(DIAG, "search: netease-native empty/offline, falling back to endpoint chain")
+            AppLog.e(DIAG, "search: netease-native empty/offline, falling back to endpoint chain")
         }
 
         searchViaEndpoints(keyword)
@@ -357,7 +357,7 @@ class MetingApiService(
                     }
                 }
             }
-            AppLog.w(TAG, "resolvePlayUrl: all endpoints failed for netId=$netId (requested=$quality) probedDead=$probedDead")
+            AppLog.e(TAG, "resolvePlayUrl: all endpoints failed for netId=$netId (requested=$quality) probedDead=$probedDead")
             ResolveResult.failure(quality, probedDead)
         }
 
@@ -474,7 +474,7 @@ class MetingApiService(
     override suspend fun getArtistSongs(artistId: String, offset: Int, limit: Int): ArtistSongsPage? {
         if (serverProvider() != DEFAULT_SERVER) return null
         val id = artistId.toLongOrNull() ?: run {
-            AppLog.w(DIAG, "getArtistSongs: artistId 不是数字 '$artistId'")
+            AppLog.e(DIAG, "getArtistSongs: artistId 不是数字 '$artistId'")
             return null
         }
         return netease?.artistSongs(id, offset, limit)

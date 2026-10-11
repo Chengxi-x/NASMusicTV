@@ -353,7 +353,7 @@ class NetworkMusicManager(
         return try {
             svc.findArtist(name)
         } catch (e: Exception) {
-            AppLog.w(TAG, "findArtist error: ${e.message}", e)
+            AppLog.e(TAG, "findArtist error: ${e.message}", e)
             null
         }
     }
@@ -364,7 +364,7 @@ class NetworkMusicManager(
         return try {
             svc.getArtistSongs(artistId, offset, limit)
         } catch (e: Exception) {
-            AppLog.w(TAG, "getArtistSongs error: ${e.message}", e)
+            AppLog.e(TAG, "getArtistSongs error: ${e.message}", e)
             null
         }
     }
