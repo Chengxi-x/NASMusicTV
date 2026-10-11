@@ -70,4 +70,32 @@ class NetworkArtistSongIdContractTest {
         assertEquals("ntwk_meting_1001", s.id)
         assertEquals("meting", s.networkSource)   // 红线 2
     }
+
+    @Test
+    fun `网易侧字符串形态的 id 同样必须逐字符等于构造点产物`() {
+        // 评审 I2：网易会把 id 发成 JSON 字符串，JsonPrimitive.toString() 带引号 → 红线 1 直接破
+        val netease = com.nasmusic.tv.backend.network.netease.NeteaseOpenApi(
+            baseUrlProvider = { "https://music.163.com" }
+        )
+        val item = com.google.gson.JsonObject().apply {
+            addProperty("id", "1001")
+            addProperty("name", "晴天")
+            addProperty("duration", 269000L)
+            add("artists", com.google.gson.JsonArray().apply {
+                add(com.google.gson.JsonObject().apply {
+                    addProperty("id", "6452"); addProperty("name", "周杰伦")
+                })
+            })
+            add("album", com.google.gson.JsonObject().apply {
+                addProperty("id", "99"); addProperty("name", "叶惠美")
+            })
+        }
+        val s = netease.toSong(item)!!
+        assertEquals(NetworkSongId.forNetworkSong("meting", "1001"), s.id)
+        assertEquals("ntwk_meting_1001", s.id)
+        assertEquals("1001", s.networkId)
+        assertEquals("6452", s.artistId)
+        assertEquals("99", s.albumId)
+        assertEquals("meting", s.networkSource)   // 红线 2
+    }
 }

@@ -2,6 +2,7 @@ package com.nasmusic.tv.backend.network.netease
 
 import com.google.gson.Gson
 import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.nasmusic.tv.backend.network.ArtistSongsPage
 import com.nasmusic.tv.backend.network.NetworkArtistInfo
@@ -124,26 +125,52 @@ class NeteaseOpenApi(
     // ---- 纯解析（internal，单测直打） ----
 
     /**
+     * id 归一（红线 1 的守卫）：网易会把一部分 id 发成 **JSON 字符串**。
+     *
+     * `JsonPrimitive.toString()` 对字符串形态**连引号一起返回**（`"1001"` → `"\"1001\""`），
+     * 一旦进 `NetworkSongId` 就破坏了 `ntwk_meting_<netId>` 的逐字符格式，
+     * 跨源 id 相等与 Task 4 的艺人 id 强匹配会静默失效。
+     *
+     * - 字符串形态 → `asString`（不带引号）
+     * - 数字形态 → 保持既有行为逐字节不变（`1001` 与 `1001.0` 均得 `"1001"`）
+     * - 缺失 / JSON null → null（不猜）
+     */
+    private fun JsonElement?.idString(): String? {
+        val element = this ?: return null
+        if (element.isJsonNull) return null
+        if (element.isJsonPrimitive && element.asJsonPrimitive.isString) return element.asString
+        return element.toString().removeSuffix(".0")
+    }
+
+    /** 数字形态的 `privilege.st`；缺失 / JSON null / 非数字 / 超出 Int 范围一律回 null（不猜）。 */
+    private fun JsonElement?.stIntOrNull(): Int? {
+        val element = this ?: return null
+        if (!element.isJsonPrimitive) return null
+        if (!element.asJsonPrimitive.isNumber) return null
+        return runCatching { element.asInt }.getOrNull()
+    }
+
+    /**
      * 统一 `Song` 构造器（§3.2）。**两条分支共用**，以保证同一首歌在两处 id 逐字符一致（红线 1）。
      *
      * 字段缺失即 null / 默认值——这正是 §2 C.1 的 0/100 需要的形状：`type=1` 无 `privilege`、
      * 无 `album.picUrl`，此处不猜测、不用别的端点补。
      */
     internal fun toSong(s: JsonObject, artistIdOverride: String? = null): Song? {
-        val netId = s.get("id")?.toString()?.removeSuffix(".0") ?: return null
+        val netId = s.get("id").idString() ?: return null
         val title = s.get("name")?.asString ?: return null
         val artists = s.get("artists")?.asJsonArray
         val artist = artists?.mapNotNull { it.asJsonObject.get("name")?.asString }
             ?.joinToString(" / ").orEmpty()
+        val firstArtist = artists?.firstOrNull()?.asJsonObject
         val albumObj = s.get("album")?.asJsonObject
         return Song(
             id = NetworkSongId.forNetworkSong(METING_SOURCE, netId),   // 红线 1 + 红线 2
             title = title,
             artist = artist,
-            artistId = artistIdOverride ?: artists?.firstOrNull()
-                ?.asJsonObject?.get("id")?.toString()?.removeSuffix(".0"),
+            artistId = artistIdOverride ?: firstArtist?.get("id").idString(),
             album = albumObj?.get("name")?.asString.orEmpty(),
-            albumId = albumObj?.get("id")?.toString()?.removeSuffix(".0"),
+            albumId = albumObj?.get("id").idString(),
             coverUrl = albumObj?.get("picUrl")?.asString,              // type=1 → null（§2 C.1）
             durationMs = s.get("duration")?.asLong ?: 0L,              // 网易已是毫秒
             isNetworkSong = true,
@@ -167,7 +194,7 @@ class NeteaseOpenApi(
     internal fun parseType1Songs(body: String): List<Song> {
         val result = runCatching { gson.fromJson(body, JsonObject::class.java)?.getAsJsonObject("result") }
             .getOrNull() ?: return emptyList()
-        val items = result?.getAsJsonArray("songs") ?: return emptyList()
+        val items = result.getAsJsonArray("songs") ?: return emptyList()
         // type=1 无 privilege（§2 C.1 0/100）→ 这里**不**生成打标集；
         // 但 artists[].id 会经 toSong 落进 Song.artistId（§2 C：distinct_artist_ids=54），
         // Task 4 的强命中判定因此零额外请求。
@@ -195,14 +222,22 @@ class NeteaseOpenApi(
      *
      * ⚠️ **只用于打标/置顶，⛔ 不可用于过滤**（T2：`st` 已被降级为"仅作分布参考"，
      * 而 `type=1` 形态根本没有这个字段 → 缺字段时返回空集，绝不猜）。
+     *
+     * **对上游 total（绝不抛）**：本函数在 `parseArtistSongs` 的 `runCatching` 之外被调用，
+     * 而畸形记录很容易踩到抛点（`{"privilege":null}` → `getAsJsonObject` 强转 ClassCastException、
+     * `{"st":null}` → `JsonNull.getAsInt()` 抛 UnsupportedOperationException、
+     * 数组元素不是对象 → `asJsonObject` 抛 IllegalStateException）。
+     * 打标集只是参考数据，读不出来就当作「未打标」跳过——一条怪异记录不该毁掉整页 100 首。
      */
     internal fun unplayableIdsOf(items: JsonArray): Set<String> {
         val out = mutableSetOf<String>()
-        items.forEach {
-            val o = it.asJsonObject
-            val st = o.getAsJsonObject("privilege")?.get("st")?.asInt ?: return@forEach
-            val id = o.get("id")?.toString()?.removeSuffix(".0") ?: return@forEach
-            if (st != 0) out.add(NetworkSongId.forNetworkSong(METING_SOURCE, id))
+        items.forEach { element ->
+            val o = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val privilege = o.get("privilege")?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val st = privilege.get("st").stIntOrNull() ?: return@forEach
+            if (st == 0) return@forEach
+            val id = o.get("id").idString() ?: return@forEach
+            out.add(NetworkSongId.forNetworkSong(METING_SOURCE, id))
         }
         return out
     }
