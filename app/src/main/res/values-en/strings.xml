@@ -1032,6 +1032,7 @@
     <string name="player_visualizer_short">Viz</string>
     <!-- Network music failover -->
     <string name="cross_source_replace_playing">"%1$s" link expired, playing replacement from %2$s source</string>
+    <string name="same_source_replace_playing">"%1$s" link expired, playing another version "%2$s"</string>
     <!-- Playlist import -->
     <string name="settings_import_playlist">Import Playlist</string>
     <string name="settings_import_playlist_desc">Import from m3u / txt / json / NetEase Cloud playlist file (URL direct links supported)</string>
