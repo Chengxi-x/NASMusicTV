@@ -3577,7 +3577,8 @@ git commit -m "feat(ui): 搜索页艺人全量结果支持续页计数与可能�
 
 ### Task 9：全量回归 + 红线自检 + 文档同步（Q9：**不独立发版**，随下一版）
 
-> ⛔ 只有 Task 1–8 都已提交才执行本 Task。若 Task 4 因 Q3 复确认未过而搁置，Task 1–3、5–8 仍可独立交付（`music.163.com` 不进线上路径），本 Task 的回归口径完全不变，只是 §10.225 末尾必须写明「Task 4 未接入，`NeteaseOpenApi` 只被单测引用」——**别让一个没人调用的类静静躺在 main 源集里而不留痕**。
+> ⛔ 只有 Task 1–8 都已提交才执行本 Task。
+> ⚠️ **若 Task 4 因 Q3 复确认未过而搁置：Task 8 必须一并搁置**——`SearchTab` 的三个新入参（`unplayableIds / artistPaging / onLoadMoreArtistSongs`）与 `LibraryBranch` 的收集点消费的是 Task 4 在 `SearchViewModel` 上建立的 API，Task 4 不在则 Task 8 **编译不过**（v1.7 自查发现本文前言曾写「5–8 仍可独立交付」，那是错的，已改）。此时可独立交付的是 **Task 1–3、5–7**（`music.163.com` 不进线上路径），本 Task 的回归口径要跟着改两处：① Step 1 的用例总数期望从 **568 降为 557**（少 `NeteasePrioritySearchTest` 3 + `ArtistSongsPagingTest` 8）；② Step 3 的 grep ①② **仍然有效**（`backend/network/netease/` 目录由 Task 2 创建，与 Task 4 无关），但 §10.225 末尾必须写明「Task 4 未接入，`NeteaseOpenApi` 只被单测引用」——**别让一个没人调用的类静静躺在 main 源集里而不留痕**。
 
 **Files:**
 - Modify: `docs/technical-overview.md`（追加 `### 10.225`）
