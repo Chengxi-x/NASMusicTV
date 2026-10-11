@@ -993,6 +993,7 @@ package com.nasmusic.tv.backend.network.netease
 
 import com.google.gson.Gson
 import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.nasmusic.tv.backend.network.ArtistSongsPage
 import com.nasmusic.tv.backend.network.NetworkArtistInfo
@@ -1115,26 +1116,48 @@ class NeteaseOpenApi(
     // ---- 纯解析（internal，单测直打） ----
 
     /**
+     * id 归一（**v1.8 新增，Task 2 评审 I2**）。
+     *
+     * ⛔ 不能直接用 `element.toString()`：`JsonPrimitive.toString()` 对**字符串**形态
+     * 连引号一起返回（`"1001"` → `"\"1001\""`），一旦进 `NetworkSongId` 就破坏了
+     * `ntwk_meting_<netId>` 的逐字符格式，跨源 id 相等与 Task 4 的艺人 id 强匹配会静默失效。
+     */
+    private fun JsonElement?.idString(): String? {
+        val element = this ?: return null
+        if (element.isJsonNull) return null
+        if (element.isJsonPrimitive && element.asJsonPrimitive.isString) return element.asString
+        return element.toString().removeSuffix(".0")
+    }
+
+    /** 数字形态的 `privilege.st`；缺失 / JSON null / 非数字 / 超出 Int 范围一律回 null（不猜）。 */
+    private fun JsonElement?.stIntOrNull(): Int? {
+        val element = this ?: return null
+        if (!element.isJsonPrimitive) return null
+        if (!element.asJsonPrimitive.isNumber) return null
+        return runCatching { element.asInt }.getOrNull()
+    }
+
+    /**
      * 统一 `Song` 构造器（§3.2）。**两条分支共用**，以保证同一首歌在两处 id 逐字符一致（红线 1）。
      *
      * 字段缺失即 null / 默认值——这正是 §2 C.1 的 0/100 需要的形状：`type=1` 无 `privilege`、
      * 无 `album.picUrl`，此处不猜测、不用别的端点补。
      */
     internal fun toSong(s: JsonObject, artistIdOverride: String? = null): Song? {
-        val netId = s.get("id")?.toString()?.removeSuffix(".0") ?: return null
+        val netId = s.get("id").idString() ?: return null
         val title = s.get("name")?.asString ?: return null
         val artists = s.get("artists")?.asJsonArray
         val artist = artists?.mapNotNull { it.asJsonObject.get("name")?.asString }
             ?.joinToString(" / ").orEmpty()
+        val firstArtist = artists?.firstOrNull()?.asJsonObject
         val albumObj = s.get("album")?.asJsonObject
         return Song(
             id = NetworkSongId.forNetworkSong(METING_SOURCE, netId),   // 红线 1 + 红线 2
             title = title,
             artist = artist,
-            artistId = artistIdOverride ?: artists?.firstOrNull()
-                ?.asJsonObject?.get("id")?.toString()?.removeSuffix(".0"),
+            artistId = artistIdOverride ?: firstArtist?.get("id").idString(),
             album = albumObj?.get("name")?.asString.orEmpty(),
-            albumId = albumObj?.get("id")?.toString()?.removeSuffix(".0"),
+            albumId = albumObj?.get("id").idString(),
             coverUrl = albumObj?.get("picUrl")?.asString,              // type=1 → null（§2 C.1）
             durationMs = s.get("duration")?.asLong ?: 0L,              // 网易已是毫秒
             isNetworkSong = true,
@@ -1189,10 +1212,17 @@ class NeteaseOpenApi(
      */
     internal fun unplayableIdsOf(items: JsonArray): Set<String> {
         val out = mutableSetOf<String>()
-        items.forEach {
-            val o = it.asJsonObject
-            val st = o.getAsJsonObject("privilege")?.get("st")?.asInt ?: return@forEach
-            val id = o.get("id")?.toString()?.removeSuffix(".0") ?: return@forEach
+        items.forEach { element ->
+            // **v1.8（Task 2 评审 I1）**：打标集是**建议性**数据，一条畸形记录绝不能让整页崩。
+            // 旧写法 `it.asJsonObject` / `getAsJsonObject("privilege")` / `?.asInt` 分别在
+            // 非对象元素、`{"privilege":null}`、`{"st":null}` 上抛
+            // IllegalStateException / ClassCastException / UnsupportedOperationException，
+            // 而本函数在 `parseArtistSongs` 的 runCatching **之外**被调用 ⇒ 异常直接逃到调用方。
+            // 现规则：读不出来的就是"不打标"，跳过即可。
+            val o = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val st = o.get("privilege")?.takeIf { it.isJsonObject }
+                ?.asJsonObject?.get("st").stIntOrNull() ?: return@forEach
+            val id = o.get("id").idString() ?: return@forEach
             if (st != 0) out.add(NetworkSongId.forNetworkSong(METING_SOURCE, id))
         }
         return out
@@ -1201,7 +1231,7 @@ class NeteaseOpenApi(
 ```
 
 > ⚠️ **写这段时必须注意的三个真实坑**（前两个都已在本仓库踩过）：
-> ① Gson 把 JSON 数字读成 `Double`，`element.toString()` 对 `1001` 给出 `"1001.0"` —— 上面用 `removeSuffix(".0")` 兜住，**不要**改成 `asLong` 后忽略 `id` 可能是科学计数法的场景（网易 id 最长 19 位，`asLong` 安全，但 `artists[].id` 有时是字符串形态）。
+> ① Gson 读 id 有**两种**坑，都得防：`JsonPrimitive.toString()` 对数字 `1001` 给出 `"1001.0"`（要 `removeSuffix(".0")`），对**字符串** `"1001"` 则**连引号一起**返回 `"\"1001\""`（会让 `ntwk_meting_<netId>` 的逐字符格式失效，红线 1）。方案 v1.7 只写了前者，Task 2 评审补出 I2 ⇒ 一律走 `JsonElement?.idString()`，⛔ 不要在本类任何一处再直接 `toString()` 取 id（网易 id 最长 19 位，`asLong` 安全，但 `artists[].id` 有时是字符串形态）。
 > ② `internal` 对同模块单测可见（Kotlin Gradle 插件把 `testDebug` 设成 `main` 的 friend path）——**已核实先例**：`BaiduPanApiTest.kt:105` 直接调 `api.parseBaiduFile(...)`，被调方 `BaiduPanApi.kt:402` 就是 `internal fun`。
 > ③ **一个类只能有一个 `companion object`**（本方案初稿在这里同时写了 `companion object` 和 `private companion object`，直接编译不过）。常量按上面的分法放：只给类内部用的（`METING_SOURCE`/`USER_AGENT`）也放 companion，标 `private`。
 
@@ -1231,7 +1261,7 @@ class NeteaseOpenApi(
     }
 ```
 
-- [ ] **Step 5：跑三个测试确认通过**
+- [x] **Step 5：跑三个测试确认通过**
 
 ```bash
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew.bat testDebugUnitTest \
@@ -1239,7 +1269,17 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew.bat testDebugU
   --tests "*NeteaseArtistSongsParseTest" --tests "*NeteaseType1FieldTest" \
   --tests "*NetworkArtistSongIdContractTest"
 ```
-预期：全绿（4 + 1 + 3 例）。**若 worker 秒死（exit `0x1000000A`）先 `./gradlew.bat --stop` 再重试。**
+预期：全绿。**若 worker 秒死（exit `0x1000000A`）先 `./gradlew.bat --stop` 再重试。**
+
+> **v1.8 as-built（2026-10-11，commit 40aecf8 + f3e3b00）**：本 Task 落地后聚焦 **9 例 / 0 失败**
+> （`NeteaseArtistSongsParseTest` 4 + `NeteaseType1FieldTest` 1 + `NetworkArtistSongIdContractTest` 4），
+> 全量 `testDebugUnitTest` **1930 例 / 0 失败 / 0 错误**。原写的「4 + 1 + 3」有两处不实：
+> ① Step 1 的 `NeteaseArtistSongsParseTest` 源码只有 **2** 个 `@Test`（4 条 `clampLimit` 断言在同一个方法里），不是 4 例；
+> ② 评审 I1/I2 各补了一组 fixture（畸形 `privilege` 页 / 字符串形态 id），故 parse 侧 2→4、契约侧 3→4。
+> 同时本 Task 的示例代码修了两处缺陷（详见 Ruling 6）：
+> `unplayableIdsOf` 原在 `runCatching` **之外**调用，`{"privilege":null}` / `{"st":null}` / 非对象元素三种形态会让整页艺人列表崩；
+> `element.toString()` 对 JSON **字符串**基元**连引号一起返回**，`"id":"1001"` 会生成 `ntwk_meting_"1001"`，违反红线 1 的逐字符格式。
+> ⛔ **后续 Task（4/6/7）取 id 一律用 `JsonElement?.idString()`，不得再写 `toString().removeSuffix(".0")`。**
 
 - [ ] **Step 6：提交**
 
