@@ -1,6 +1,6 @@
 # 网络艺人全量歌曲开发方案（突破统一搜索 30 首上限）
 
-- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–7 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`/`7573e1f`/`1ba04c7`+`9410fec`+`f6c4fb4`），Task 8–9 待开发。
+- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–8 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`/`7573e1f`/`1ba04c7`+`9410fec`+`f6c4fb4`/`1995c5f`+`0d29cc0`），Task 9（全量回归 + 文档同步）待执行。
 - **日期**：2026-10-10
 - **目标模块**：`backend/network/netease/`（新增网易免鉴权接口层 `NeteaseOpenApi`）、`backend/network/`（`NetworkSongId`/`NetworkArtistTypes`/`NetworkArtistExpansion`/`PlayabilityProbe`/`CandidatePicker`/`ReplaceChain` 六个新件 + `MetingApiService` 搜索改网易优先与可播判据做实 + `NetworkMusicService` 接口扩展 + `NetworkMusicManager` 路由/负面缓存/同源重搜）、`backend/SearchAggregator.kt`（一行超时）、`ui/viewmodel/`（**不新增 VM**，改 `SearchViewModel` 与 `PlayerViewModel`）、`ui/screens/library/SearchTab.kt` + `ui/components/song/UnifiedSongRow.kt`（显示侧）。逐文件清单见 §11 的 File map
 - **数字来源**：`docs/archive/verification/scripts/netease_artist_probe.py`（可复跑仪表）。本文数字**只允许**抄自以下四轮已存档日志（UTF-8 + LF，随文档入库；`logs_temp/` 里那些是临时件，会被清理）。目录 `docs/archive/verification/netease_artist_probe/`：
@@ -9,7 +9,7 @@
   - **23:43 延迟轮** `--latency 8 --pacing 1.2` → **46 断言 / exit 0 / FAIL 0 / WARN 5** → `probe_v4_latency.log`：§2 L 组 → §10.3 的 5s 预算分配；**并复现了 23:28 轮的字段覆盖结论**（`privilege.st` 0/100、`album.picUrl` 0/100 两轮一致）
   - ⚠️ **唯一例外**：§2 E 组（判据验证）来自同日 21:32 的 `--play 12` 轮、22:13 轮未复跑，引用时注意
   - ⛔ **改任何结论必须重跑脚本再改文档**，不许手抄、不许凭记忆
-- **版本**：**v2.2** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块**；v2.1：Task 6 落码后的入口形态（成员函数而非扩展）、两条 plan 级匹配风险与锚点漂移，见 §11 Task 6 末尾 as-built 块**；v2.2：Task 7 的接线门（源码文本门 + 穷尽 when）与"同源层上线激活 Task 6 两条匹配风险"，见 §11 Task 7 末尾 as-built 块）。修订说明见 §附录 C
+- **版本**：**v2.3** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块**；v2.1：Task 6 落码后的入口形态（成员函数而非扩展）、两条 plan 级匹配风险与锚点漂移，见 §11 Task 6 末尾 as-built 块**；v2.2：Task 7 的接线门（源码文本门 + 穷尽 when）与"同源层上线激活 Task 6 两条匹配风险"，见 §11 Task 7 末尾 as-built 块**；v2.3：Task 8 落码后的 I1 计数口径缺陷（本文 Step 4 示例代码本身错）、`remember` key 集与 footer 无 key 两条判定、`SongsPagingState.hasMore` 默认值 latent trap 与 6 项真机验收，见 §11 Task 8 末尾 as-built 块）。修订说明见 §附录 C
 - **前置阅读**：`docs/archive/multi-bitrate-playback-download-plan.md`（音质档位与直链缓存语义）、`docs/archive/network-music-upgrade-plan.md`
 
 ---
@@ -3679,6 +3679,28 @@ git add app/src/main/java/com/nasmusic/tv/ui/components/song/UnifiedSongRow.kt \
         app/src/main/res/values-en/strings.xml
 git commit -m "feat(ui): 搜索页艺人全量结果支持续页计数与可能无版权打标"
 ```
+
+---
+
+#### v2.3 as-built（1995c5f + 修复轮 0d29cc0，评审 Needs fixes → I1 已闭 → Approved：0 Critical / 1 Important 已闭 / M1–M7 记录）
+
+① **本 Task 的锚点全部漂移**（v1.7 写锚点时 Task 4 尚未落地，`SearchTab` / `UnifiedSongRow` 后来各被加过行）。落码后的**实测口径**（Task 9 若要复核，按内容定位，⛔ 别再抄本文行号）：
+- `UnifiedSongRow.kt`：KDoc **:119**、公开入参 **:142**、MODE_ROW 透传 **:162**、私有行组件入参 **:202**、角标 `when` 分支 **:432**（本文写 :118/:138/:157/:196/:414-426）。
+- `SearchTab.kt`：三个新入参 **:64 / :66 / :68**、续页派生值 **:113-126**、`LaunchedEffect` **:127-129**、计数行 **:171-181**、打标实参 **:197**、footer **:212**（本文写 :55-74 / :80-97 / :129-163）。
+- `LibraryScreen.kt` 入参 **:182-184**、透传 **:650-652**；`LibraryBranch.kt` 收集 **:85-86**、透传 **:139-141**。四跳人工核对**全接通且全部有消费方**。
+
+② **I1 是本方案的缺陷，不是实现者写错**——Step 4 的示例代码就把分子写成 `searchResults.size`。`searchResults` 是**多源融合网格**的行数（NAS + 百度 + Jamendo + 本地 + Meting），`artistPaging.totalCount` 是**网易艺人目录**的总数，两者只在「其它源零命中」时同源 ⇒ 常规路径可复现 `歌曲 (35/5)`（艺人 5 首 / NAS 命中 30 首），**分子大于分母**，而这行文案的存在理由恰恰是「让用户知道这是全量目录而非前 30 条」。**裁决：改分子为同源量**，落码 `artistPaging.songs.size`（`NetworkArtistExpansion.paging` 的 `songs = fetched.toList()`，就是本次展开的艺人行数）+ 显示门收紧为 `artistLoadedCount in 1..artistPaging.totalCount`（未命中艺人、首页空段时整行不显示）。
+⚠️ **给 Task 9 的口径提醒**：`library_songs_count_with_total` 的另一消费方 `ui/screens/library/browse/SongList.kt:101` 里 `songs` **就是**被分页的那个列表，所以它天然同源。复用这条文案时必须连带复用**口径**，不是只复用字符串。
+
+③ **D1 判定：`remember` 的 key 集 = `searchResults.size` + `hasMore`/`isLoading`/`isSearching`，⛔ 不是整个对象**。偏差是对的（本文 Step 3 未规定 key），保留并钉死一条**隐式不变式**：「派生体只读被 key 化的字段」。整对象入 key 有真实代价——`artistPaging` 每次 getter 新建实例、`songs` 是 `toList()`，入 key 等于每次发值做最多 100× 逐元素 `Song.equals`；`searchResults` 可达 566 再叠一份。已核：`totalCount`/`currentPage` 变了不入 key 无影响（派生体不读它们，它们各自的消费者走参数直读）。M2 建议把读值先提局部 `val` 让 key 集与读集字面相等，留 Task 9。
+
+④ **D1 附带判定：footer 不加 `key` 是正确的，不是妥协。** `items(..., key = { searchResults[it].id })` 与无 key 的 `item(span = GridItemSpan(maxLineSpan))` 混用同一 `LazyVerticalGrid` 合法——「Key was already used」只在**两个带 key 项**相等时触发；反过来给 footer 加常量 key，则与红线 1 的 `ntwk_meting_*` 或后端任意串 id **理论可撞**（概率极低但非零），不加即归零。代价只有尾项槽位稳定性，footer 是无状态纯 `Text` ⇒ 0。
+
+⑤ **`SongsPagingState().hasMore == true` 是一条 latent trap，本 Task 未修（归 Task 9）。** 默认值「无数据却声称还有下一页」，历史上没有消费方，本 diff 第一次把它接进触发链；今天靠**两道外部门**侥幸安全——UI 的 `totalItems > 0`（VM 构造初值与 `clearSearch()` 两处 `_searchResults` 恒空）与 VM 的 `if (!artistExpansion.isActive()) return`（进协程前返回，无 IO、无 StateFlow 写、无重组 ⇒ 无空转闪烁）。已核：**非艺人搜索路径根本不会把 `hasMore=true` 送到 UI**（`skipExpansion` 与未命中都先 `reset()` ⇒ `more = false`）。若要根治，改默认 `hasMore = false` 或加显式 `active` 标志——**但该状态同时被 `LibraryScreen.songsPaging` / `SongList` 消费**，属 Task 9 全量回归范畴。
+
+⑥ **Parked Minor（M1–M7，均不阻塞合入）**：M1 `artistPaging` 用全限定内联类型、与文件风格不一致（照抄本文所致）；M2 见 ③ 的隐式不变式；M3 `possiblyUnplayable` 排在 `else -> SourceBadge` **之前** ⇒ 被打标的行失去来源标签（顺序是本文明文，取舍需 owner 确认）；M4 角标语义上只有灰色，TV 过扫描下偏弱；M5 停在底部会**自动逐页连拉**（566 首约 6 次请求，与 `SongList` 既有行为一致）；M6 footer 注释「⛔ 不加 items 总数以外的 key」与实际「一个 key 都不加」有措辞差；M7 **本 Task 无测试** ⇒ 建议 Task 9 补一条「`LibraryBranch` 三个实参非默认值抵达 `SearchTab`」的接线断言，防的正是 Task 7 I-1 那类 defect。
+
+⑦ **⚠️ 必须留给 owner 真机验收的 6 项**（代码层无法定论）：1) 计数行数字口径在真机上是否刺眼；2) 「可能无版权」小字灰标与歌名（`weight(1f, fill=false)`）、`QualityBadge` 同排的拥挤度与灰字对比（M3/M4）；3) footer 的 D-pad 实际落点、出现/消失时列表是否跳动（源码推断不可聚焦 ⇒ 焦点留在最后一行、无黑洞）；4) 自动逐页连拉的观感（M5）；5) 计数行新位置（Step 4 挪到 `Spacer` 之后）与上方 `ActionBar` 的基线关系、**英文 locale** 与**手机竖屏 `isPortraitPhone` 分支**的实际渲染；6) 慢网/302 下真实触底时序会不会跳页或重复取同一 offset。
 
 ---
 
