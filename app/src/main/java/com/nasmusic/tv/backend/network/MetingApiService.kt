@@ -150,6 +150,22 @@ class MetingApiService(
             return@withContext emptyList()
         }
 
+        searchViaEndpoints(keyword)
+    }
+
+    /**
+     * Q2「网易优先」：**只**供统一搜索入口（`SearchAggregator`）调用。
+     *
+     * ⛔ 不得写进 [search]——那会把天气电台 / 歌单补全 / 手机遥控 / 换一批等全部消费方
+     *   一起换源（Q5 裁定「其他页面功能不受影响」）。
+     */
+    override suspend fun searchNativeFirst(keyword: String, limit: Int): List<Song> = withContext(Dispatchers.IO) {
+        AppLog.i(DIAG, "=== search start === keyword='$keyword'")
+        if (keyword.isBlank()) {
+            AppLog.i(DIAG, "search: keyword blank, return empty")
+            return@withContext emptyList()
+        }
+
         // Q2「网易优先」：客户端已注入且当前平台是 netease 时，先打免鉴权原生接口（§10.3 子闸门 2.5s）。
         // ⚠️ netease == null（既有单测、以及任何未注入的构造点）时行为与改造前**逐字符一致**——
         //   R1/R10 的"新功能全走新增代码路径"在这一行落地。

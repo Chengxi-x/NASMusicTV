@@ -188,7 +188,8 @@ enum class SearchType {
             if (MusicSourceType.NETWORK_MUSIC in sources && networkMusicManager != null) {
                 try {
                     withHardTimeout(NETWORK_TIMEOUT) {
-                        networkMusicManager.search(keyword)
+                        // Q2：「网易优先」只属于统一搜索入口（F1），⛔ 不得下沉到 MetingApiService.search()
+                        networkMusicManager.search(keyword, nativeFirst = true)
                             .filter { it.title.isNotBlank() }
                             .map { song ->
                                 RankedSong(song = song, source = MusicSourceType.NETWORK_MUSIC)

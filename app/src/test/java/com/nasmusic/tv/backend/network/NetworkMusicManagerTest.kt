@@ -38,6 +38,8 @@ class NetworkMusicManagerTest {
             private set
         var searchCallCount = 0
             private set
+        var searchNativeFirstCallCount = 0
+            private set
         var lastSearchQuery: String? = null
             private set
 
@@ -48,6 +50,11 @@ class NetworkMusicManagerTest {
             searchCallCount++
             lastSearchQuery = keyword
             return searchResults
+        }
+
+        override suspend fun searchNativeFirst(keyword: String, limit: Int): List<Song> {
+            searchNativeFirstCallCount++
+            return search(keyword, limit)
         }
 
         override suspend fun resolvePlayUrl(song: Song): String? {
@@ -164,6 +171,24 @@ class NetworkMusicManagerTest {
         assertEquals("file:///music.mp3", url)
         // service 未被调用
         assertEquals(0, fakeServiceA.resolvePlayUrlCallCount)
+    }
+
+    // ==================== F1：「网易优先」只在统一搜索入口生效 ====================
+
+    @Test
+    fun `search 默认不得走原生入口（其他页面的 Q5 护栏）`() = runBlocking {
+        fakeServiceA.setSearchResults(listOf(createSong()))
+        manager.search("晴天")
+        assertEquals(1, fakeServiceA.searchCallCount)
+        assertEquals("Q5：默认路径必须仍走 svc.search()", 0, fakeServiceA.searchNativeFirstCallCount)
+    }
+
+    @Test
+    fun `search nativeFirst=true 时才转发到 svc 的原生入口`() = runBlocking {
+        fakeServiceA.setSearchResults(listOf(createSong()))
+        manager.search("晴天", nativeFirst = true)
+        assertEquals(1, fakeServiceA.searchNativeFirstCallCount)
+        assertEquals("原生入口内部仍应回落到 svc.search() 取数", 1, fakeServiceA.searchCallCount)
     }
 
     // ==================== resolvePlayUrlWithCrossSourceFallback 测试 ====================

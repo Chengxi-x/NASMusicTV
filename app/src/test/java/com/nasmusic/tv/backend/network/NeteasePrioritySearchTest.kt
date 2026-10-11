@@ -1,6 +1,7 @@
 package com.nasmusic.tv.backend.network
 
 import com.nasmusic.tv.backend.network.netease.NeteaseOpenApi
+import com.nasmusic.tv.data.model.Song
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -30,6 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * ⛔ 不写"端点链全挂 ⇒ 结果为空"这类断言：`buildEndpointFallbackOrder` 会追加
  * 三个真实公网预设端点，那样写天然 flaky（见 MetingResolveTest 的同类注释）。
+ *
+ * F1（分支终审）：「网易优先」只属于 `searchNativeFirst`，`search()` 必须回到改造前的端点链语义。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -88,7 +91,7 @@ class NeteasePrioritySearchTest {
 
     @Test
     fun `网易原生可用时优先取原生结果且完全不打端点`() = runBlocking {
-        val songs = service().search("周杰伦")
+        val songs = service().searchNativeFirst("周杰伦")
         assertEquals(1, songs.size)
         assertEquals("晴天", songs.first().title)
         assertEquals(1, nativeCalls.get())
@@ -98,7 +101,7 @@ class NeteasePrioritySearchTest {
     @Test
     fun `网易原生失败必须自动回落端点且不得整批空`() = runBlocking {
         nativeDown = true
-        val songs = service().search("周杰伦")
+        val songs = service().searchNativeFirst("周杰伦")
         assertEquals("验收 6-②：网易挂了也要出结果", 1, songs.size)
         assertEquals("安静", songs.first().title)
         assertTrue(endpointCalls.get() >= 1)
@@ -106,9 +109,9 @@ class NeteasePrioritySearchTest {
 
     @Test
     fun `两条分支的结果形状逐字段同构（Q5 回归护栏）`() = runBlocking {
-        val native = service().search("周杰伦")
+        val native = service().searchNativeFirst("周杰伦")
         nativeDown = true
-        val endpoint = service().search("周杰伦")
+        val endpoint = service().searchNativeFirst("周杰伦")
         for (list in listOf(native, endpoint)) {
             val s = list.single()
             assertTrue("网络段必须是 isNetworkSong", s.isNetworkSong)
@@ -128,11 +131,11 @@ class NeteasePrioritySearchTest {
     fun `原生分支在途时 searchCoverUrl 仍必须拿到端点 pic 封面`() = runBlocking {
         val svc = service()
         assertEquals(
-            "前置条件：native 是通的（search() 本身会走原生分支）",
-            "晴天", svc.search("周杰伦").first().title
+            "前置条件：native 是通的（searchNativeFirst() 本身会走原生分支）",
+            "晴天", svc.searchNativeFirst("周杰伦").first().title
         )
         assertEquals(1, nativeCalls.get())
-        assertEquals("前置条件：search() 命中原生后没打端点", 0, endpointCalls.get())
+        assertEquals("前置条件：searchNativeFirst() 命中原生后没打端点", 0, endpointCalls.get())
 
         val cover = svc.searchCoverUrl("安静", "周杰伦")
         assertEquals(
@@ -142,16 +145,65 @@ class NeteasePrioritySearchTest {
         assertTrue("C2：searchCoverUrl 应打端点链", endpointCalls.get() >= 1)
     }
 
-    /** C2 的第二半：`search()` 自身的行为与 a861880 完全一致（原生命中就不打端点） */
+    /** C2 的第二半：`searchNativeFirst()` 自身的行为与搬动前完全一致（原生命中就不打端点） */
     @Test
-    fun `抽出端点链后 search 的网易优先语义不变`() = runBlocking {
+    fun `抽出端点链后 searchNativeFirst 的网易优先语义不变`() = runBlocking {
         val svc = service()
-        assertEquals("晴天", svc.search("周杰伦").first().title)
+        assertEquals("晴天", svc.searchNativeFirst("周杰伦").first().title)
         assertEquals(1, nativeCalls.get())
         assertEquals(0, endpointCalls.get())
         // 原生下线后才回落端点
         nativeDown = true
-        assertEquals("安静", svc.search("周杰伦").first().title)
+        assertEquals("安静", svc.searchNativeFirst("周杰伦").first().title)
         assertTrue(endpointCalls.get() >= 1)
     }
+
+    // ── F1（分支终审）：「网易优先」必须被关在统一搜索入口里 ─────────────
+    // Q5 裁定「其他页面功能不受影响」：天气电台 / 歌单补全 / MediaLibraryTree /
+    // 手机遥控搜索 / 换一批 全部走 `search()`，池子不得从「~30 首带封面」换成「≤100 首无封面」。
+
+    @Test
+    fun `F1 负向：search 在原生可用时绝不触碰原生接口`() = runBlocking {
+        val songs = service().search("周杰伦")
+        assertEquals(
+            "search() 必须回到改造前的端点链结果（带封面的 安静）",
+            "安静", songs.first().title
+        )
+        assertEquals("Q5 违规：search() 打了 music.163.com 原生接口", 0, nativeCalls.get())
+        assertTrue(endpointCalls.get() >= 1)
+    }
+
+    @Test
+    fun `F1 正向：同一个服务实例上 searchNativeFirst 才会打原生`() = runBlocking {
+        val svc = service()
+        svc.search("周杰伦")
+        assertEquals(0, nativeCalls.get())
+        val songs = svc.searchNativeFirst("周杰伦")
+        assertEquals("晴天", songs.first().title)
+        assertEquals(1, nativeCalls.get())
+    }
+
+    /** 接口默认实现：非 Meting 源（Jamendo / 百度）不覆写 `searchNativeFirst` 也必须原样回落到 `search` */
+    @Test
+    fun `F1 默认实现回落到 search——非 Meting 源零改动`() = runBlocking {
+        var searchCalls = 0
+        val fake = object : NetworkMusicService {
+            override val sourceId = "plain"
+            override suspend fun search(keyword: String, limit: Int): List<Song> {
+                searchCalls++
+                return listOf(songViaEndpoint())
+            }
+            override suspend fun resolvePlayUrl(song: Song): String? = null
+            override suspend fun resolveLyrics(song: Song): String? = null
+            override suspend fun getPlaylist(playlistId: String): List<Song> = emptyList()
+        }
+        val viaNative = fake.searchNativeFirst("周杰伦")
+        assertEquals(1, searchCalls)
+        assertEquals(1, viaNative.size)
+    }
+
+    private fun songViaEndpoint(): Song = Song(
+        id = NetworkSongId.forNetworkSong("plain", "1"), title = "t", artist = "a",
+        isNetworkSong = true, networkSource = "plain", networkId = "1"
+    )
 }

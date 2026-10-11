@@ -31,6 +31,11 @@ interface NetworkMusicService {
     suspend fun search(keyword: String, limit: Int = 0): List<Song>
 
     /**
+     * Q2 的「网易优先」入口：**只有统一搜索**用它。默认等价于 [search] ⇒ 非 Meting 源零改动。
+     */
+    suspend fun searchNativeFirst(keyword: String, limit: Int = 30): List<Song> = search(keyword)
+
+    /**
      * 目录感知搜索（网盘等按目录组织文件的源专用）。
      *
      * 网盘常以"粤语 / 经典老歌 / 民谣"等标签作为目录名组织音乐。

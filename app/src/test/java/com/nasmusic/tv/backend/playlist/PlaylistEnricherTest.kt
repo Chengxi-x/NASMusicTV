@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.mock
@@ -87,7 +88,7 @@ class PlaylistEnricherTest {
     fun `NAS result with different normalizeKey is ignored`() = runBlocking {
         val nasHit = Song(id = "nas-2", title = "海阔天空", artist = "王菲")  // 同标题不同歌手
         `when`(adapter.searchSongs(anyString())).thenReturn(listOf(nasHit))
-        `when`(networkMusicManager.search(anyString())).thenReturn(emptyList())
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(emptyList())
 
         assertNull(enricher.enrichSong(stubSong("海阔天空", "Beyond")))
     }
@@ -99,7 +100,7 @@ class PlaylistEnricherTest {
             id = "ntwk_meting_1", title = "光辉岁月", artist = "Beyond",
             isNetworkSong = true, networkSource = "meting", streamUrl = "http://cdn/x.mp3"
         )
-        `when`(networkMusicManager.search(anyString())).thenReturn(listOf(netHit))
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(listOf(netHit))
 
         val result = enricher.enrichSong(stubSong("光辉岁月", "Beyond"))
 
@@ -117,7 +118,7 @@ class PlaylistEnricherTest {
             id = "ntwk_meting_2", title = "真的爱你", artist = "Beyond",
             isNetworkSong = true, networkSource = "meting"
         )
-        `when`(networkMusicManager.search(anyString())).thenReturn(listOf(netHit))
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(listOf(netHit))
 
         val result = enricher.enrichSong(stubSong("真的爱你", "Beyond"))
 
@@ -133,7 +134,7 @@ class PlaylistEnricherTest {
             id = "ntwk_meting_3", title = "真的爱你", artist = "张学友",
             isNetworkSong = true, networkSource = "meting"
         )
-        `when`(networkMusicManager.search(anyString())).thenReturn(listOf(netHit))
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(listOf(netHit))
 
         assertNull(enricher.enrichSong(stubSong("真的爱你", "Beyond")))
     }
@@ -143,7 +144,7 @@ class PlaylistEnricherTest {
         `when`(adapter.searchSongs(anyString())).thenReturn(emptyList())
         val wrong = Song(id = "ntwk_meting_a", title = "晴天", artist = "其他", isNetworkSong = true)
         val exact = Song(id = "ntwk_meting_b", title = "海阔天空", artist = "Beyond", isNetworkSong = true)
-        `when`(networkMusicManager.search(anyString())).thenReturn(listOf(wrong, exact))
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(listOf(wrong, exact))
 
         val result = enricher.enrichSong(stubSong("海阔天空"))   // artist 为空
 
@@ -155,7 +156,7 @@ class PlaylistEnricherTest {
     fun `blank artist falls back to top1 when no exact title match`() = runBlocking {
         `when`(adapter.searchSongs(anyString())).thenReturn(emptyList())
         val hit = Song(id = "ntwk_meting_c", title = "夜曲", artist = "周杰伦", isNetworkSong = true)
-        `when`(networkMusicManager.search(anyString())).thenReturn(listOf(hit))
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(listOf(hit))
 
         val result = enricher.enrichSong(stubSong("夜曲"))       // artist 为空
 
@@ -190,7 +191,7 @@ class PlaylistEnricherTest {
         val playlist = prefs.createLocalPlaylist("测试歌单")
         prefs.addSongToPlaylist(playlist.id, stub)
         `when`(adapter.searchSongs(anyString())).thenReturn(emptyList())
-        `when`(networkMusicManager.search(anyString())).thenReturn(emptyList())
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(emptyList())
 
         val replaced = enricher.enrichAndPersist(playlist.id, stub)
 
@@ -238,7 +239,7 @@ class PlaylistEnricherTest {
         `when`(checker.check("http://example.com/a.mp3"))
             .thenReturn(UrlReachabilityChecker.Result.TIMEOUT to null)
         `when`(adapter.searchSongs(anyString())).thenReturn(emptyList())
-        `when`(networkMusicManager.search(anyString())).thenReturn(emptyList())
+        `when`(networkMusicManager.search(anyString(), anyBoolean())).thenReturn(emptyList())
 
         assertFalse(enricher.onPlaybackFailure(stub, checker))
 

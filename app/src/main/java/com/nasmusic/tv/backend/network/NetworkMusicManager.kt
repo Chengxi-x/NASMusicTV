@@ -119,8 +119,10 @@ class NetworkMusicManager(
      *
      * 策略：先查默认源；若默认源返回空或异常，依次尝试其他源（fallback）。
      * 任一源返回非空结果即返回，不再尝试后续源。
+     *
+     * @param nativeFirst Q2 的「网易优先」，**只有统一搜索入口**传 true（其余调用点必须保持端点语义）
      */
-    suspend fun search(keyword: String): List<Song> = withContext(Dispatchers.IO) {
+    suspend fun search(keyword: String, nativeFirst: Boolean = false): List<Song> = withContext(Dispatchers.IO) {
         val currentDefault = defaultSource
         AppLog.i("MetingDiag", "=== NetworkMusicManager.search === keyword='$keyword' defaultSource='$currentDefault'")
         if (keyword.isBlank()) return@withContext emptyList()
@@ -130,7 +132,7 @@ class NetworkMusicManager(
         for (svc in ordered) {
             try {
                 AppLog.i("MetingDiag", "search: trying source=${svc.sourceId}")
-                val results = svc.search(keyword)
+                val results = if (nativeFirst) svc.searchNativeFirst(keyword) else svc.search(keyword)
                 if (results.isNotEmpty()) {
                     AppLog.i("MetingDiag", "search '$keyword' hit source=${svc.sourceId} count=${results.size}")
                     return@withContext results
