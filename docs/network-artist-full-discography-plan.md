@@ -1,6 +1,6 @@
 # 网络艺人全量歌曲开发方案（突破统一搜索 30 首上限）
 
-- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–6 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`/`7573e1f`），Task 7–9 待开发。
+- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–7 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`/`7573e1f`/`1ba04c7`+`9410fec`+`f6c4fb4`），Task 8–9 待开发。
 - **日期**：2026-10-10
 - **目标模块**：`backend/network/netease/`（新增网易免鉴权接口层 `NeteaseOpenApi`）、`backend/network/`（`NetworkSongId`/`NetworkArtistTypes`/`NetworkArtistExpansion`/`PlayabilityProbe`/`CandidatePicker`/`ReplaceChain` 六个新件 + `MetingApiService` 搜索改网易优先与可播判据做实 + `NetworkMusicService` 接口扩展 + `NetworkMusicManager` 路由/负面缓存/同源重搜）、`backend/SearchAggregator.kt`（一行超时）、`ui/viewmodel/`（**不新增 VM**，改 `SearchViewModel` 与 `PlayerViewModel`）、`ui/screens/library/SearchTab.kt` + `ui/components/song/UnifiedSongRow.kt`（显示侧）。逐文件清单见 §11 的 File map
 - **数字来源**：`docs/archive/verification/scripts/netease_artist_probe.py`（可复跑仪表）。本文数字**只允许**抄自以下四轮已存档日志（UTF-8 + LF，随文档入库；`logs_temp/` 里那些是临时件，会被清理）。目录 `docs/archive/verification/netease_artist_probe/`：
@@ -9,7 +9,7 @@
   - **23:43 延迟轮** `--latency 8 --pacing 1.2` → **46 断言 / exit 0 / FAIL 0 / WARN 5** → `probe_v4_latency.log`：§2 L 组 → §10.3 的 5s 预算分配；**并复现了 23:28 轮的字段覆盖结论**（`privilege.st` 0/100、`album.picUrl` 0/100 两轮一致）
   - ⚠️ **唯一例外**：§2 E 组（判据验证）来自同日 21:32 的 `--play 12` 轮、22:13 轮未复跑，引用时注意
   - ⛔ **改任何结论必须重跑脚本再改文档**，不许手抄、不许凭记忆
-- **版本**：**v2.1** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块**；v2.1：Task 6 落码后的入口形态（成员函数而非扩展）、两条 plan 级匹配风险与锚点漂移，见 §11 Task 6 末尾 as-built 块）。修订说明见 §附录 C
+- **版本**：**v2.2** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块**；v2.1：Task 6 落码后的入口形态（成员函数而非扩展）、两条 plan 级匹配风险与锚点漂移，见 §11 Task 6 末尾 as-built 块**；v2.2：Task 7 的接线门（源码文本门 + 穷尽 when）与"同源层上线激活 Task 6 两条匹配风险"，见 §11 Task 7 末尾 as-built 块）。修订说明见 §附录 C
 - **前置阅读**：`docs/archive/multi-bitrate-playback-download-plan.md`（音质档位与直链缓存语义）、`docs/archive/network-music-upgrade-plan.md`
 
 ---
@@ -3440,6 +3440,21 @@ git add app/src/main/java/com/nasmusic/tv/backend/network/ReplaceChain.kt \
         app/src/test/java/com/nasmusic/tv/backend/network/ReplaceChainTest.kt
 git commit -m "feat(player): 播放替换接入同源重搜优先链与替换文案"
 ```
+
+#### v2.2 as-built（1ba04c7 + 修复轮 9410fec + f6c4fb4，评审 Approved：0 Critical / 1 Important 已闭 / 若干 Minor）
+
+**① 本 Task 的锚点全部准确**（与 Task 5/6 不同，无需校正）：`lastCrossSourceReplacedId` 4 处 :99/:466/:473/:487、`cross_source_replace_playing` values :881 / values-en :1034。**Ruling 4 兑现**：派发时按内容定位而不写死行号。改名后 `grep -rn lastCrossSourceReplacedId app/src` = **0 命中**。
+
+**② ⚠️ Task 6 的入口是成员函数**（`NetworkMusicManager.resolveSameSourceReplacement`，`NetworkMusicManager.kt:512`），不是 Produces 文本写的顶层扩展；调用形状 `manager.resolveSameSourceReplacement(song)` 无差别，⛔ 别去找一个不存在的扩展 import。
+
+**③ 接线本体无回归**：评审逐行核对被删的 `-` 行，代数闸门、"已是替换产物⇒放弃"规则、队列索引改写、文案发射、日志五处**全部有存活对应行**；`tryCrossSourceReplace` 本体逐字节未动。**本轮真正的风险不在新代码，在改写既有 `tryReplaceByReSearch` 时会顺手丢掉旧闸门**——已排除。
+
+**④ Important I-1 已闭（修复轮 1，9410fec）**：`AndroidViewModel` 不可单测 ⇒ 沿用本仓库既有的**源码文本门**替代（范本 `ArtistSongsPagingTest.kt:302-329`、`ci/LocalMusicGateTest.kt`），新增 `ReplaceChainWiringGateTest`（7 例）钉住 G1 `plan(song.id, lastReplacedSongId)` / G2 两层各归各自 handler 且禁交叉 / G3 新文案键与 SAME_SOURCE 绑定 / G4 负自检 / G5 双 locale 且 `%1$s`+`%2$s` 齐 / G6 旧字段名全仓不存在。**非空洞性由真变异证明**（改坏 ⇒ 指定哪几例转红，改回后 md5 对齐、无残留）。同轮把 `tryReplaceByReSearch` 的两条"放弃/两层皆空"日志从 `AppLog.w` 升为 **`AppLog.e`**——`d/i/w` 被 R8 连字符串一起折掉，release 下静默跳曲不会留下任何痕迹（AGENTS.md 既有口径）。
+**修复轮 2（f6c4fb4）**：文案分发 `if/else` → **穷尽 `when`**（新增 `ReplaceLayer` 成员时由编译器报缺分支，而不是悄悄套用跨源文案），并把 G3 从"控制流形状"解绑为**形状无关的名称关联**——门若钉在 `if (usedLayer == …)` 字面量上，下一次合法重构会让它假红，然后被人删掉。G6 的自证从编译期恒真改为对临时目录跑**真实 `walkTopDown` 扫描**。
+
+**⑤ 本 Task 的连锁后果（必须让 owner 知情）**：`resolveSameSourceReplacement` 一旦上线，Task 6 挂起的两条 **plan 级**风险同时被激活——(a) `titleMatches` 前缀无分隔符护栏 ⇒ 同艺人下一首"标题以原曲开头"的**不同歌**（`告白`→`告白气球`）可能被自动替换并播出；(b) 候选不校验艺人 ⇒ 同名**翻唱**可能被选中。二者都不是实现缺陷，收紧要改 §3.8 的匹配定义 + 对应测试，属规格级决策。
+
+**⑥ 测量**：全量 **181 类 / 1989 例 / 0 失败**（1ba04c7 时 1982，两轮修复后计数不变）；`lintDebug` 0 errors / 128 既有警告。遗留 Minor（分支终审）：`lastReplacedSongId` 从不清空、`:508` 成功路径仍 `AppLog.w`、跨源层会第三次重解析原曲（`NetworkMusicManager.kt:447`）。
 
 ---
 
