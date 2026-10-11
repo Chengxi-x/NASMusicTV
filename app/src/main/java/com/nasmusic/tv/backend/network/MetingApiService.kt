@@ -62,7 +62,7 @@ class MetingApiService(
     private val probe: PlayabilityProbe? = null
 ) : NetworkMusicService {
 
-    override val sourceId = "meting"
+    override val sourceId = NetworkSongId.METING_SOURCE
 
     // 安全修复（C-1）：移除 trust-all，恢复系统默认证书校验。
     // 原实现因老盒子缺 Let's Encrypt 根证书而放宽校验；现恢复严格校验，

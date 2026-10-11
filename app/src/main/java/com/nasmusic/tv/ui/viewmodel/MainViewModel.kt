@@ -26,6 +26,7 @@ import com.nasmusic.tv.backend.export.ExportState
 import com.nasmusic.tv.backend.local.EmbeddedCoverExtractor
 import com.nasmusic.tv.backend.local.MusicMerger
 import com.nasmusic.tv.backend.local.StorageMonitor
+import com.nasmusic.tv.backend.network.NetworkSongId
 import com.nasmusic.tv.backend.network.QualityScope
 import com.nasmusic.tv.backend.network.QualityTiers
 import com.nasmusic.tv.backend.network.mv.MvSearchManager
@@ -1222,7 +1223,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app), RemoteCallbacks {
                 val networkSongs = nasMusicApp.networkMusicManager.getPlaylist(playlistId)
                 if (networkSongs.isNotEmpty()) {
                     AppLog.d("NASMusic", "loadRandomSongs: got ${networkSongs.size} songs from '${playlistName}'")
-                    val tagged = networkSongs.map { it.copy(isNetworkSong = true, networkSource = "meting") }
+                    val tagged = networkSongs.map { it.copy(isNetworkSong = true, networkSource = NetworkSongId.METING_SOURCE) }
                     allSongs.addAll(tagged)
                 }
             } catch (e: Exception) {

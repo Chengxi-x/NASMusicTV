@@ -14,6 +14,7 @@ import com.nasmusic.tv.backend.download.model.DownloadState
 import com.nasmusic.tv.backend.download.model.downloadKey
 import com.nasmusic.tv.backend.download.model.downloadKeyOf
 import com.nasmusic.tv.backend.download.model.isDownloadableSong
+import com.nasmusic.tv.backend.network.NetworkSongId
 import com.nasmusic.tv.backend.network.QualityTiers
 import com.nasmusic.tv.data.model.Song
 import com.nasmusic.tv.data.model.StorageType
@@ -45,8 +46,8 @@ class DownloadViewModel(
     private val playerManager: PlayerManager = nasMusicApp.playerManager
 
     private companion object {
-        /** Meting 源标识：唯一支持多码率的网络源（方案 §2.5） */
-        const val METING_SOURCE = "meting"
+        /** Meting 源标识：唯一支持多码率的网络源（方案 §2.5）；权威值见 NetworkSongId.METING_SOURCE（F5） */
+        const val METING_SOURCE = NetworkSongId.METING_SOURCE
     }
 
     /** 直链解析器（复用 NasMusicApp 中已注入 detailed lambda 的实例） */

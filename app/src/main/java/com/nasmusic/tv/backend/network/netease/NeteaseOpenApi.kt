@@ -38,8 +38,6 @@ class NeteaseOpenApi(
         private const val MAX_LIMIT = 100
         private const val CONNECT_READ_TIMEOUT_MS = 2_500L   // §10.3 子预算（实测 p95 0.368s）
 
-        /** 与 MetingApiService.sourceId 一致（红线 2）；⛔ 绝不能写 "netease" */
-        private const val METING_SOURCE = "meting"
         private const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -165,7 +163,7 @@ class NeteaseOpenApi(
         val firstArtist = artists?.firstOrNull()?.asJsonObject
         val albumObj = s.get("album")?.asJsonObject
         return Song(
-            id = NetworkSongId.forNetworkSong(METING_SOURCE, netId),   // 红线 1 + 红线 2
+            id = NetworkSongId.forNetworkSong(NetworkSongId.METING_SOURCE, netId),   // 红线 1 + 红线 2
             title = title,
             artist = artist,
             artistId = artistIdOverride ?: firstArtist?.get("id").idString(),
@@ -174,7 +172,7 @@ class NeteaseOpenApi(
             coverUrl = albumObj?.get("picUrl")?.asString,              // type=1 → null（§2 C.1）
             durationMs = s.get("duration")?.asLong ?: 0L,              // 网易已是毫秒
             isNetworkSong = true,
-            networkSource = METING_SOURCE,                             // ⛔ 不是 "netease"
+            networkSource = NetworkSongId.METING_SOURCE,                             // ⛔ 不是 "netease"
             networkId = netId
         )
     }
@@ -237,7 +235,7 @@ class NeteaseOpenApi(
             val st = privilege.get("st").stIntOrNull() ?: return@forEach
             if (st == 0) return@forEach
             val id = o.get("id").idString() ?: return@forEach
-            out.add(NetworkSongId.forNetworkSong(METING_SOURCE, id))
+            out.add(NetworkSongId.forNetworkSong(NetworkSongId.METING_SOURCE, id))
         }
         return out
     }

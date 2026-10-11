@@ -15,6 +15,7 @@ import com.nasmusic.tv.backend.network.HttpPlayabilityProbe
 import com.nasmusic.tv.backend.network.JamendoService
 import com.nasmusic.tv.backend.network.MetingApiService
 import com.nasmusic.tv.backend.network.NetworkMusicManager
+import com.nasmusic.tv.backend.network.NetworkSongId
 import com.nasmusic.tv.backend.radio.RadioBrowserClient
 import com.nasmusic.tv.backend.local.AlbumCoverResolver
 import com.nasmusic.tv.backend.local.ArtistCoverResolver
@@ -302,7 +303,7 @@ val baiduOAuthClient: BaiduOAuthClient by lazy { BaiduOAuthClient(this, baiduOkH
         playerManager.setModelDownloadManager(modelDownloadManager)
         // 网络音乐管理器：注册所有网络源，默认源与 Meting 端点均由 AppSettings 动态提供
         val services = mapOf(
-            "meting" to MetingApiService(
+            NetworkSongId.METING_SOURCE to MetingApiService(
                 baseUrlProvider = { appPreferences.network.getMetingApiBaseUrlSync() },
                 serverProvider = { appPreferences.network.getMusicSourceSync() },
                 // F2-6：音质档位（AUTO=0 不传 br；显式档位走降级链）

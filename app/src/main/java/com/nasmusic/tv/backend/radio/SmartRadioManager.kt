@@ -1,6 +1,7 @@
 package com.nasmusic.tv.backend.radio
 
 import com.nasmusic.tv.backend.BackendRegistry
+import com.nasmusic.tv.backend.network.NetworkSongId
 import com.nasmusic.tv.data.model.Song
 import com.nasmusic.tv.util.AppLog
 import kotlinx.coroutines.CoroutineScope
@@ -306,7 +307,7 @@ class SmartRadioManager(
                 val songs = provider(pid)
                 if (songs.isNotEmpty()) {
                     result.addAll(songs.shuffled().take(NETWORK_PLAYLIST_SONG_CAP).map {
-                        it.copy(isNetworkSong = true, networkSource = it.networkSource ?: "meting")
+                        it.copy(isNetworkSong = true, networkSource = it.networkSource ?: NetworkSongId.METING_SOURCE)
                     })
                 }
             } catch (e: Exception) {

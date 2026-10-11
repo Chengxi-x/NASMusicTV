@@ -161,13 +161,6 @@ class NetworkArtistExpansion(
         const val DEFAULT_PAGE_SIZE = 100
 
         /**
-         * Meting 家族的路由键（`NetworkMusicManager.services` 的键、`MetingApiService.sourceId`，
-         * 也是红线 2 里 `Song.networkSource` 的**唯一**合法取值——⛔ 不是 `"netease"`，
-         * `"netease"` 是 Meting 的 `server` 查询参数，语义不同）。
-         */
-        private const val METING_SOURCE = "meting"
-
-        /**
          * 统一搜索的**网络段判据**（C1）：只有 Meting 家族归本类管辖，其余一切原样透传。
          *
          * ⛔ 不能用 `isNetworkSong` 当判据：
@@ -181,7 +174,7 @@ class NetworkArtistExpansion(
          * （NAS / 百度 / Jamendo / 电台 / 本地）。
          */
         internal fun splitMetingSegment(songs: List<Song>): Pair<List<Song>, List<Song>> =
-            songs.partition { it.isNetworkSong && it.networkSource == METING_SOURCE }
+            songs.partition { it.isNetworkSong && it.networkSource == NetworkSongId.METING_SOURCE }
 
         /**
          * 强命中判定（§10.2）：归一化全等 + 取"首屏出现次数最多"的 artistId。

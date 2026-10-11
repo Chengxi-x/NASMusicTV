@@ -2,6 +2,7 @@ package com.nasmusic.tv.backend.download.model
 
 import com.nasmusic.tv.data.model.Song
 import com.nasmusic.tv.data.model.RadioStation
+import com.nasmusic.tv.backend.network.NetworkSongId
 import com.nasmusic.tv.backend.network.QualityTiers
 
 /**
@@ -47,8 +48,8 @@ fun Song.downloadKeyOf(quality: Int): String {
     return "$downloadKey:q$quality"
 }
 
-/** Meting 源标识（与 MetingApiService.SOURCE_ID 一致，此处避免循环依赖） */
-private const val METING_SOURCE = "meting"
+/** Meting 源标识：权威常量 NetworkSongId.METING_SOURCE 的本地别名（F5 收口，红线 2） */
+private const val METING_SOURCE = NetworkSongId.METING_SOURCE
 
 /**
  * 在下载状态表中查询某曲的 UI 状态（多码率方案 §4.2.2 配套）。

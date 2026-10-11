@@ -1,5 +1,6 @@
 package com.nasmusic.tv.backend.download
 
+import com.nasmusic.tv.backend.network.NetworkSongId
 import com.nasmusic.tv.backend.network.QualityTiers
 import com.nasmusic.tv.data.model.Song
 import com.nasmusic.tv.util.ArtistSplitter
@@ -180,8 +181,8 @@ class DownloadPathBuilder(private val rootProvider: () -> File) {
     }
 
     companion object {
-        /** 与 DownloadKeys.METING_SOURCE 同步（private 不可跨用，本地硬编码；改源标识时两处同步） */
-        private const val METING_SOURCE = "meting"
+        /** Meting 源标识：权威常量 NetworkSongId.METING_SOURCE 的本地别名（F5 收口，红线 2） */
+        private const val METING_SOURCE = NetworkSongId.METING_SOURCE
 
         private val ILLEGAL = Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]")
         private const val MAX_SEGMENT = 80
