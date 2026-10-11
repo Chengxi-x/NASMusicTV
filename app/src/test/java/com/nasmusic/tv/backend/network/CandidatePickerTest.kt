@@ -133,4 +133,26 @@ class CandidatePickerTest {
         assertFalse(m("晴天", "晴天雨"))               // 反方向不算
         assertFalse(m("晴", "晴天"))                   // 短标题不当前缀用
     }
+
+    /**
+     * F10（终审裁定 (a)）：前缀匹配必须带 CJK 续写护栏——
+     * "告白"→"告白气球" 是换了一首歌，在 Q7③ 的自动替换语义下不可发现，必须拒；
+     * 拉丁/数字后缀是**有意放行**的版本变体（正是同源重搜的目标形态），钉住防后来者收紧过头。
+     */
+    @Test
+    fun `titleMatches 前缀之后不得是 CJK 续写，但拉丁数字后缀有意放行`() {
+        fun m(c: String, o: String) = CandidatePicker.titleMatches(c, o)
+        assertFalse("本次修复的正主：《告白》不能被自动换成《告白气球》", m("告白气球", "告白"))
+        assertFalse("反方向：候选更短同样不算", m("告白", "告白气球"))
+        assertTrue(m("晴天remix", "晴天"))              // 拉丁后缀 = 版本变体，放行
+        assertTrue(m("晴天2", "晴天"))                  // 数字后缀，放行
+        assertTrue("全角括号经 NFKC 归一后首字符是 '('，非 CJK ⇒ 放行", m("告白（live）", "告白"))
+    }
+
+    @Test
+    fun `pick 不把 CJK 前缀续写当同名——告白不会自动换成告白气球`() = runBlocking {
+        val h = Harness(listOf(song("2", "告白气球")), playable = setOf("ntwk_meting_2"))
+        assertNull(h.picker().pick("告白", "周杰伦", excludeId = "ntwk_meting_1"))
+        assertTrue("护栏在自动替换链（ReplaceChain 同源层）上必须可达：续写候选一次都不该被解析", h.resolved.isEmpty())
+    }
 }

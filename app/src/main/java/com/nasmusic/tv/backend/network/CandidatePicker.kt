@@ -68,17 +68,26 @@ class CandidatePicker(
         const val MAX_CANDIDATES = 3
 
         /**
-         * 标题判定：**归一化全等** 或 **候选以原标题为前缀**（版本后缀是同源重搜的主要目标形态）。
+         * 标题判定：**归一化全等** 或 **候选以原标题为前缀且前缀之后的首字符不是 CJK 汉字**
+         * （版本后缀是同源重搜的主要目标形态）。
          *
          * ⛔ 不做包含/编辑距离之类的模糊——"晴天"重搜回"安静"并自动替用户播放，
          * 在 Q7③（自动处理、无需用户关注）下是不可接受的事故。
+         * F10（终审裁定 (a)）：光认前缀还放行**中文前缀续写**——"告白" ⊂ "告白气球"，
+         * 那是另一首歌，必须挡下；拉丁/数字后缀（"晴天MV"/"晴天remix"/"晴天2"）是**有意放行**的版本变体。
          * 归一化复用 `ArtistSplitter.normalizeKey`（它只是 NFKC + 空白折叠 + lowercase，与"艺人"无关）。
          */
         internal fun titleMatches(candidateTitle: String, originalTitle: String): Boolean {
             val c = ArtistSplitter.normalizeKey(candidateTitle)
             val o = ArtistSplitter.normalizeKey(originalTitle)
             if (c.isEmpty() || o.isEmpty()) return false
-            return c == o || (o.length >= 2 && c.startsWith(o))
+            val rest = if (c.startsWith(o)) c.substring(o.length) else ""
+            // 终审裁定 (a)：只挡 CJK 续写（"告白" → "告白气球"），⛔ 不挡拉丁/数字后缀
+            // （既有测试 `titleMatches("晴天MV", "晴天") == true` 是**有意的**：
+            //   "晴天MV"/"晴天remix"/"晴天2" 都属于版本变体，正是同源重搜的目标形态。）
+            // rest 为空只可能是 c == o（由左支覆盖）或非前缀（startsWith 支本就不成立），`?: false` 取保守值。
+            val boundaryOk = rest.firstOrNull()?.let { ch -> ch !in '\u4E00'..'\u9FFF' } ?: false
+            return c == o || (o.length >= 2 && c.startsWith(o) && boundaryOk)
         }
     }
 }
