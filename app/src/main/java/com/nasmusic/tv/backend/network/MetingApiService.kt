@@ -432,7 +432,7 @@ class MetingApiService(
                         return@mapIndexedNotNull null
                     }
                     Song(
-                        id = "ntwk_${sourceId}_$netId",
+                        id = NetworkSongId.forNetworkSong(sourceId, netId),
                         title = fixedTitle,
                         artist = fixedAuthor.orEmpty(),
                         album = fixedAlbum.orEmpty(),
