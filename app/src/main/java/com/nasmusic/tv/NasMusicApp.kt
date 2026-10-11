@@ -32,6 +32,7 @@ import com.nasmusic.tv.backend.playlist.PlaylistEnricher
 import com.nasmusic.tv.backend.network.mv.BilibiliMvService
 import com.nasmusic.tv.backend.network.mv.MvSearchManager
 import com.nasmusic.tv.backend.network.mv.MvPersistentCache
+import com.nasmusic.tv.backend.network.netease.NeteaseOpenApi
 import com.nasmusic.tv.data.model.CloudDriveType
 import com.nasmusic.tv.data.prefs.AppPreferences
 import com.nasmusic.tv.player.ModelDownloadManager
@@ -304,7 +305,11 @@ val baiduOAuthClient: BaiduOAuthClient by lazy { BaiduOAuthClient(this, baiduOkH
                 baseUrlProvider = { appPreferences.network.getMetingApiBaseUrlSync() },
                 serverProvider = { appPreferences.network.getMusicSourceSync() },
                 // F2-6：音质档位（AUTO=0 不传 br；显式档位走降级链）
-                qualityTierProvider = { appPreferences.getQualityTierSync() }
+                qualityTierProvider = { appPreferences.getQualityTierSync() },
+                // 艺人全量方案 Q2：网易免鉴权优先。基址复用歌词那个设置项（不新增设置项）
+                netease = NeteaseOpenApi(
+                    baseUrlProvider = { appPreferences.lyrics.getLyricsNeteaseBaseUrlSync() }
+                )
             )
         )
         networkMusicManager = NetworkMusicManager(

@@ -145,6 +145,25 @@ class MetingApiService(
             return@withContext emptyList()
         }
 
+        // Q2「网易优先」：客户端已注入且当前平台是 netease 时，先打免鉴权原生接口（§10.3 子闸门 2.5s）。
+        // ⚠️ netease == null（既有单测、以及任何未注入的构造点）时行为与改造前**逐字符一致**——
+        //   R1/R10 的"新功能全走新增代码路径"在这一行落地。
+        if (netease != null && serverProvider() == DEFAULT_SERVER) {
+            val nativeSongs = try {
+                netease.searchSongs(keyword)
+            } catch (e: Exception) {
+                // 网易随时下线（R1）是预期内常态：这里只降级，绝不上抛、绝不返回空集
+                AppLog.w(DIAG, "search: netease-native threw ${e.javaClass.simpleName}: ${e.message}")
+                emptyList()
+            }
+            if (nativeSongs.isNotEmpty()) {
+                AppLog.i(DIAG, "search: netease-native hit=${nativeSongs.size}, endpoint chain skipped")
+                AppLog.i(DIAG, "=== search end ===")
+                return@withContext nativeSongs
+            }
+            AppLog.w(DIAG, "search: netease-native empty/offline, falling back to endpoint chain")
+        }
+
         // 构造端点尝试顺序：当前选中的端点优先，然后是其他预设端点
         val currentBase = baseUrl
         val endpoints = buildEndpointFallbackOrder(currentBase)

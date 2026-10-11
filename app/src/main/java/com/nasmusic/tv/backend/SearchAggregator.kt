@@ -53,7 +53,7 @@ enum class SearchType {
  * 并行搜索 NAS、网络音乐、百度网盘、Jamendo、本地音乐五个数据源，
  * 合并去重后返回统一结果。单个源超时或异常不影响其他源。
  *
-     * 超时策略：NAS 15s、网络音乐 5s、百度网盘 8s、Jamendo 5s、本地 2s
+     * 超时策略：NAS 15s、网络音乐 8s、百度网盘 8s、Jamendo 5s、本地 2s
      */
     class SearchAggregator(
         private val backendRegistry: BackendRegistry?,
@@ -72,7 +72,11 @@ enum class SearchType {
         companion object {
             private const val TAG = "SearchAggregator"
             private const val NAS_TIMEOUT = 15_000L
-            private const val NETWORK_TIMEOUT = 5_000L
+            // 艺人全量方案 §10.3：网易优先 2.5s 子闸门 + Meting 端点链 p95 上界 ≈4.85s（§2 L 组）
+            // → 原 5s 会在"网易先跑满再走端点"的串行链上直接超时。
+            // ⚠️ 放宽到 8s **不拖累整页**：分支 async 后逐个 await（`:291-298`），总上界取 max，
+            //   而 NAS_TIMEOUT = 15_000L（`:74`）仍更大——见 §9.1 T3。
+            private const val NETWORK_TIMEOUT = 8_000L
             private const val BAIDU_TIMEOUT = 8_000L
             private const val JAMENDO_TIMEOUT = 5_000L
             private const val LOCAL_TIMEOUT = 2_000L

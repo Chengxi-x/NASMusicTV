@@ -9,8 +9,10 @@ import com.nasmusic.tv.backend.BackendRegistry
 import com.nasmusic.tv.backend.SearchAggregator
 import com.nasmusic.tv.backend.SearchType
 import com.nasmusic.tv.backend.FilterMode
+import com.nasmusic.tv.backend.network.NetworkArtistExpansion
 import com.nasmusic.tv.data.model.MusicSourceType
 import com.nasmusic.tv.data.model.Song
+import com.nasmusic.tv.data.model.SongsPagingState
 import com.nasmusic.tv.data.model.UiState
 import com.nasmusic.tv.util.AppLog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +46,20 @@ class SearchViewModel(
     /** 上次搜索的关键词：同词 + 同 searchType + 结果已成功时不重复搜索（跨导航暂存搜索结果） */
     private var lastSearchedKeyword: String? = null
     private var lastSearchType: SearchType = SearchType.SONG_NAME_OR_ARTIST
+
+    // --- 艺人全量展开（艺人全量方案 §3.5；状态在 NetworkArtistExpansion，VM 只做接线） ---
+    private val artistExpansion = NetworkArtistExpansion(
+        getArtistSongs = { id, offset, limit ->
+            nasMusicApp.networkMusicManager.getArtistSongs(id, offset, limit)
+        },
+        findArtist = { name -> nasMusicApp.networkMusicManager.findArtist(name) }
+    )
+    private val _searchUnplayableIds = MutableStateFlow<Set<String>>(emptySet())
+    val searchUnplayableIds: StateFlow<Set<String>> = _searchUnplayableIds.asStateFlow()
+    private val _artistPaging = MutableStateFlow(SongsPagingState())
+    val artistPaging: StateFlow<SongsPagingState> = _artistPaging.asStateFlow()
+    /** 融合结果里非网络段的那一部分：续页时与展开段重新合并（网络段整体替换） */
+    private var lastNonNetworkSongs: List<Song> = emptyList()
 
     // --- 网络音乐搜索结果（NetworkMusicManager 搜索）---
     private val _networkSearchResults = MutableStateFlow<UiState<List<Song>>>(UiState.Success(emptyList()))
@@ -160,13 +176,24 @@ class SearchViewModel(
                     baiduLocalSongs = nasMusicApp.baiduFileIndexCache.searchSongs(query, pinyinMatch = true)
                 )
                 val songs = result.allResults.map { it.song }
-                _searchResults.value = UiState.Success(songs)
+                // 网络段（含网易原生/Meting 兜底）整体交给 expansion，非网络段原样保留
+                val (networkPart, otherPart) = songs.partition { it.isNetworkSong }
+                lastNonNetworkSongs = otherPart
+                val expanded = artistExpansion.expand(query, networkPart)
+                val merged = NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
+                _searchResults.value = UiState.Success(merged)
+                _searchUnplayableIds.value = artistExpansion.unplayableIds
+                _artistPaging.value = artistExpansion.paging
+                AppLog.i(
+                    "MetingDiag",
+                    "searchSongsOnServer: '$query' merged=${merged.size} (network ${networkPart.size}→${expanded.size}) hit=${artistExpansion.lastHitSource}"
+                )
                 // 搜索成功后才记录历史（空结果也算成功，记录用户确实搜过的词；
                 // 失败不记录，避免污染热门榜）
                 prefs.history.recordSearch(query)
                 AppLog.d(
                     "SearchViewModel",
-                    "searchSongsOnServer: ${songs.size} results for '$query' breakdown=${result.sourceBreakdown}"
+                    "searchSongsOnServer: ${merged.size} results for '$query' breakdown=${result.sourceBreakdown}"
                 )
             } catch (e: Exception) {
                 AppLog.e("SearchViewModel", "searchSongsOnServer failed", e)
@@ -182,7 +209,26 @@ class SearchViewModel(
      */
     fun clearSearch() {
         lastSearchedKeyword = null
+        artistExpansion.reset()
+        lastNonNetworkSongs = emptyList()
+        _searchUnplayableIds.value = emptySet()
+        _artistPaging.value = SongsPagingState()
         _searchResults.value = UiState.Success(emptyList())
+    }
+
+    /** 触底续页：仅当本词命中艺人时才有意义（UI 侧由 shouldLoadMore 保证不会空转） */
+    fun loadMoreArtistSongs() {
+        if (!artistExpansion.isActive()) return
+        if (!artistExpansion.paging.hasMore || artistExpansion.paging.isLoading) return
+        viewModelScope.launch {
+            _artistPaging.value = artistExpansion.paging.copy(isLoading = true)
+            val merged = NetworkArtistExpansion.mergeWithExpansion(
+                lastNonNetworkSongs, artistExpansion.loadMore()
+            )
+            _searchResults.value = UiState.Success(merged)
+            _searchUnplayableIds.value = artistExpansion.unplayableIds
+            _artistPaging.value = artistExpansion.paging
+        }
     }
 
     /**
