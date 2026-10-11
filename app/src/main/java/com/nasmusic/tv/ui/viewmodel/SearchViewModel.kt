@@ -176,17 +176,32 @@ class SearchViewModel(
                     baiduLocalSongs = nasMusicApp.baiduFileIndexCache.searchSongs(query, pinyinMatch = true)
                 )
                 val songs = result.allResults.map { it.song }
-                // 网络段（含网易原生/Meting 兜底）整体交给 expansion，非网络段原样保留
-                val (networkPart, otherPart) = songs.partition { it.isNetworkSong }
+                // C1：网络段的判据是 **Meting 家族**（`networkSource == "meting"`，即 NetworkMusicManager 的路由键），
+                // ⛔ 不是 isNetworkSong —— Jamendo 与百度网盘的歌同样 isNetworkSong=true，
+                //   expansion 命中艺人时会整段替换入参，百度/Jamendo 的命中行会从统一网格里凭空消失。
+                val (metingPart, otherPart) = NetworkArtistExpansion.splitMetingSegment(songs)
                 lastNonNetworkSongs = otherPart
-                val expanded = artistExpansion.expand(query, networkPart)
-                val merged = NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
+                // C1 闸门：网络源被熄灭、或本词没有 Meting 行 → **完全跳过展开**
+                // （expansion 会 reset，unplayableIds/paging 停在复位态，一个远程请求都不发）。
+                // 用户显式过滤掉的源不得被任何路径塞回结果。
+                val networkSourceLit = MusicSourceType.NETWORK_MUSIC in _enabledSearchSources.value
+                val skipExpansion = !networkSourceLit || metingPart.isEmpty()
+                val expanded: List<Song> = if (skipExpansion) {
+                    artistExpansion.reset()
+                    metingPart
+                } else {
+                    artistExpansion.expand(query, metingPart)
+                }
+                // 未展开时**直接用聚合器的原序**（它已按来源优先级排好）：
+                // mergeWithExpansion 会把非网络段整体提到前面，那是"有展开才有必要"的重排。
+                val merged = if (skipExpansion) songs
+                    else NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
                 _searchResults.value = UiState.Success(merged)
                 _searchUnplayableIds.value = artistExpansion.unplayableIds
                 _artistPaging.value = artistExpansion.paging
                 AppLog.i(
                     "MetingDiag",
-                    "searchSongsOnServer: '$query' merged=${merged.size} (network ${networkPart.size}→${expanded.size}) hit=${artistExpansion.lastHitSource}"
+                    "searchSongsOnServer: '$query' merged=${merged.size} (meting ${metingPart.size}→${expanded.size}) hit=${artistExpansion.lastHitSource}"
                 )
                 // 搜索成功后才记录历史（空结果也算成功，记录用户确实搜过的词；
                 // 失败不记录，避免污染热门榜）
@@ -219,7 +234,10 @@ class SearchViewModel(
     /** 触底续页：仅当本词命中艺人时才有意义（UI 侧由 shouldLoadMore 保证不会空转） */
     fun loadMoreArtistSongs() {
         if (!artistExpansion.isActive()) return
-        if (!artistExpansion.paging.hasMore || artistExpansion.paging.isLoading) return
+        // I1：在途判据读 expansion 的**真实单飞标志** `isLoadingMore()`；
+        // ⛔ 不要再拿 StateFlow 里的 isLoading 当判据（改造前它是硬编码 false，那道门恒不生效），
+        //   并发两次 loadMore 会读同一个 offset 并各自 accumulate，下一页 offset 被永久抬高（静默丢一整页）。
+        if (!artistExpansion.paging.hasMore || artistExpansion.isLoadingMore()) return
         viewModelScope.launch {
             _artistPaging.value = artistExpansion.paging.copy(isLoading = true)
             val merged = NetworkArtistExpansion.mergeWithExpansion(

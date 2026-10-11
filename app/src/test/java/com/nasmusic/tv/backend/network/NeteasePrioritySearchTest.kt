@@ -116,4 +116,42 @@ class NeteasePrioritySearchTest {
             assertTrue("红线 1：两处同前缀", s.id.startsWith("ntwk_meting_"))
         }
     }
+
+    /**
+     * C2 回归：`searchCoverUrl()` 必须继续走**端点链**取 `pic`。
+     *
+     * 网易 `type=1` 响应里没有 `album.picUrl`（§2 C.1 实测 0/100），
+     * 它一旦改走 `search()`，在原生分支命中时就恒返回 null，
+     * 打的是既有、无关的两张表面（在线歌词封面轮播 / 下载封面兜底链）。
+     */
+    @Test
+    fun `原生分支在途时 searchCoverUrl 仍必须拿到端点 pic 封面`() = runBlocking {
+        val svc = service()
+        assertEquals(
+            "前置条件：native 是通的（search() 本身会走原生分支）",
+            "晴天", svc.search("周杰伦").first().title
+        )
+        assertEquals(1, nativeCalls.get())
+        assertEquals("前置条件：search() 命中原生后没打端点", 0, endpointCalls.get())
+
+        val cover = svc.searchCoverUrl("安静", "周杰伦")
+        assertEquals(
+            "C2：封面必须来自端点链的 pic，⛔ 不能是原生 type=1 的 null",
+            "http://x/api?server=netease&type=pic&id=2002", cover
+        )
+        assertTrue("C2：searchCoverUrl 应打端点链", endpointCalls.get() >= 1)
+    }
+
+    /** C2 的第二半：`search()` 自身的行为与 a861880 完全一致（原生命中就不打端点） */
+    @Test
+    fun `抽出端点链后 search 的网易优先语义不变`() = runBlocking {
+        val svc = service()
+        assertEquals("晴天", svc.search("周杰伦").first().title)
+        assertEquals(1, nativeCalls.get())
+        assertEquals(0, endpointCalls.get())
+        // 原生下线后才回落端点
+        nativeDown = true
+        assertEquals("安静", svc.search("周杰伦").first().title)
+        assertTrue(endpointCalls.get() >= 1)
+    }
 }

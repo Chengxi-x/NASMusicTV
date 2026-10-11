@@ -30,6 +30,20 @@ class NetworkArtistExpansion(
     private val unplayable = linkedSetOf<String>()
     private val fetched = mutableListOf<Song>()
 
+    /**
+     * I1：`loadMore()` 的**真实单飞标志**。
+     *
+     * ⚠️ 曾经没有这个字段——VM 的门读的是 `paging.isLoading`，而 `paging` 把 `isLoading` 硬编码成
+     * `false`（`copy(isLoading = true)` 只改 VM 自己的 StateFlow，改不到 expansion），
+     * 那道门**恒不生效**：两次并发 `loadMore()` 读到同一个 `fetched.size` 当 offset、各自
+     * `accumulate` 一次 ⇒ `fetched.size` 虚高 ⇒ 下一页 offset 永久跳过一整页
+     * （`mergeWithExpansion` 的 `distinctBy` 只是把重复藏进网格，丢失是**静默**的）。
+     */
+    private var loadingMore = false
+
+    /** I1：VM 的在途门读这个，⛔ 别再读 `paging.isLoading` */
+    fun isLoadingMore(): Boolean = loadingMore
+
     val unplayableIds: Set<String> get() = unplayable.toSet()
 
     fun isActive(): Boolean = artistId != null
@@ -39,7 +53,7 @@ class NetworkArtistExpansion(
         get() = SongsPagingState(
             songs = fetched.toList(),
             totalCount = total,
-            isLoading = false,
+            isLoading = loadingMore,
             hasMore = more,
             currentPage = if (pageSize <= 0) 0 else fetched.size / pageSize
         )
@@ -52,18 +66,28 @@ class NetworkArtistExpansion(
         unplayable.clear()
         fetched.clear()
         lastHitSource = HitSource.NONE
+        loadingMore = false
     }
 
     /**
      * 关键词命中艺人则取第一页全量，否则**原样返回**网络段。
      *
-     * @param networkPart 融合结果里 `isNetworkSong` 的那一段（`type=1` 或 Meting 端点兜底）
+     * @param networkPart 融合结果里 **Meting 家族**那一段（`type=1` 或 Meting 端点兜底，
+     *   由 `splitMetingSegment` 切出）。⛔ 调用方不得把 Jamendo / 百度网盘 / NAS 行混进来
+     *   （C1：本类会**整段替换**入参，混进来就等于把它们从统一搜索里删掉）。
      */
     suspend fun expand(keyword: String, networkPart: List<Song>): List<Song> {
         reset()
+        // C1：空段 = 本词压根没有 Meting 行（网络源被熄灭，或首屏全是别的源）。
+        // 这时连那**一次** findArtist 兜底都不能发——否则每一次普通歌名搜索都会白打一次
+        // music.163.com，并且精确同名命中时还会把用户显式过滤掉的网络源塞回结果里。
+        if (networkPart.isEmpty()) return networkPart
         val id = hitArtistId(keyword, networkPart)
         if (id != null) {
             lastHitSource = HitSource.NATIVE_FIELD
+            // I2：命中即写 artistId，不依赖首页是否非空（旧写法只从 page.songs 反推，
+            // 首页空 ⇒ isActive()=false 而 more=true 的矛盾态，分页永久卡死）。
+            artistId = id
         } else {
             // §10.2 规则 3：只有首屏无命中才发这**一次**兜底请求（端点兜底分支没有 artistId 时走这里）
             val found = findArtist(keyword)?.takeIf {
@@ -73,27 +97,40 @@ class NetworkArtistExpansion(
             artistId = found.id
             lastHitSource = HitSource.FIND_ARTIST
         }
-        // 两条分支必有且仅有一条给出 artistId（NATIVE_FIELD 给 id、FIND_ARTIST 给 artistId），
-        // 第三个 `?: return` 只是让编译器确信这里非空，运行时恒不可达。
-        val artist = artistId ?: id ?: return networkPart
+        val artist = artistId ?: return networkPart
         val page = getArtistSongs(artist, 0, pageSize) ?: run {
             reset()
             return networkPart
         }
         accumulate(page)
+        if (fetched.isEmpty()) {
+            // I2：命中艺人但首页零行。此时 `more` 可能仍是接口给的 true，那会是
+            // "hasMore=true 却无以为继"的卡死态，而 `playableFirst(emptyList, …) == emptyList`
+            // 会把手里的 networkPart **整段丢掉**。交回原段并复位（isActive 与 hasMore 重新一致）。
+            reset()
+            return networkPart
+        }
         return playableFirst(fetched.toList(), unplayable)
     }
 
-    /** 触底续页。未命中 / 已到底 → 原样返回现有行，⛔ 不发请求（§6 验收 5 + §2 D） */
+    /**
+     * 触底续页。未命中 / 已到底 / 已在途 → 原样返回现有行，⛔ 不发请求（§6 验收 5 + §2 D + I1）
+     */
     suspend fun loadMore(): List<Song> {
         val artist = artistId ?: return emptyList()
         if (!more) return playableFirst(fetched.toList(), unplayable)
-        val page = getArtistSongs(artist, fetched.size, pageSize) ?: run {
-            more = false
+        if (loadingMore) return playableFirst(fetched.toList(), unplayable)
+        loadingMore = true
+        try {
+            val page = getArtistSongs(artist, fetched.size, pageSize) ?: run {
+                more = false
+                return playableFirst(fetched.toList(), unplayable)
+            }
+            accumulate(page)
             return playableFirst(fetched.toList(), unplayable)
+        } finally {
+            loadingMore = false
         }
-        accumulate(page)
-        return playableFirst(fetched.toList(), unplayable)
     }
 
     private fun accumulate(page: ArtistSongsPage) {
@@ -106,6 +143,29 @@ class NetworkArtistExpansion(
 
     companion object {
         const val DEFAULT_PAGE_SIZE = 100
+
+        /**
+         * Meting 家族的路由键（`NetworkMusicManager.services` 的键、`MetingApiService.sourceId`，
+         * 也是红线 2 里 `Song.networkSource` 的**唯一**合法取值——⛔ 不是 `"netease"`，
+         * `"netease"` 是 Meting 的 `server` 查询参数，语义不同）。
+         */
+        private const val METING_SOURCE = "meting"
+
+        /**
+         * 统一搜索的**网络段判据**（C1）：只有 Meting 家族归本类管辖，其余一切原样透传。
+         *
+         * ⛔ 不能用 `isNetworkSong` 当判据：
+         * - Jamendo（`JamendoService`）与百度网盘（`BaiduFile` / `BaiduFileIndex`）的歌
+         *   **同样** `isNetworkSong == true`，而 [expand] 命中艺人时会**整段替换**入参，
+         *   于是每一次艺人命中都会把百度/Jamendo 的命中行从统一搜索网格里删掉；
+         * - 用户熄灭 `NETWORK_MUSIC` 后，`isNetworkSong` 判据仍会把手里的空段送进来，
+         *   触发一次**无条件**的 `findArtist` 远程请求，命中时还会把被过滤掉的源塞回结果。
+         *
+         * 返回的 `first` 是要交给 expansion 的 Meting 段，`second` 是必须原样保留的其余段
+         * （NAS / 百度 / Jamendo / 电台 / 本地）。
+         */
+        internal fun splitMetingSegment(songs: List<Song>): Pair<List<Song>, List<Song>> =
+            songs.partition { it.isNetworkSong && it.networkSource == METING_SOURCE }
 
         /**
          * 强命中判定（§10.2）：归一化全等 + 取"首屏出现次数最多"的 artistId。

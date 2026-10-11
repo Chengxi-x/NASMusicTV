@@ -164,6 +164,19 @@ class MetingApiService(
             AppLog.w(DIAG, "search: netease-native empty/offline, falling back to endpoint chain")
         }
 
+        searchViaEndpoints(keyword)
+    }
+
+    /**
+     * Meting 端点串行链（C2：从 [search] **原样抽出**，回退顺序、解析、日志一字未改）。
+     *
+     * 抽出来不是为了复用代码，而是为了**复用"pic 可用"这一性质**：
+     * 网易 `type=1` 响应里**没有** `album.picUrl`（§2 C.1 实测 0/100），
+     * 而 Meting 端点的 `pic` 是 302 封面端点、Coil 可直接用。
+     * 所以 [searchCoverUrl] 必须走这里，⛔ 不能跟着"网易优先"一起改走 [search]——
+     * 那会让既有无关表面（NAS 歌曲的在线歌词封面轮播、下载封面兜底链）在原生命中时恒拿不到封面。
+     */
+    private suspend fun searchViaEndpoints(keyword: String): List<Song> = withContext(Dispatchers.IO) {
         // 构造端点尝试顺序：当前选中的端点优先，然后是其他预设端点
         val currentBase = baseUrl
         val endpoints = buildEndpointFallbackOrder(currentBase)
@@ -348,10 +361,16 @@ class MetingApiService(
     /**
      * 按标题+艺术家搜索第一首匹配歌曲的封面 URL。
      * 用于 NAS 歌曲切换到网络歌词时，联动获取网络封面图加入轮播。
+     *
+     * ⚠️ C2：**必须走端点链**（[searchViaEndpoints]），⛔ 不能改走 [search]。
+     * 网易 `type=1` 响应没有 `album.picUrl`（§2 C.1 实测 0/100），
+     * 走 [search] 后一旦原生命中就只会返回 null，把既有表面（歌词封面轮播 `MainViewModel`、
+     * 下载封面兜底链 `CoverFileWriter`）的封面全部丢掉；`NetworkMusicManager.searchCoverUrl`
+     * 的轮询也救不了——其余服务无条件返回 null。
      */
     override suspend fun searchCoverUrl(title: String, artist: String): String? {
         val keyword = if (artist.isNotBlank()) "$title $artist" else title
-        val items = search(keyword)
+        val items = searchViaEndpoints(keyword)
         return items.firstOrNull()?.coverUrl
     }
 

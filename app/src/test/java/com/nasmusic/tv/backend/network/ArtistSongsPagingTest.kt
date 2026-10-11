@@ -1,11 +1,14 @@
 package com.nasmusic.tv.backend.network
 
 import com.nasmusic.tv.data.model.Song
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * 艺人全量展开的状态件（艺人全量方案 §3.5）。
@@ -142,5 +145,203 @@ class ArtistSongsPagingTest {
         assertFalse(exp.isActive())
         assertEquals(0, exp.loadMore().size)
         assertTrue(exp.unplayableIds.isEmpty())
+    }
+
+    // ── Task 4 评审修复的回归护栏（C1 / I1 / I2）────────────────────────
+
+    /**
+     * C1：网络段的判据**只能是 Meting 家族**。
+     *
+     * Jamendo（`JamendoService`）与百度网盘（`BaiduFile`）的歌同样 `isNetworkSong == true`，
+     * 旧判据 `partition { it.isNetworkSong }` 会把它们一起喂给 expansion，
+     * 命中艺人时整段被替换 ⇒ 统一搜索网格里百度/Jamendo 的命中行凭空消失。
+     */
+    @Test
+    fun `C1 网络段判据只认 Meting 家族——Jamendo 百度 NAS 行必须存活`() = runBlocking {
+        val meting = song("900", "周杰伦")
+        val jamendo = Song(
+            id = "ntwk_jamendo_7", title = "j", artist = "周杰伦",
+            isNetworkSong = true, networkSource = "jamendo", networkId = "7"
+        )
+        val baidu = Song(
+            id = "ntwk_baidu_8", title = "b", artist = "周杰伦",
+            isNetworkSong = true, networkSource = "baidu", networkId = "8"
+        )
+        val nas = Song(id = "nas_9", title = "n", artist = "周杰伦")
+        val fused = listOf(meting, jamendo, baidu, nas)
+
+        val (metingPart, otherPart) = NetworkArtistExpansion.splitMetingSegment(fused)
+        assertEquals(listOf(meting), metingPart)
+        assertEquals("别的源必须整条透传，⛔ 不得进 expansion", listOf(jamendo, baidu, nas), otherPart)
+
+        val f = Fake(
+            mutableMapOf(0 to page((1..100).map { "$it" }, emptyList(), more = true, total = 566)),
+            mutableListOf()
+        )
+        val expanded = f.expansion().expand("周杰伦", metingPart)
+        val merged = NetworkArtistExpansion.mergeWithExpansion(otherPart, expanded)
+        val ids = merged.map { it.id }
+        for (survivor in listOf(jamendo, baidu, nas)) {
+            assertTrue("C1 回归：${survivor.id} 被艺人展开吃掉了", survivor.id in ids)
+        }
+        assertEquals(103, merged.size)
+        assertEquals(merged.size, ids.distinct().size)
+    }
+
+    /**
+     * C1（空段分支）：本词没有 Meting 行（网络源被熄灭 / 首屏全是别的源）时
+     * **一个请求都不发**——旧实现会在每次普通搜索（只搜歌名）时白打一次 `music.163.com`。
+     */
+    @Test
+    fun `C1 空 Meting 段必须整体跳过展开且一次 findArtist 都不发`() = runBlocking {
+        val f = Fake(
+            mutableMapOf(0 to page((1..100).map { "$it" }, emptyList(), more = true, total = 566)),
+            mutableListOf()
+        )
+        val exp = f.expansion()
+        val out = exp.expand("周杰伦", emptyList())
+        assertEquals("C1：空段不得触发 type=100 兜底请求", 0, f.findArtistCalls)
+        assertTrue("C1：空段不得触发艺人取数", f.fetches.isEmpty())
+        assertEquals(emptyList<Song>(), out)
+        assertFalse(exp.isActive())
+        assertFalse(exp.paging.hasMore)
+        assertEquals(0, exp.paging.songs.size)
+        assertTrue(exp.unplayableIds.isEmpty())
+    }
+
+    /**
+     * I1：`loadMore()` 必须真单飞。
+     *
+     * 旧实现的在途门读 `paging.isLoading`，而那个字段被硬编码为 false ⇒ 门恒不生效，
+     * 两次并发调用读到同一个 `fetched.size` 当 offset、各自 accumulate 一次，
+     * `fetched.size` 被虚高 ⇒ **下一页的 offset 永久跳过一整页**（`distinctBy` 只是把重复藏进网格）。
+     */
+    @Test
+    fun `I1 并发 loadMore 只发一次请求且下一页 offset 不被抬高`() = runBlocking {
+        val offsets = mutableListOf<Int>()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val exp = NetworkArtistExpansion(
+            getArtistSongs = { _, offset, _ ->
+                offsets += offset
+                if (offset > 0 && offsets.size == 2) entered.complete(Unit)
+                if (offset > 0) release.await()
+                page(((offset + 1)..(offset + 100)).map { "$it" }, emptyList(), more = offset < 200, total = 566)
+            },
+            findArtist = { null }
+        )
+        exp.expand("周杰伦", listOf(song("900", "周杰伦")))
+        assertEquals(listOf(0), offsets)
+
+        val inFlight = launch { exp.loadMore() }
+        entered.await()
+        assertTrue("I1：在途期间 paging.isLoading 必须为真（UI 脚注靠它）", exp.paging.isLoading)
+        val snapshot = exp.loadMore()                       // 第二次调用必须被单飞挡下
+        assertEquals("I1：在途期间的第二次调用不得再打接口", listOf(0, 100), offsets)
+        release.complete(Unit)
+        inFlight.join()
+
+        assertFalse(exp.isLoadingMore())
+        assertEquals(200, exp.paging.songs.size)
+        assertEquals("在途期间第二次调用只拿到当时的快照", 100, snapshot.size)
+        // 关键：第三次续页的 offset 必须是 200；旧实现这里是 300（一整页被永久跳过）
+        exp.loadMore()
+        assertEquals(listOf(0, 100, 200), offsets)
+        assertEquals(300, exp.paging.songs.size)
+        assertEquals(300, exp.paging.songs.map { it.id }.distinct().size)
+    }
+
+    /**
+     * I2：命中艺人但首页零行 + `more == true` 的矛盾态。
+     *
+     * 旧实现 `artistId` 只从 `page.songs.firstOrNull()` 反推，首页为空 ⇒ `isActive()==false`
+     * 而 `hasMore==true`：分页永久卡死，且 `expand()` 返回 `playableFirst(emptyList, …) == emptyList`
+     * ⇒ **把手里的网络段整段丢掉**。
+     */
+    @Test
+    fun `I2 首页空的命中必须原样交回网络段并把 more 转 false`() = runBlocking {
+        val fetches = mutableListOf<Pair<String, Int>>()
+        val exp = NetworkArtistExpansion(
+            getArtistSongs = { id, offset, _ ->
+                fetches += id to offset
+                ArtistSongsPage(songs = emptyList(), total = 566, hasMore = true, unplayableIds = emptySet())
+            },
+            findArtist = { null }
+        )
+        val networkPart = listOf(song("900", "周杰伦"), song("901", "周杰伦"))
+        val out = exp.expand("周杰伦", networkPart)
+        assertEquals("I2：空首页不得丢弃交进来的网络段", networkPart, out)
+        assertFalse("I2：isActive 与 hasMore 必须一致", exp.isActive())
+        assertFalse("I2：不得留下 hasMore=true 却无以为继的卡死态", exp.paging.hasMore)
+        assertEquals(0, exp.paging.songs.size)
+        assertTrue(exp.unplayableIds.isEmpty())
+        // 兜底：即使 Task 8 的 UI 触底也不会再发请求
+        exp.loadMore()
+        assertEquals(listOf("6452" to 0), fetches)
+    }
+
+    /** FIND_ARTIST 兜底命中同样受 I2 保护：空首页 ⇒ 原样交回 + more=false */
+    @Test
+    fun `I2 findArtist 兜底命中后首页为空时同样交回原段`() = runBlocking {
+        val fetches = mutableListOf<Pair<String, Int>>()
+        val exp = NetworkArtistExpansion(
+            getArtistSongs = { id, offset, _ ->
+                fetches += id to offset
+                ArtistSongsPage(songs = emptyList(), total = 566, hasMore = true, unplayableIds = emptySet())
+            },
+            findArtist = { NetworkArtistInfo("6452", "周杰伦", 566) }
+        )
+        val networkPart = listOf(song("900", "蔡依林"))        // 首屏没有周杰伦的行 ⇒ 走 findArtist
+        val out = exp.expand("周杰伦", networkPart)
+        assertEquals(networkPart, out)
+        assertFalse(exp.isActive())
+        assertFalse(exp.paging.hasMore)
+        assertEquals(NetworkArtistExpansion.HitSource.NONE, exp.lastHitSource)
+    }
+
+    /**
+     * C1 / I1 的 **VM 侧源码门**（`SearchViewModel` 是 `AndroidViewModel`，本仓库不可单测，
+     * 判据与闸门只能以源码门钉住；范本同 `ci/LocalMusicGateTest.kt`）。
+     */
+    @Test
+    fun `C1 I1 源码门 SearchViewModel 必须按 Meting 家族分段并带点亮与在途闸门`() {
+        val src = mainSourceFile("ui/viewmodel/SearchViewModel.kt")
+        assertFalse(
+            "C1：VM 不得再用裸 isNetworkSong 当网络段判据（会把 Jamendo/百度 一起喂给 expansion）",
+            src.contains("partition { it.isNetworkSong }")
+        )
+        assertTrue(
+            "C1：VM 必须走 NetworkArtistExpansion.splitMetingSegment（判据与红线 2 同源）",
+            src.contains("NetworkArtistExpansion.splitMetingSegment(")
+        )
+        assertTrue(
+            "C1：熄灭 NETWORK_MUSIC 后不得被任何路径复活，VM 必须读点亮集合",
+            src.contains("MusicSourceType.NETWORK_MUSIC in _enabledSearchSources.value")
+        )
+        assertTrue(
+            "I1：VM 的在途门必须读 expansion 的真实单飞标志",
+            src.contains("artistExpansion.isLoadingMore()")
+        )
+        assertFalse(
+            "I1：⛔ 不得再拿 paging.isLoading 当判据（该门曾恒不生效）",
+            src.contains("artistExpansion.paging.isLoading")
+        )
+    }
+
+    /** 与 `ci/LocalMusicGateTest.kt` 同一套路径兜底（user.dir 可能是 app/ 也可能是仓库根） */
+    private fun mainSourceFile(relativePath: String): String {
+        val candidates = listOf(
+            File("src/main/java/com/nasmusic/tv"),
+            File("app/src/main/java/com/nasmusic/tv"),
+            File("../app/src/main/java/com/nasmusic/tv")
+        )
+        val root = candidates.firstOrNull { it.isDirectory }
+        assertTrue(
+            "找不到源码目录（user.dir=${File("").absolutePath}）；已尝试：${candidates.joinToString { it.absolutePath }}",
+            root != null
+        )
+        val file = root!!.resolve(relativePath)
+        assertTrue("找不到源码文件：${file.absolutePath}", file.isFile)
+        return file.readText(Charsets.UTF_8)
     }
 }
