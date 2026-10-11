@@ -29,7 +29,11 @@ class NetworkArtistExpansion(
      *
      * 该类是 ⛔ 不做 IO 的纯状态件、无 AppLog 依赖，自己不打日志；由调用侧（`SearchViewModel`）
      * 读到 true 时打 `AppLog.e` 留痕。⚠️ `reset()` 会把 `lastHitSource` 清成 NONE，
-     * 这条路径在 VM 侧与「普通未命中艺人」无从区分，所以单独设这个位；每次 `expand()` 开头复位。
+     * 这条路径在 VM 侧与「普通未命中艺人」无从区分，所以单独设这个位。
+     *
+     * ⚠️ **读取契约（终审 F5F6F8 审查 I-1）**：它由 [expand] 在**自己返回前**写入，
+     * 所以调用方必须在 `expand()` 返回后**立刻**取进局部量。⛔ 不得跨词读、⛔ 不得在代数闸门之后
+     * 才回头读这个字段——重叠搜索下那时读到的是别的关键词留下的值。
      */
     var lastArtistPageFetchFailed: Boolean = false
         private set
@@ -87,12 +91,25 @@ class NetworkArtistExpansion(
      *   （C1：本类会**整段替换**入参，混进来就等于把它们从统一搜索里删掉）。
      */
     suspend fun expand(keyword: String, networkPart: List<Song>): List<Song> {
+        val (songs, pageFetchFailed) = runExpand(keyword, networkPart)
+        // F6 信号**只在本次调用的出口写**（终审 F5F6F8 审查 I-1）。⛔ 不要在入口清零：
+        // 先发起的那次会挂起在 getArtistSongs 上，期间另一个关键词跑完并把标志写成 true，
+        // 等它回来时读到的就是**别人的结论** ⇒ release 上「正常展开成功的词也在报取作品失败」。
+        // 改成出口写之后：每次调用 leave 的都是自己的结论，入口复位既不需要也不正确。
+        lastArtistPageFetchFailed = pageFetchFailed
+        return songs
+    }
+
+    /** [expand] 的本体；第二值 = **本次**是否「命中艺人但取作品返回 null」。 */
+    private suspend fun runExpand(
+        keyword: String,
+        networkPart: List<Song>
+    ): Pair<List<Song>, Boolean> {
         reset()
-        lastArtistPageFetchFailed = false   // F6：只反映本次 expand 的结果
         // C1：空段 = 本词压根没有 Meting 行（网络源被熄灭，或首屏全是别的源）。
         // 这时连那**一次** findArtist 兜底都不能发——否则每一次普通歌名搜索都会白打一次
         // music.163.com，并且精确同名命中时还会把用户显式过滤掉的网络源塞回结果里。
-        if (networkPart.isEmpty()) return networkPart
+        if (networkPart.isEmpty()) return networkPart to false
         val id = hitArtistId(keyword, networkPart)
         if (id != null) {
             lastHitSource = HitSource.NATIVE_FIELD
@@ -104,25 +121,27 @@ class NetworkArtistExpansion(
             val found = findArtist(keyword)?.takeIf {
                 ArtistSplitter.normalizeKey(it.name) == ArtistSplitter.normalizeKey(keyword)
             }
-            if (found == null) return networkPart
+            if (found == null) return networkPart to false
             artistId = found.id
             lastHitSource = HitSource.FIND_ARTIST
         }
-        val artist = artistId ?: return networkPart
+        val artist = artistId ?: return networkPart to false
         val page = getArtistSongs(artist, 0, pageSize) ?: run {
+            // 本信号的**唯一**置位点（F6 的头号静默路径）。交出去的是返回值而⛔ 不是共享字段，
+            // 于是「必须在 reset() 之后」这条次序约束从此**结构上不可能被改坏**（审查 I-2）。
             reset()
-            lastArtistPageFetchFailed = true   // F6：必须在 reset() 之后置位（reset 会清掉本信号）
-            return networkPart
+            return networkPart to true
         }
         accumulate(page)
         if (fetched.isEmpty()) {
             // I2：命中艺人但首页零行。此时 `more` 可能仍是接口给的 true，那会是
             // "hasMore=true 却无以为继"的卡死态，而 `playableFirst(emptyList, …) == emptyList`
             // 会把手里的 networkPart **整段丢掉**。交回原段并复位（isActive 与 hasMore 重新一致）。
+            // ⛔ 这不算 F6 的那条路径：接口**答了、只是答空**（取数没失败），别混进留痕判据。
             reset()
-            return networkPart
+            return networkPart to false
         }
-        return playableFirst(fetched.toList(), unplayable)
+        return playableFirst(fetched.toList(), unplayable) to false
     }
 
     /**

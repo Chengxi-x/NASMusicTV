@@ -196,18 +196,13 @@ class SearchViewModel(
                     artistExpansion.reset()
                     metingPart
                 } else {
-                    artistExpansion.expand(query, metingPart).also {
-                        // F6（终审 M-B1）：「周杰伦只回 30 行」的头号静默路径——命中艺人但
-                        // getArtistSongs 返回 null ⇒ 放弃展开。状态件 ⛔ 不做 IO 也不打日志，
-                        // 留痕放在调用侧（VM），文案带关键词便于 logcat 过滤。
-                        if (artistExpansion.lastArtistPageFetchFailed) {
-                            AppLog.e(
-                                "MetingDiag",
-                                "searchSongsOnServer: '$query' 命中艺人但 getArtistSongs 返回 null，放弃展开（交回原网络段 ${metingPart.size} 行）"
-                            )
-                        }
-                    }
+                    artistExpansion.expand(query, metingPart)
                 }
+                // F6（终审 M-B1）留痕：状态件 ⛔ 不做 IO 也不打日志，所以信号由这里取走。
+                // ⚠️ **紧接着** expand 返回取值（该位只反映本次调用，见 NetworkArtistExpansion 的读取契约），
+                // 但⛔ 不在这里打日志——日志要等代数闸门之后（审查 I-1：被改词覆盖掉的陈旧搜索，
+                // 不该在 release 唯一的权威痕迹里留下「取作品返回 null」）。
+                val artistPageFetchFailed = !skipExpansion && artistExpansion.lastArtistPageFetchFailed
                 // 未展开时**直接用聚合器的原序**（它已按来源优先级排好）：
                 // mergeWithExpansion 会把非网络段整体提到前面，那是"有展开才有必要"的重排。
                 // F9：判据必须是 `isActive()`（展开**真的产出了艺人段**）而不是 `skipExpansion`——
@@ -219,6 +214,14 @@ class SearchViewModel(
                 // 终审 B2（同一手法）：两次搜索重叠 ⇒ 只有最后一次能发布，
                 // ⛔ 先发的结果不得覆盖后发的（否则"改词后看到的是上一个词的行"）
                 if (gen != searchGeneration) return@launch
+                // F6 留痕打在**闸门之后**（审查 I-1）：⛔ 被改词覆盖掉的陈旧搜索一律不留痕，
+                // 否则 release 上唯一的权威痕迹会说谎（`AppLog.d/i/w` 在 release 是被折掉的）。
+                if (artistPageFetchFailed) {
+                    AppLog.e(
+                        "MetingDiag",
+                        "searchSongsOnServer: '$query' 命中艺人但 getArtistSongs 返回 null，放弃展开（交回原网络段 ${metingPart.size} 行）"
+                    )
+                }
                 _searchResults.value = UiState.Success(merged)
                 _searchUnplayableIds.value = artistExpansion.unplayableIds
                 _artistPaging.value = artistExpansion.paging

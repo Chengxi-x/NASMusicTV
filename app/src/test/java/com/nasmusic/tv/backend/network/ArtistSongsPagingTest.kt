@@ -2,8 +2,10 @@ package com.nasmusic.tv.backend.network
 
 import com.nasmusic.tv.data.model.Song
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -300,8 +302,10 @@ class ArtistSongsPagingTest {
     }
 
     /**
-     * C1 / I1 的 **VM 侧源码门**（`SearchViewModel` 是 `AndroidViewModel`，本仓库不可单测，
-     * 判据与闸门只能以源码门钉住；范本同 `ci/LocalMusicGateTest.kt`）。
+     * C1 / I1 的 **VM 侧源码门**：钉的是 VM 里的**接线形状**（判据用哪个字段、闸门顺序）。
+     * ⚠️ 「`SearchViewModel` 是 `AndroidViewModel`、本仓库不可单测」是**旧结论，已作废**——
+     * 行为级测试见 `ui/viewmodel/ArtistExpansionGenerationGateTest`（Robolectric + 真 VM + 假服务）。
+     * 本门留着是因为「日志打在闸门哪一侧」这类文本形状行为断言抓不到（范本同 `ci/LocalMusicGateTest.kt`）。
      */
     @Test
     fun `C1 I1 源码门 SearchViewModel 必须按 Meting 家族分段并带点亮与在途闸门`() {
@@ -325,6 +329,106 @@ class ArtistSongsPagingTest {
         assertFalse(
             "I1：⛔ 不得再拿 paging.isLoading 当判据（该门曾恒不生效）",
             src.contains("artistExpansion.paging.isLoading")
+        )
+    }
+
+    /**
+     * F6 的头号静默路径**必须被真实执行**（终审 F5F6F8 审查 I-2）：
+     * 命中艺人 + 取作品返回 null ⇒ 原样交回网络段，并把留痕信号置起来。
+     *
+     * ⚠️ 这条分支此前**全仓 0 个测试覆盖**（所有假件的 `getArtistSongs` 恒非空），
+     * 于是「F6 修的那个路径」与它新加的信号位都没跑过：改坏它编译过、lint 过、其余测试全绿，
+     * 用户在电视上看到的还是「周杰伦只有 30 行」而 release 一条日志都没有。
+     */
+    @Test
+    fun `F6 命中艺人但取作品返回 null——交回原段并置起留痕信号`() = runBlocking {
+        val fetches = mutableListOf<Pair<String, Int>>()
+        val exp = NetworkArtistExpansion(
+            getArtistSongs = { id, offset, _ -> fetches += id to offset; null },
+            findArtist = { null }
+        )
+        val networkPart = listOf(song("900", "周杰伦"), song("901", "周杰伦"))
+        val out = exp.expand("周杰伦", networkPart)
+        assertEquals("取数失败必须原样交回网络段（⛔ 不得丢行）", networkPart, out)
+        assertFalse("放弃展开 ⇒ 不活跃", exp.isActive())
+        assertFalse("放弃展开 ⇒ 不得残留 hasMore=true 的卡死态", exp.paging.hasMore)
+        assertTrue("F6 留痕信号必须置位——release 上这是唯一权威痕迹", exp.lastArtistPageFetchFailed)
+        assertEquals(listOf("6452" to 0), fetches)
+    }
+
+    /** I2 的「接口答了、只是答空」**不是** F6 那条路径 ⇒ 信号不得置位（否则留痕会说谎）。 */
+    @Test
+    fun `I2 首页零行不算取数失败——F6 信号不得置位`() = runBlocking {
+        val exp = NetworkArtistExpansion(
+            getArtistSongs = { _, _, _ ->
+                ArtistSongsPage(songs = emptyList(), total = 566, hasMore = true, unplayableIds = emptySet())
+            },
+            findArtist = { null }
+        )
+        val out = exp.expand("周杰伦", listOf(song("900", "周杰伦")))
+        assertEquals(1, out.size)
+        assertFalse("空首页 ≠ 取数失败", exp.lastArtistPageFetchFailed)
+    }
+
+    /**
+     * 审查 I-1 的**重叠展开**回归网：成功返回的那一次，⛔ 不得读到前一个失败调用留下的信号。
+     *
+     * 现场：A 词命中艺人后挂起在 `getArtistSongs` 上；期间 B 词取作品返回 null（置位 true）；
+     * A 随后**成功**返回。信号若只在入口复位（改造前就是这个写法），A 的调用侧读到的就是 B 的结论
+     * ⇒ release 上会出现「正常展开成功的词也在报取作品失败」。留痕是唯一权威痕迹，**说谎比没有更糟**。
+     */
+    @Test
+    fun `I-1 重叠展开——成功返回的那次不得继承前一个失败调用的信号`() = runBlocking {
+        val gateA = CompletableDeferred<Unit>()
+        var aCalls = 0
+        val exp = NetworkArtistExpansion(
+            getArtistSongs = { id, _, _ ->
+                if (id == "6452" && aCalls++ == 0) {
+                    gateA.await()                                     // A 停在取数上
+                    page(listOf("1", "2"), dead = emptyList(), more = false, total = 2)
+                } else null                                           // B 取作品返回 null
+            },
+            findArtist = { null }
+        )
+        val a = async { exp.expand("周杰伦", listOf(song("900", "周杰伦"))) }
+        yield()                                                       // ⛔ 不 yield 的话 A 根本没开始 ⇒ 假自证
+        val bOut = exp.expand("蔡依林", listOf(song("950", "蔡依林", "777")))
+        assertEquals("B 取数失败 ⇒ 原样交回自己的网络段", 1, bOut.size)
+        assertTrue("B 自己的失败必须置位", exp.lastArtistPageFetchFailed)
+
+        gateA.complete(Unit)
+        val outA = a.await()
+        assertEquals("A 成功 ⇒ 取回展开的两行", 2, outA.size)
+        assertFalse("I-1 回归：A 成功返回后不得残留 B 的失败信号", exp.lastArtistPageFetchFailed)
+    }
+
+    /**
+     * 审查 I-1 的 **VM 侧源码门**：F6 留痕必须①紧接着 `expand()` 取进局部量、
+     * ②打在代数闸门**之后**、③用 `AppLog.e`（`AppLog.d/i/w` 方法体有 `if (BuildConfig.DEBUG)` 守卫，
+     * release 下 R8 连字符串一起折掉，只有 `e` 必然存活）。
+     * ⚠️ VM 的**行为**可测（`ArtistExpansionGenerationGateTest`），但「日志落在闸门哪一侧」
+     * 不是可观测行为 ⇒ 这一条只能靠源码门钉。
+     */
+    @Test
+    fun `I-1 源码门 F6 留痕必须先取信号、过闸门后再打且必须是 AppLog_e`() {
+        val flat = Regex("""\s+""").replace(mainSourceFile("ui/viewmodel/SearchViewModel.kt"), " ")
+        val expandAt = flat.indexOf("artistExpansion.expand(query, metingPart)")
+        val readAt = flat.indexOf("artistExpansion.lastArtistPageFetchFailed")
+        val logAt = flat.indexOf("命中艺人但 getArtistSongs 返回 null")
+        assertTrue("锚点缺失：expand 调用没找到 ⇒ 读的是错的函数/文件", expandAt >= 0)
+        assertTrue("F6 留痕信号没被 VM 读取 ⇒ 静默路径又无痕了", readAt >= 0)
+        assertTrue("F6 留痕日志不在源码里 ⇒ 头号路径 release 仍然 0 痕迹", logAt >= 0)
+        assertTrue("I-1：信号必须在 expand **返回后立刻**取走（跨词读会读到别人的结论）", readAt > expandAt)
+        val gate = flat.indexOf("if (gen != searchGeneration) return@launch", readAt)
+        assertTrue("I-1：取信号之后找不到代数闸门 ⇒ 陈旧发布会带着留痕一起出去", gate >= 0)
+        assertTrue("I-1：留痕必须打在闸门**之后**（被改词覆盖的陈旧搜索不该在 release 里留痕）", logAt > gate)
+        // 「最近的一次 AppLog.* 调用必须是 .e」——⛔ 不要按固定字符窗口找：
+        // tag / `$query` 插值的长度一变就会假红（本仓库第一次跑就栽在 40 字符窗口上）。
+        val head = flat.substring((logAt - 200).coerceAtLeast(0), logAt)
+        val lastCall = head.lastIndexOf("AppLog.")
+        assertTrue(
+            "F6：留痕日志前找不到任何 AppLog 调用 ⇒ 文案可能被搬出调用：$head",
+            lastCall >= 0 && head.substring(lastCall).startsWith("AppLog.e")
         )
     }
 
