@@ -81,6 +81,9 @@ internal fun LibraryBranch(
                     val libraryActiveTab by viewModel.libraryActiveTab.collectAsState()
                     val librarySearchKeyword by viewModel.librarySearchKeyword.collectAsState()
                     val enabledSearchSources by viewModel.searchVM.enabledSearchSources.collectAsState()
+                    // 艺人全量方案 §3.5/§3.6：搜索页打标集合 + 艺人续页状态
+                    val searchUnplayableIds by viewModel.searchVM.searchUnplayableIds.collectAsState()
+                    val artistPaging by viewModel.searchVM.artistPaging.collectAsState()
                     val searchHistory by viewModel.searchHistory.collectAsState(initial = emptyList())
 
                     // ── RADIO Tab state ──
@@ -133,6 +136,9 @@ val discoverCurrentDimensionValues = remember(browseSelections) {
                         songsPaging = mergedSongsPaging,
                         searchResults = searchResultsList,
                         isSearching = isSearching,
+                        searchUnplayableIds = searchUnplayableIds,
+                        artistPaging = artistPaging,
+                        onLoadMoreArtistSongs = { viewModel.searchVM.loadMoreArtistSongs() },
                         onPlayAlbum = { album ->
                             viewModel.playAlbumMultiSource(album)
                         },

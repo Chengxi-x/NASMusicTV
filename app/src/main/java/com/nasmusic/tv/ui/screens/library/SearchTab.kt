@@ -14,6 +14,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,6 +60,12 @@ fun SearchTab(
     isSearching: Boolean,
     favoriteIds: Set<String>,
     queueSongIds: Set<String> = emptySet(),
+    // 艺人全量方案 Q1(b)：仅艺人分支填充的"可能无版权"旁路集合（⛔ 不塞进 Song）
+    unplayableIds: Set<String> = emptySet(),
+    // §3.6 触底续页：hasMore 只来自接口的 more 字段，"少则不分页"天然成立
+    artistPaging: com.nasmusic.tv.data.model.SongsPagingState =
+        com.nasmusic.tv.data.model.SongsPagingState(),
+    onLoadMoreArtistSongs: () -> Unit = {},
     // 来源点亮（搜索范围选择）
     enabledSources: Set<MusicSourceType> = emptySet(),
     onToggleSource: (MusicSourceType) -> Unit = {},
@@ -94,6 +102,30 @@ fun SearchTab(
         }
         listBackHandler.value = handler
         onDispose { listBackHandler.value = null }
+    }
+
+    // 检测是否滚动接近底部，触发加载更多
+    // ⚠️ remember 必须带 key：照抄 ui/screens/library/browse/SongList.kt:81-94 的教训
+    //   （2026-09-25 审查修复 #16——无 key 时 derivedStateOf 捕获首次组合的参数快照，
+    //    分页条件永远用冻结的旧列表长度/旧分页标志，续页**一次都不会触发**）。
+    // key 取分页状态的**稳定字段**而非整个 SongsPagingState 对象：VM 每次发的是一个
+    // copy() 出来的新实例，整个对象入 key 会在每次发值时无谓重建派生块。
+    val shouldLoadMore by remember(
+        searchResults.size,
+        artistPaging.hasMore,
+        artistPaging.isLoading,
+        isSearching
+    ) {
+        derivedStateOf {
+            val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val totalItems = searchResults.size
+            // 提前 20 项加载下一页
+            totalItems > 0 && lastVisibleIndex >= totalItems - 20 &&
+                    artistPaging.hasMore && !artistPaging.isLoading && !isSearching
+        }
+    }
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore) onLoadMoreArtistSongs()
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -135,6 +167,19 @@ fun SearchTab(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // 命中艺人时显示"已加载/总数"，让用户知道这不是搜索前 30 条而是全量目录
+                if (artistPaging.totalCount > 0) {
+                    Text(
+                        text = stringResource(
+                            R.string.library_songs_count_with_total,
+                            searchResults.size, artistPaging.totalCount
+                        ),
+                        color = NasMusicColors.TextSecondary,
+                        fontSize = FontSize.small(),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                    )
+                }
+
                 // 歌曲列表
                 androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                     columns = songGridColumns(),
@@ -148,6 +193,7 @@ fun SearchTab(
                         UnifiedSongRow(
                             song = song,
                             mode = SongRowMode.MODE_ROW,
+                            possiblyUnplayable = song.id in unplayableIds,
                             onClick = { onPlaySong(song) },
                             isFavorited = song.id in favoriteIds,
                             onToggleFavorite = { onToggleFavorite(song) },
@@ -159,6 +205,18 @@ fun SearchTab(
                             index = index,
                             focusRequester = if (index == 0) firstItemFocusRequester else null
                         )
+                    }
+                    // 续页加载态：只在"还有下一页且正在取"时占一整行
+                    // （⛔ 不加 items 总数以外的 key，footer 与数据行同 id 会撞 `key` 重复）
+                    if (artistPaging.hasMore && artistPaging.isLoading) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                text = stringResource(R.string.common_loading),
+                                color = NasMusicColors.TextSecondary,
+                                fontSize = FontSize.small(),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                            )
+                        }
                     }
                 }
             }

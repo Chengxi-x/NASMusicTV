@@ -116,6 +116,9 @@ enum class UrlStatus {
  * @param focusRequester 焦点请求器
  * @param isStub 是否导入歌单的裸条目（id 以 imported_ 开头；true 时来源标签显示「待补全」）
  * @param urlStatus URL 直链可达性状态（§4.5.2；UNREACHABLE 时优先显示「URL 失效」）
+ * @param possiblyUnplayable 该曲在艺人全量列表里带 `privilege.st != 0`（**仅打标、不隐藏**，Q1 的 b）。
+ *                   默认 false；普通搜索分支与端点兜底分支**没有这个字段**，必须保持 false（§2 C.1）——
+ *                   "没角标"不等于"能播"，UI 侧统一以缺省即不显示处理。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -136,6 +139,7 @@ fun UnifiedSongRow(
     focusRequester: FocusRequester? = null,
     isStub: Boolean = false,
     urlStatus: UrlStatus = UrlStatus.NONE,
+    possiblyUnplayable: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     when (mode) {
@@ -155,6 +159,7 @@ fun UnifiedSongRow(
             focusRequester = focusRequester,
             isStub = isStub,
             urlStatus = urlStatus,
+            possiblyUnplayable = possiblyUnplayable,
             modifier = modifier
         )
         SongRowMode.MODE_CARD -> SongRowModeCard(
@@ -194,6 +199,7 @@ private fun SongRowModeRow(
     focusRequester: FocusRequester?,
     isStub: Boolean = false,
     urlStatus: UrlStatus = UrlStatus.NONE,
+    possiblyUnplayable: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var isRowFocused by remember { mutableStateOf(false) }
@@ -410,7 +416,8 @@ private fun SongRowModeRow(
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        // 来源标签：URL 失效（红）> 待补全（橙）> 正常来源。均非导入歌单歌曲时保持原样。
+                        // 来源标签：URL 失效（红）> 待补全（橙）> 可能无版权（灰）> 正常来源。
+                        // ⚠️ 角标只打标不过滤（Q1 b）；行仍可点播，失败走 Task 5/6/7 的替换链。
                         when {
                             urlStatus == UrlStatus.UNREACHABLE -> Text(
                                 text = stringResource(com.nasmusic.tv.R.string.playlist_url_invalid),
@@ -420,6 +427,11 @@ private fun SongRowModeRow(
                             isStub -> Text(
                                 text = stringResource(com.nasmusic.tv.R.string.playlist_stub_badge),
                                 color = NasMusicColors.Primary,
+                                fontSize = FontSize.small()
+                            )
+                            possiblyUnplayable -> Text(
+                                text = stringResource(com.nasmusic.tv.R.string.song_row_unplayable_badge),
+                                color = NasMusicColors.TextSecondary,
                                 fontSize = FontSize.small()
                             )
                             else -> SourceBadge(song = song)
