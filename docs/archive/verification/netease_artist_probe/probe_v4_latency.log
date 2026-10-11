@@ -1,0 +1,67 @@
+# netease artist full-list probe @ 2026-10-10 23:43:56
+
+=== A. Meting type=search 每端点条数 + 分页参数是否生效 ===
+[PASS] A   mikus 单页条数                                     n=30 (期望 30)
+[PASS] A   mikus page=2 是否换页                              overlap=1.00 (jaccard=1.00 inter=30/30) -> 1.00 表示参数被忽略
+[PASS] A   mikus limit/offset 是否生效                        overlap=1.00 (jaccard=1.00 inter=30/30) -> 1.00 表示参数被忽略
+[PASS] A   redcha 单页条数                                    n=30 (期望 30)
+[PASS] A   redcha page=2 是否换页                             overlap=1.00 (jaccard=1.00 inter=30/30) -> 1.00 表示参数被忽略
+[PASS] A   redcha limit/offset 是否生效                       overlap=1.00 (jaccard=1.00 inter=30/30) -> 1.00 表示参数被忽略
+[PASS] A   qijieya 单页条数                                   n=30 (期望 30)
+[PASS] A   qijieya page=2 是否换页                            overlap=1.00 (jaccard=1.00 inter=30/30) -> 1.00 表示参数被忽略
+[WARN] A   qijieya limit/offset 是否生效                      overlap=0.30 (jaccard=0.30 inter=30/100) -> 1.00 表示参数被忽略
+
+=== A2. 跨端点搜索结果集重叠率（并集能不能绕过 30）===
+[PASS] A2  mikus vs redcha                                jaccard=0.82 inter=27/33 union=33 -> 不同批（并集能扩样本）
+[PASS] A2  mikus vs qijieya                               jaccard=0.94 inter=29/31 union=31 -> 不同批（并集能扩样本）
+[PASS] A2  redcha vs qijieya                              jaccard=0.88 inter=28/32 union=32 -> 不同批（并集能扩样本）
+[PASS] A2  端点结果集是否彼此相同                                    全部相同=False；相同即说明'遍历多端点取并集'不能扩大集合，只能提高命中率
+
+=== B. Meting type=artist 条数 + 分页 ===
+[PASS] B   artist 单页条数                                    n=50 (期望 50，比 search 多 20)
+[PASS] B   正自检:重取同一请求 overlap=1.0                         overlap=1.00 -> 小于 1.0 说明端点本身在抖动，分页判据不可采信
+[PASS] B   artist page=2 是否换页                             jaccard=1.00 inter=50/50 -> 1.00 表示同一批（无分页），<1.0 才是真分页
+[PASS] B   负自检:search/artist 集合可区分                        jaccard=0.60 inter=30/50 (overlap=0.60)
+
+=== C. 网易原生搜索（POST /api/search/get）：type=1 与 type=100 ===
+[PASS] C   type=1 limit=100 实际返回                          n=100 (期望 100)
+[WARN] C   type=1 字段覆盖:privilege.st 存在                    privilege.st 存在=0/100
+[PASS] C   type=1 字段覆盖:duration>0                         duration>0=100/100
+[WARN] C   type=1 字段覆盖:album.picUrl                       album.picUrl=0/100
+[PASS] C   type=1 字段覆盖:album.name                         album.name=100/100
+[PASS] C   type=1 字段覆盖:album.id                           album.id=100/100
+[PASS] C   type=1 字段覆盖:artists[].name                     artists[].name=100/100
+[PASS] C   type=1 字段覆盖:fee 存在                             fee 存在=100/100
+[PASS] C   负自检:不存在字段的覆盖率必须为 0                             bogus=0（>0 即计数器恒真，上面所有覆盖率不可采信）
+[WARN] C   type=1 字段齐备度汇总                                 齐备 5 项 / 缺失 2 项（缺失=privilege.st 存在,album.picUrl）
+[PASS] C   type=1 offset=100 换页                           n=100 jaccard=0.00 inter=0/200 -> overlap 接近 0 才是真分页
+[PASS] C   type=1 响应含 artists[].id                        distinct_artist_ids=54
+[PASS] C   type=100 艺人搜索                                  artistCount=83 returned=10
+[PASS] C   type=100 首选艺人字段完整                              id=6452 musicSize=568 albumSize=41
+
+=== D. 网易原生 /api/v1/artist/songs 分页与字段覆盖 ===
+[PASS] D   接口返回 total                                     total=566
+[PASS] D   分页拉到的条数                                        pages=[(0, 100), (100, 100), (200, 100), (300, 100), (400, 100), (500, 66)] unique_ids=566
+[PASS] D   跨页无重复（offset 正常）                               raw=566 uniq=566 dup=0
+[PASS] D   more 标志在末页转 false                              more_seq=[True, True, True, True, True, False]
+[PASS] D   总数与 total 一致                                   loaded=566 total=566
+[WARN] D   负自检:limit=200 是否等价于两页 100                      n200=200 total@200=1070 first100_is_subset=False -> 不等价，须锁 limit<=100
+[PASS] D   album.picUrl 覆盖率                               566/566 可直接作 coverUrl
+[PASS] D   duration 覆盖（毫秒）                                566/566
+[PASS] D   privilege.st 分布                                {-200: 517, 0: 49}
+[PASS] D   fee 分布                                         {0: 522, 1: 35, 8: 9}
+
+=== L. 接口延迟分布（--latency 8）===
+  meting_search@mikus    n= 8 p50=  574ms p95=  701ms max=  701ms 非2xx=0
+  meting_search@qijieya  n= 8 p50=  561ms p95= 1124ms max= 1124ms 非2xx=0
+  meting_search@redcha   n= 8 p50= 1213ms p95= 3027ms max= 3027ms 非2xx=0
+  netease_artist_songs   n= 8 p50=  265ms p95=  279ms max=  279ms 非2xx=0
+  netease_type1_search   n= 8 p50=  241ms p95=  368ms max=  368ms 非2xx=0
+[PASS] L   延迟仪表自检:必须有采样且耗时为正                              buckets=5 samples=40
+[PASS] L   网易 type=1 搜索 p95 需在 5s 预算内可容一次兜底               netease p95=368ms + meting p50=620ms < 5000ms
+[PASS] L   meting_search@mikus p95 是否已逼近 5s 预算            p50=574ms p95=701ms max=701ms
+[PASS] L   meting_search@qijieya p95 是否已逼近 5s 预算          p50=561ms p95=1124ms max=1124ms
+[PASS] L   meting_search@redcha p95 是否已逼近 5s 预算           p50=1213ms p95=3027ms max=3027ms
+
+=== 汇总 ===
+FAIL=0  WARN=5  TOTAL=46
