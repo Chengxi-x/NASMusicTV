@@ -49,7 +49,12 @@ class MetingApiService(
      * F2-6：音质档位提供者（Meting br 参数）。
      * 返回 0 = AUTO（不传 br，由带宽估计决策或端点默认）。
      */
-    private val qualityTierProvider: () -> Int = { 0 }
+    private val qualityTierProvider: () -> Int = { 0 },
+    /**
+     * 网易免鉴权接口（Task 4 起由 NasMusicApp 注入）。
+     * null = 未启用网易优先，行为与改造前逐字符一致（R1 的"新功能全走新增代码路径"）。
+     */
+    private val netease: com.nasmusic.tv.backend.network.netease.NeteaseOpenApi? = null
 ) : NetworkMusicService {
 
     override val sourceId = "meting"
@@ -375,6 +380,21 @@ class MetingApiService(
         }
         AppLog.w(DIAG, "getPlaylist: all endpoints failed for playlistId=$playlistId")
         emptyList()
+    }
+
+    override suspend fun findArtist(name: String): NetworkArtistInfo? {
+        // 本期只覆盖 netease 平台（§5 P3 已按 Q8 撤出其他平台）；DEFAULT_SERVER 是类内既有常量（:102）
+        if (serverProvider() != DEFAULT_SERVER) return null
+        return netease?.findArtist(name)
+    }
+
+    override suspend fun getArtistSongs(artistId: String, offset: Int, limit: Int): ArtistSongsPage? {
+        if (serverProvider() != DEFAULT_SERVER) return null
+        val id = artistId.toLongOrNull() ?: run {
+            AppLog.w(DIAG, "getArtistSongs: artistId 不是数字 '$artistId'")
+            return null
+        }
+        return netease?.artistSongs(id, offset, limit)
     }
 
     /**

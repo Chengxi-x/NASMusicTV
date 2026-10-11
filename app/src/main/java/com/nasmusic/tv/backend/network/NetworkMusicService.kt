@@ -44,6 +44,21 @@ interface NetworkMusicService {
     suspend fun searchByDirectory(keyword: String): List<Song> = search(keyword)
 
     /**
+     * 艺人发现：关键词强命中某位艺人时返回其信息。
+     *
+     * 默认实现返回 null —— Jamendo / 百度网盘 / 本地源**没有"艺人目录"概念**，
+     * 让它们因"不支持艺人"而报错是错误语义（与 [resolvePlayUrl] 默认忽略 quality 同一套哲学）。
+     */
+    suspend fun findArtist(name: String): NetworkArtistInfo? = null
+
+    /**
+     * 艺人作品分页。
+     *
+     * @return null = 该源不支持或取页失败；`hasMore=false` 的空页是合法的"已翻到底"
+     */
+    suspend fun getArtistSongs(artistId: String, offset: Int, limit: Int = 100): ArtistSongsPage? = null
+
+    /**
      * 解析播放链接。
      *
      * Meting-API 返回的是 302 端点，需要跟随重定向拿到直联 URL；

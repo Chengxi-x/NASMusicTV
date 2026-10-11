@@ -301,6 +301,34 @@ class NetworkMusicManager(
     }
 
     /**
+     * 艺人发现：按**默认源**路由，不 fallback。
+     *
+     * 与 resolvePlayUrl/resolveLyrics 同语义（fallback 只属于 [search]）：
+     * 艺人 id 是来源特定的，拿 plain 源的搜索结果去补一个网易 artistId 会串人。
+     */
+    suspend fun findArtist(name: String): NetworkArtistInfo? {
+        if (name.isBlank()) return null
+        val svc = services[defaultSource] ?: return null
+        return try {
+            svc.findArtist(name)
+        } catch (e: Exception) {
+            AppLog.w(TAG, "findArtist error: ${e.message}", e)
+            null
+        }
+    }
+
+    /** 艺人作品分页：按默认源路由，不 fallback */
+    suspend fun getArtistSongs(artistId: String, offset: Int, limit: Int = 100): ArtistSongsPage? {
+        val svc = services[defaultSource] ?: return null
+        return try {
+            svc.getArtistSongs(artistId, offset, limit)
+        } catch (e: Exception) {
+            AppLog.w(TAG, "getArtistSongs error: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
      * 通过组合关键词搜索（用于多维度浏览）。
      *
      * 将非空的多个关键词用空格拼接后调用 [search]。
