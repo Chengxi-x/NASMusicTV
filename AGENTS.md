@@ -43,7 +43,9 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" \
 
 `--no-daemon` 只影响当前进程，不需要改 `gradle.properties`。注意 `aapt2.exe` 本身能独立运行（`aapt2 version` 正常），问题只出在守护进程模式，所以别被 "Windows Universal C Runtime" 的提示误导。
 
-**单测在本机可以跑**（2026-09-16 更正）：`./gradlew.bat testDebugUnitTest --no-daemon -Pkotlin.compiler.execution.strategy=in-process` 实测 **518 例 / 0 失败 / 0 错误**（约 50s），`--tests "*XxxTest"` 单类隔离也正常（6 例约 30s）。此前记录的「worker JVM 一启动即死（exit `268435466` = `0x1000000A` = Windows `ERROR_BAD_ENVIRONMENT`）」**已不再复现**——根因更可能是**卡死的 Gradle 守护进程持锁**而非本机永久性限制（同日另一提交亦记录「本机首次完整跑通 testDebugUnitTest」）。若再次遇到 worker 秒死，**先跑 `./gradlew.bat --stop` 释放锁再重试**，不要直接判定为环境不可用。**因此本机验证手段是「编译 + lint + 单测」，不要再沿用「不能声称测试通过」的旧口径。**
+**单测在本机可以跑**（2026-09-16 更正）：`./gradlew.bat testDebugUnitTest --no-daemon -Pkotlin.compiler.execution.strategy=in-process` 实测 **184 个 `*Test.kt` / 2035 例**（2026-10-11 `--rerun-tasks` 全量重跑，约 4~6 min；增量跑「up-to-date」时不会重执行测试，验数必须带 `--rerun-tasks`），`--tests "*XxxTest"` 单类隔离也正常（6 例约 30s）。此前记录的「worker JVM 一启动即死（exit `268435466` = `0x1000000A` = Windows `ERROR_BAD_ENVIRONMENT`）」**已不再复现**——根因更可能是**卡死的 Gradle 守护进程持锁**而非本机永久性限制（同日另一提交亦记录「本机首次完整跑通 testDebugUnitTest」）。若再次遇到 worker 秒死，**先跑 `./gradlew.bat --stop` 释放锁再重试**，不要直接判定为环境不可用。**因此本机验证手段是「编译 + lint + 单测」，不要再沿用「不能声称测试通过」的旧口径。**
+
+⚠️ **全量跑有一条既有红，不是你改坏的**：`visualizer/photo/PhotoWallControllerTest > empty pool never starts a swap and never crashes` 抛 `kotlinx.coroutines.test.UncaughtExceptionsBeforeTest`——**隔离跑该类全绿、全量跑必红**（2026-10-11 三次复现，含一次把新增测试类挪出的 A/B 反证）。机制：前序某个类在 `runTest` 结束后仍有协程抛异常，落进 kotlinx 的全局收集器，被归给**下一个**进入 `runTest` 的类；XML 里只有这条异常本身、不含原始异常，无从直接读泄漏源。别为它放宽判据、别把它算进当前分支的账；要修就从 `Dispatchers.setMain` 泄漏与「`runTest` 之后仍存活的协程」两头查（`technical-overview.md` §10.225 遗留②）。
 
 ## Architecture (verified against source)
 
