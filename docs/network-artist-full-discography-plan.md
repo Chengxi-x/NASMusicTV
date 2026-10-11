@@ -1,6 +1,6 @@
 # 网络艺人全量歌曲开发方案（突破统一搜索 30 首上限）
 
-- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–4 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`），Task 5–9 待开发。
+- **状态**：🔨 **开发中** —— owner 于 **2026-10-10** 对 Q1–Q9 逐条拍板（裁决记录与对方案的直接影响见 **§9**），Q3 要求的界面/改动量评估见 **§10**（owner 已于 **2026-10-11** 复确认「允许直连 `music.163.com`」，Task 4 放行）。§11 任务分解与逐文件代码见下；**Task 1–5 已落码并逐任务评审通过**（`f1042fd`/`40aecf8`+`f3e3b00`/`b7bac5f`/`a861880`+`89684d4`/`f0db478`），Task 6–9 待开发。
 - **日期**：2026-10-10
 - **目标模块**：`backend/network/netease/`（新增网易免鉴权接口层 `NeteaseOpenApi`）、`backend/network/`（`NetworkSongId`/`NetworkArtistTypes`/`NetworkArtistExpansion`/`PlayabilityProbe`/`CandidatePicker`/`ReplaceChain` 六个新件 + `MetingApiService` 搜索改网易优先与可播判据做实 + `NetworkMusicService` 接口扩展 + `NetworkMusicManager` 路由/负面缓存/同源重搜）、`backend/SearchAggregator.kt`（一行超时）、`ui/viewmodel/`（**不新增 VM**，改 `SearchViewModel` 与 `PlayerViewModel`）、`ui/screens/library/SearchTab.kt` + `ui/components/song/UnifiedSongRow.kt`（显示侧）。逐文件清单见 §11 的 File map
 - **数字来源**：`docs/archive/verification/scripts/netease_artist_probe.py`（可复跑仪表）。本文数字**只允许**抄自以下四轮已存档日志（UTF-8 + LF，随文档入库；`logs_temp/` 里那些是临时件，会被清理）。目录 `docs/archive/verification/netease_artist_probe/`：
@@ -9,7 +9,7 @@
   - **23:43 延迟轮** `--latency 8 --pacing 1.2` → **46 断言 / exit 0 / FAIL 0 / WARN 5** → `probe_v4_latency.log`：§2 L 组 → §10.3 的 5s 预算分配；**并复现了 23:28 轮的字段覆盖结论**（`privilege.st` 0/100、`album.picUrl` 0/100 两轮一致）
   - ⚠️ **唯一例外**：§2 E 组（判据验证）来自同日 21:32 的 `--play 12` 轮、22:13 轮未复跑，引用时注意
   - ⛔ **改任何结论必须重跑脚本再改文档**，不许手抄、不许凭记忆
-- **版本**：**v1.9** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块）。修订说明见 §附录 C
+- **版本**：**v2.0** — v1.7：owner Q1–Q9 裁决入账（§9）、§10 答复 Q3、§11 按裁决拆 9 个 Task。v1.8：Task 2 评审 I1/I2 的示例代码同步（`unplayableIdsOf` 容错 + `JsonElement?.idString()` 字符串 id 归一）。**v1.9：Q3 复确认放行 + Task 3/4 评审修正同步**（Task 4 的 C1 网络段判据 / C2 `searchCoverUrl()` 封面回归 / I1 续页单飞 / I2 首页空段，见 §11 Task 4 末尾 as-built 块**；v2.0：Task 5 落码后的锚点漂移、`probe.asked` 断言不可用与负面缓存最终形状，见 §11 Task 5 末尾 as-built 块）。修订说明见 §附录 C
 - **前置阅读**：`docs/archive/multi-bitrate-playback-download-plan.md`（音质档位与直链缓存语义）、`docs/archive/network-music-upgrade-plan.md`
 
 ---
@@ -2843,6 +2843,20 @@ git add app/src/main/java/com/nasmusic/tv/backend/network/PlayabilityProbe.kt \
         app/src/test/java/com/nasmusic/tv/backend/network/NetworkDeadProbeCacheTest.kt
 git commit -m "feat(network): 播放直链增加跟链可播判据与负面探测缓存"
 ```
+
+#### v2.0 as-built（f0db478，评审 Approved：0 Critical / 0 Important / 4 Minor）
+
+**① 本 Task 的锚点全部漂移**（T2–T4 落地后行号变了；本节文本保留原行号，派发时以实测为准）：`MetingApiService.kt` 构造参数 `netease` 在 :57（文本写 :52）、`resolvePlayUrlDetailed` 起 :287（文本 :250-285）、假 302 现场 :301-311（文本 :271-276，同见 §2 R4 与 §3.8 表格里的两处旧引用）；`ResolveResult.kt` 数据类 :14-33（文本 :14-32）；`NasMusicApp.kt` 构造点 :304、`netease=` :311-313（文本 :303-308）。`NetworkMusicManager` 的四个锚点（:42 / :67 / :97-101 / :190-226）**至今准确**。
+
+**② ⚠️ Step 6 的 `assertEquals(listOf(deadUrl), probe.asked)` 断言不可用**——本仓库的第一条实测证据：DEAD 判定的 `continue` 之后降级链会继续走完，而 `buildEndpointFallbackOrder` 无条件带上公开预设端点，本机 `music.163.com` 真的返回了直链 ⇒ 假探测被问了两次、断言必挂。**改法（已落地）**：`assertEquals(deadUrl, probe.asked.firstOrNull())` + `assertNotEquals(deadUrl, r.url)`。这不是把测试写松——变异测试成立：删掉 `probe` 接线会让第 1、2 例转红，第 3/4/5 例各钉死一种"过度门控"变体。⛔ **Task 6/7 写判据类测试时不要照抄本 Task 文本里的 `asked == [...]` 形态**，一律按"首问命中 + 结果未被污染"两段式断言，这条正是 §11 全局纪律「⛔ 不断言整链失败」的具体来源。
+
+**③ 负面缓存的最终形状**（Step 7 原文即如此，此处只是把评审确认写死）：`deadProbeCache: ConcurrentHashMap<String, Long>`，key 与 `playUrlKey` 同构（含档位 ⇒ 切档必然重探，对齐验收 13），`DEAD_PROBE_TTL_MS = PLAY_URL_CACHE_TTL_MS`（**会过期**；实现"永不过期的 Boolean 表"是错误方向），与 `playUrlCache` 同一轮 sweep + 500 容量淘汰，`clearPlayUrlCache()` 两者一起清。
+
+**④ 唯一写入口**是 `MetingApiService` 里 `probe?.probe(resolved) == Playability.DEAD` 那一跳（:330-331），`catch` 分支与普通"端点没给链接"都不写缓存；`UNKNOWN`/`PLAYABLE`/`probe == null` 三条路径全部按改造前放行。
+
+**⑤ 遗留 Minor（分支终审处理，不阻塞 T6）**：M-1 淘汰块里两次读 `size` 的竞态（照抄既有 `playUrlCache` 写法）；M-2 `403 → DEAD` 会把 CDN 令牌短暂过期钉 5 分钟（brief 规定的判据本身）；M-3 两处 KDoc 措辞沿用方案文本不够精确；M-4 报告里 `NasMusicApp` 锚点偏移约 5 行。
+
+**⑥ 过程留痕（对后续 Task 的硬约束）**：本轮出现过一次「子代理报告 DONE 并给出不存在的 commit `0915253`」，实际 HEAD 未动、report 文件未写；同时**两个实现子代理并发编辑同一批文件**违反了本技能「一次只派一个实现子代理」的规定。自此固化：**收到 DONE ⇒ 先 `git log --oneline -1` + `git status -- app` 核实提交与改动面，再申请 review-package**；重派前必须确认上一个子代理已结束。
 
 ---
 
