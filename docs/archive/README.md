@@ -365,7 +365,7 @@
 
 > `docs/` 根在本轮之后**入库的 Markdown = 3 篇**（`technical-overview.md`、`conventions-adaptive-ui.md`、`visualizer-effects-list.md`）；另有另一在办会话新增、**尚未入库**的三份方案与两份原型 html，计数以实测为准，不在此定论。
 >
-> 引用改写 **3 处 / 3 文件**：`docs/technical-overview.md` §10.225（两处：唯一方案依据 + 遗留③ 结案）、本文 §附录 C 的自引用、`docs/archive/verification/scripts/netease_artist_probe.py` 头注。⛔ 死链自检 `grep -rn "docs/network-artist-full-discography-plan" --exclude-dir=.git --exclude-dir=.superpowers .` → **0 命中**。源码里的 `艺人全量方案 §x.y` 是**角色引用**而非路径，随文档同迁、无需改写。
+> 引用改写 **3 个文件 / 5 处**：`docs/technical-overview.md` §10.225（3 处：唯一方案依据、出包段尾巴、遗留③ 结案）、本文 §附录 C 的自引用 1 处、`docs/archive/verification/scripts/netease_artist_probe.py` 头注 1 处。⛔ 死链自检 `grep -rIn "docs/network-artist-full-discography-plan" --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=build --exclude-dir=output --exclude-dir=logs_temp .` → 只应剩**本行这一条自指**（命令串本身），其余文件 **0 命中**。源码里的 `艺人全量方案 §x.y` 是**角色引用**而非路径，随文档同迁、无需改写。
 > ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 验收结案**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.7]` 段内。
 
 ## 回滚
