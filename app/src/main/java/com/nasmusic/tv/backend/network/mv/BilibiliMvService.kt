@@ -406,8 +406,20 @@ class BilibiliMvService(
         // 默认 B 站官方 API 端点
         const val DEFAULT_BASE_URL = "https://api.bilibili.com"
 
-        /** 预设视频端点列表（供设置页选择） */
-        val PRESET_ENDPOINTS: List<Pair<Int, String>> = listOf(
+        /**
+         * 设置页「网络 > 视频端点」的**候选项**（供用户勾选）。
+         *
+         * ⛔ **这不是运行期 failover 链**——本服务只有 [baseUrlProvider] 一个端点，
+         * 没有 `buildEndpointFallbackOrder`、没有遍历端点的循环。用户在设置页选中的那个
+         * URL 由 `AppPreferences.getMvApiBaseUrlSync()` 读出、经 `baseUrlProvider` 生效，
+         * 这份列表本身只在 UI 里渲染。
+         *
+         * ⚠️ **与 `MetingApiService.PRESET_ENDPOINTS` 同名不同义**（故刻意取名不同）：
+         * 那一份是真被 `buildEndpointFallbackOrder` 当运行期 failover 链消费的（3 个端点），
+         * 这一份只是可选列表（1 个端点）。别照着 Meting 那边给它加注入接缝——
+         * 它没有会被单测触发的端点链，加了就是凭空多一个参数。
+         */
+        val ENDPOINT_OPTIONS: List<Pair<Int, String>> = listOf(
             R.string.mv_endpoint_bili_default to DEFAULT_BASE_URL
         )
 

@@ -40,6 +40,7 @@ import com.nasmusic.tv.data.prefs.AppPreferences
 import com.nasmusic.tv.player.ModelDownloadManager
 import com.nasmusic.tv.player.PlayerManager
 import com.nasmusic.tv.util.AppLog
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -266,8 +267,29 @@ val baiduOAuthClient: BaiduOAuthClient by lazy { BaiduOAuthClient(this, baiduOkH
     /**
      * 应用级协程作用域，用于 onDestroy 等生命周期之后的异步操作
      * 使用 SupervisorJob 确保子协程失败不会取消其他子协程
+     *
+     * ⛔ **必须带 [CoroutineExceptionHandler]**：`SupervisorJob` 的子协程被当作 root coroutine，
+     * 失败时走 `handleCoroutineException`；context 里没有 handler 就会落到
+     * `Thread.defaultUncaughtExceptionHandler` —— 真机上表现为崩溃或被静默吞掉（既不崩溃也不留痕），
+     * 而本作用域里跑的正是崩溃恢复、存储轮询这类**不该让应用出事**的后台工作。
+     *
+     * ⚠️ 这不只是健壮性。**它同时是 `PhotoWallControllerTest > empty pool never starts a swap
+     * and never crashes` 那条既有红的根因修复**（2026-10-12 定位）：
+     * 单测用 `@Config(application = NasMusicApp::class)` 让 Robolectric 真跑 onCreate，
+     * 其中 `:500` 的 `recoverAfterCrash()`（**唯一没包 try/catch 的一处**，`:517` 包了）会在
+     * `Dispatchers.IO` 上发起 Room 查询；Robolectric 每个测试方法换一个 SQLite 连接池，
+     * 该查询落到已拆掉的连接上抛 `IllegalStateException: Illegal connection pointer`。
+     * 经本作用域 → 全局收集器 → 被**下一个**进入 `runTest` 的类接盘 ⇒
+     * `UncaughtExceptionsBeforeTest` 落在 `PhotoWallControllerTest.kt:166`（全树 runTest 最密集，最容易接盘）。
+     *
+     * 有了 handler，`handleCoroutineException` 命中它后**不再**回落到 platform handlers，
+     * 异常因而不会变成 unhandled —— 测试那条红随之消失，而根因（后台恢复失败）仍被 AppLog 留痕。
      */
-    val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val applicationScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, t ->
+            AppLog.e("NasMusicApp", "applicationScope 未捕获异常（后台任务失败，不应影响应用）", t)
+        }
+    )
 
     override fun onCreate() {
         super.onCreate()

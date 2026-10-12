@@ -189,7 +189,7 @@ internal fun NetworkMusicSection(
                 modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp)
             )
             val mvCurrentNormalized = state.mvApiBaseUrl.trim().trimEnd('/')
-            com.nasmusic.tv.backend.network.mv.BilibiliMvService.PRESET_ENDPOINTS.forEach { (nameRes, url) ->
+            com.nasmusic.tv.backend.network.mv.BilibiliMvService.ENDPOINT_OPTIONS.forEach { (nameRes, url) ->
                 val selected = mvCurrentNormalized == url.trimEnd('/')
                 PresetEndpointRow(
                     name = stringResource(nameRes),
@@ -199,7 +199,7 @@ internal fun NetworkMusicSection(
                 )
             }
             // 自定义端点选项
-            val mvIsPreset = com.nasmusic.tv.backend.network.mv.BilibiliMvService.PRESET_ENDPOINTS
+            val mvIsPreset = com.nasmusic.tv.backend.network.mv.BilibiliMvService.ENDPOINT_OPTIONS
                 .any { it.second.trimEnd('/') == mvCurrentNormalized }
             val mvCustomSelected = !mvIsPreset
             PresetEndpointRow(
