@@ -346,6 +346,28 @@
 > 上表只计「三轮归档」。另有 **2 份审查报告**自 `logs_temp/` 迁入 `docs/archive/`
 > （见上文「附：验证证据迁移」），故 `docs/archive/` 现共 **62 篇文档 + 本索引**（含第六轮 2 份）。
 
+## 第八轮（2026-10-12，1 个）—— 已落地并通过 owner 真机验收
+
+| 文档 | 判定依据 |
+|---|---|
+| `network-artist-full-discography-plan.md` | ✅ **已落地**：随 **v2.38.7 / `versionCode 176`** 出包（`NASMusicTV-release-v2-38-7.apk` 25,541,663 B），owner 于 **2026-10-12** 报「经过测试，没问题了」⇒ §12 八项验收 + Task 8 的 6 项真机判读 + 四项已知风险**一揽子通过**。代码侧：分支 `feat/network-artist-discography`（对 `main` 39 提交 / 57 文件 / +10083 −90）终审十项 F1–F10、回炉 I-1/I-2、scoped 回审全部闭合。权威落码记录 = `docs/technical-overview.md` **§10.225**；版本条目 = `CHANGELOG.md` 的 `## [v2.38.7]` 段。移动方式 = **`git mv`**（历史保留），正文 §0–§12 与附录**一字未删**，只改状态头 + 版本行（v2.4 → v2.5） |
+
+⚠️ **归档 ≠ 职责结束**：本文仍是本功能的**唯一方案依据**——`app/src/**` 里 20 处 `艺人全量方案 §x.y` 的 KDoc 引用、`docs/archive/verification/scripts/netease_artist_probe.py` 的头注（本文所有数字的唯一再生源）、以及 §10.225 都指向它。⛔ 不要因为「已归档」把它当历史草案处置；恢复或扩展本功能时**必须先读它**（Q1–Q9 的裁决边界都在 §9，测量偏差在附录 B）。
+
+**归档时仍未闭合的事项**（⛔ 逐条留痕，归档 ≠ 已解决）：
+
+1. ⏳ **M-4：续页取到 null 时零日志**（终审 parked）。体感是「艺人页拉到一半不动」；修法要把第二个信号位再穿一层返回值，而 `NetworkArtistExpansion` 的设计约束是「⛔ 不做 IO、不打日志」，调用侧在 `MainViewModel` / `NetworkMusicManager` ⇒ 属独立一批。**owner 若收到「翻页不动」的反馈，先查这条。**
+2. ⏳ **`403 → DEAD` 的判据风险**（Task 5 遗留 M-2）：CDN 令牌短暂过期会被钉进负面缓存 5 min。真机整体通过 ⇒ 现状可接受，但**未做逐项判读**；候选修法（补 `User-Agent: Mozilla/5.0`、把 403 移出 DEAD 集）**仍未落码**。
+3. ⏳ **角标取舍待 owner 表态**（Task 8 的 M3/M4）：`possiblyUnplayable` 排在 `else -> SourceBadge` **之前** ⇒ 被打标的行失去来源标签；且角标只有灰色，TV 过扫描下偏弱。一揽子验收未细分此项，**若日后出现「看不出这首歌来自哪个源」的反馈即为它**。
+4. ⛔ **`limit ≤ 100` 是接口约束、不是实现细节**：探针 v5 实测 `limit=200` ≠ 两页 100（`first100_is_subset=False`）⇒ 任何放大分页规模的改动都会**静默丢数据**。
+5. ⏳ **Q8 决定不做的 kugou / P3**：`total=1845` 真分页可用但**直链 0/4**；而**自建 Meting 端点是全表唯一未测格**（§2 表第 ③ 列），§4 的「建议自建端点」押的就是这个空格。
+6. ⏳ **套件级既有 flake**：`PhotoWallControllerTest > empty pool…` 全量跑必红（隔离跑绿；把本分支新增门类挪出的 A/B 跑同样红），CI `test` job 会因它红 ⇒ ⛔ 别算进本功能的账，根因在 `visualizer/photo` 域（§10.225 遗留②）。
+
+> `docs/` 根在本轮之后**入库的 Markdown = 3 篇**（`technical-overview.md`、`conventions-adaptive-ui.md`、`visualizer-effects-list.md`）；另有另一在办会话新增、**尚未入库**的三份方案与两份原型 html，计数以实测为准，不在此定论。
+>
+> 引用改写 **3 处 / 3 文件**：`docs/technical-overview.md` §10.225（两处：唯一方案依据 + 遗留③ 结案）、本文 §附录 C 的自引用、`docs/archive/verification/scripts/netease_artist_probe.py` 头注。⛔ 死链自检 `grep -rn "docs/network-artist-full-discography-plan" --exclude-dir=.git --exclude-dir=.superpowers .` → **0 命中**。源码里的 `艺人全量方案 §x.y` 是**角色引用**而非路径，随文档同迁、无需改写。
+> ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 验收结案**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.7]` 段内。
+
 ## 回滚
 
 归档为**纯移动**（`git mv`，历史保留），未删除任何内容。整体回滚：

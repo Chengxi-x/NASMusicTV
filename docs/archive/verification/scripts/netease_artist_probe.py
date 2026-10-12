@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 网络艺人全量歌曲 —— 30 首上限归因 / 全量可行性 / 可播率 的可复现测量脚本
-（对应方案 docs/network-artist-full-discography-plan.md，本文所有数字必须由本脚本再生，⛔ 不许手抄）
+（对应方案 docs/archive/network-artist-full-discography-plan.md，本文所有数字必须由本脚本再生，⛔ 不许手抄）
 
 用法：
   python docs/archive/verification/scripts/netease_artist_probe.py                 # A/B/C/D 组（不触碰播放端点）
