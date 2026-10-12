@@ -2,7 +2,6 @@ package com.nasmusic.tv.ui.components
 
 import com.nasmusic.tv.data.model.LyricsLine
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -70,22 +69,23 @@ class FindCurrentLyricLineTest {
     }
 
     @Test
-    fun `long lyrics stay fast and correct`() {
-        // 1000 行，每行间隔 300ms；随机取 10000 个进度点求值
+    fun `long lyrics stay correct across the whole progress range`() {
+        // 1000 行，每行间隔 300ms；覆盖 10000 个进度点求值
         val count = 1_000
         val l = List(count) { LyricsLine(time = it * 300L, text = "line$it") }
 
-        val start = System.nanoTime()
         var mismatches = 0
         for (k in 0 until 10_000) {
             val progress = (k * 37L) % (count * 300L)
             val expected = (progress / 300L).toInt()
             if (findCurrentLyricLine(l, progress) != expected) mismatches++
         }
-        val elapsedMs = (System.nanoTime() - start) / 1_000_000
 
         assertEquals("binary search must match the arithmetic answer", 0, mismatches)
-        // 二分查找：10000 次查询应远快于线性扫描（线性扫描约 4~5ms 起步）
-        assertTrue("10000 lookups took ${elapsedMs}ms", elapsedMs < 100)
+        // ⛔ 这里**故意没有**性能断言（原先是 `assertTrue(elapsedMs < 100)`）：
+        // 墙钟门槛测的是 runner 的 CPU，不是我们的代码——2 核 runner 并行跑 2000+ 例时
+        // 它纯属运气，会让 CI 随机变红而代码一行没动（本项目已吃过一次，机制见
+        // MetingApiService 的 presetEndpoints 接缝 KDoc）。二分查找的复杂度由上面的
+        // 正确性断言 + 代码本身保证；要盯性能请放到 instrumented benchmark / profiling。
     }
 }

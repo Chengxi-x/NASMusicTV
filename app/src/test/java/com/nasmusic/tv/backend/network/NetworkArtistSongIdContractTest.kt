@@ -32,7 +32,12 @@ class NetworkArtistSongIdContractTest {
         server.start()
         server.enqueue(MockResponse().setBody(metingSearchBody).setHeader("Content-Type", "application/json"))
         try {
-            val svc = MetingApiService(baseUrlProvider = { server.url("/api").toString() })
+            val svc = MetingApiService(
+                baseUrlProvider = { server.url("/api").toString() },
+                // ⛔ 不注入真实预设端点：mock 只 enqueue 了 1 条响应，一旦回退到
+                //   PRESET_ENDPOINTS 就会真的出网、结果取决于第三方可用性（2026-10-11 起）。
+                presetEndpoints = emptyList()
+            )
             val songs: List<Song> = svc.search("周杰伦", limit = 30)
             assertEquals(1, songs.size)
             val song = songs.first()
@@ -57,6 +62,8 @@ class NetworkArtistSongIdContractTest {
     @Test
     fun `同一 netId 下网易侧与 Meting 侧生成的 id 必须逐字符相等`() {
         // 红线 1 的正体：两条链路共用 NetworkSongId，任何一侧改写格式都会在这里被抓到
+        // ⚠️ baseUrl 只是占位，本用例只调 [NeteaseOpenApi.toSong] 这个**纯函数**，一个请求都不发
+        //   （下面的 [NeteaseOpenApi] 同理）。⛔ 不要把它改成会真发请求的用法。
         val netease = com.nasmusic.tv.backend.network.netease.NeteaseOpenApi(
             baseUrlProvider = { "https://music.163.com" }
         )
@@ -112,7 +119,13 @@ class NetworkArtistSongIdContractTest {
         // ① NetworkSource 枚举 key（UI 侧，⛔ 不改枚举本身）；② MetingApiService.sourceId（接口实现值）
         assertEquals("红线 2 唯一合法值漂移", "meting", NetworkSongId.METING_SOURCE)
         assertEquals(NetworkSongId.METING_SOURCE, NetworkSource.METING.key)
-        val svc = MetingApiService(baseUrlProvider = { "https://invalid.invalid/api" })
+        val svc = MetingApiService(
+            baseUrlProvider = { "https://invalid.invalid/api" },
+            // 本用例只读 svc.sourceId，今天一个请求都不发；这里注入空列表是**预防性**的——
+            // ⛔ 万一日后有人在这行后面加一次真实调用，invalid.invalid 解析失败就会
+            //   顺着端点链打到 3 个公网预设端点上。
+            presetEndpoints = emptyList()
+        )
         assertEquals(NetworkSongId.METING_SOURCE, svc.sourceId)
         // 注册表 key（NasMusicApp services map 的键）就是同一个常量；负自检：
         // 若有人把枚举 key 或 sourceId 改漂，上面两条断言之一必红。

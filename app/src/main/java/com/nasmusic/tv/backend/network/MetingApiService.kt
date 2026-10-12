@@ -59,7 +59,21 @@ class MetingApiService(
      * 可播判据（§3.8 第 1 步，Q4 裁决）。null = 不探测，维持既有"拿到非空 Location 即成功"。
      * 生产由 NasMusicApp 注入 [HttpPlayabilityProbe]；单测注入假探测（⛔ 不打网络）。
      */
-    private val probe: PlayabilityProbe? = null
+    private val probe: PlayabilityProbe? = null,
+    /**
+     * 端点 fallback 用的预设端点列表（[buildEndpointFallbackOrder] 的数据源）。
+     *
+     * ⚠️ **默认 [PRESET_ENDPOINTS] 与改造前逐字符等价 ⇒ 线上行为零变化**：
+     * 生产唯一的构造点 `NasMusicApp.onCreate` 用默认值，取到的仍是同一个 companion 常量
+     * （同一 List 实例，连引用都相同），`buildEndpointFallbackOrder` 的去重/排序逻辑一字未动。
+     *
+     * ⚠️ 存在的原因只有一个：**单测的确定性**。原实现让单测在首选端点失败后
+     * 必然去打 3 个**真实公网端点**（meting.mikus.ink / meting.api.redcha.cn / api.qijieya.cn），
+     * 于是测试结果依赖第三方可用性与网络状况 → CI flaky 的真正来源。
+     * 单测注入 `emptyList()` 或自己的 MockWebServer 即可**彻底不打公网**。
+     * ⛔ 不要把默认值改成空列表，也不要从这里读用户设置——预设端点的**展示**在设置页另有出处。
+     */
+    private val presetEndpoints: List<Pair<Int, String>> = PRESET_ENDPOINTS
 ) : NetworkMusicService {
 
     override val sourceId = NetworkSongId.METING_SOURCE
@@ -224,15 +238,18 @@ class MetingApiService(
      *
      * 优先级：
      * 1. 当前用户选中的端点（baseUrl）
-     * 2. 其他预设端点（按 PRESET_ENDPOINTS 顺序，排除当前端点）
+     * 2. 其他预设端点（按 [presetEndpoints] 顺序，排除当前端点）
      *
      * 如果当前端点是自定义的（不在预设列表中），也会先尝试它，然后 fallback 到预设端点。
+     *
+     * ⚠️ 预设端点来自构造参数 [presetEndpoints]（默认 [PRESET_ENDPOINTS]，线上等价），
+     * 目的是让单测能注入 MockWebServer 或空列表、**不打真实公网**——见该参数 KDoc。
      */
     private fun buildEndpointFallbackOrder(currentBase: String): List<String> {
         val normalized = currentBase.trim().trimEnd('/')
         val result = mutableListOf(normalized)
         // 添加其他预设端点（去重）
-        PRESET_ENDPOINTS.forEach { (_, url) ->
+        presetEndpoints.forEach { (_, url) ->
             val presetNormalized = url.trim().trimEnd('/')
             if (presetNormalized != normalized) {
                 result.add(presetNormalized)

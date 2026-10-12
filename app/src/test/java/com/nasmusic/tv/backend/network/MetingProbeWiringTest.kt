@@ -18,11 +18,15 @@ import org.robolectric.annotation.Config
 /**
  * 判据接线测试（§6 验收 12/16 的代码侧形态）。
  *
- * ⚠️ 断言纪律沿用 `MetingResolveTest.kt:191-202` 的既有教训：
- * **绝不断言"全链失败 ⇒ url == null"**——`buildEndpointFallbackOrder` 会在首选端点之后
- * 追加 3 个真实公网预设端点，测试环境可能真的拿到直链，那样断言必然 flaky。
- * 因此这里只在**首选端点就能定案**的路径上断言最终 url（PLAYABLE / UNKNOWN / 200-JSON），
- * DEAD 那条只断言"探测被问过、且假 302 直链没被当成结果返回"。
+ * ⚠️ **本类不打真实公网**（2026-10-11 起）：`MetingApiService` 有带默认值的构造参数
+ * `presetEndpoints`（默认 = `PRESET_ENDPOINTS`，线上逐字符等价），本类通过 [service]
+ * **注入 `emptyList()`** ⇒ 端点链只剩首选 MockWebServer 一个。
+ *
+ * 改造前这里**真的会出网**：`302 直链探测 DEAD` 那条在首选端点被判 DEAD 后，`continue`
+ * 只跳内层 br 循环，AUTO 档内层只有 1 次迭代 → 外层立刻轮到 `buildEndpointFallbackOrder`
+ * 追加的 3 个**真实公网预设端点**，它们若回 302 会再次触发探测、结果取决于第三方可用性。
+ * 当时的断言纪律因此被迫写成"只断言 `asked.firstOrNull()`，不断言 `asked` 整体"——
+ * **那个将就现在可以去掉了**（见 `302 直链探测 DEAD` 那条）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -64,10 +68,17 @@ class MetingProbeWiringTest {
     @After
     fun tearDown() = server.shutdown()
 
+    /**
+     * ⛔ `presetEndpoints = emptyList()` 是**必需**的，不是洁癖：
+     * AUTO 档下"首选端点判 DEAD → continue"会立刻跨到 fallback 端点，
+     * 不注入就会去打真实公网（见类 KDoc）。需要验端点级 fallback 请用 `MetingResolveTest`，
+     * 它用同一台 MockWebServer 的两个路径搭了两级本地链。
+     */
     private fun service(probe: PlayabilityProbe?) = MetingApiService(
         baseUrlProvider = { server.url("/api").toString().trimEnd('/') },
         serverProvider = { "netease" },
-        probe = probe
+        probe = probe,
+        presetEndpoints = emptyList()
     )
 
     private val song = Song(
@@ -80,11 +91,12 @@ class MetingProbeWiringTest {
         location = deadUrl
         val probe = FakeProbe(mapOf(deadUrl to Playability.DEAD))
         val r = service(probe).resolvePlayUrlDetailed(song, QualityTiers.AUTO)
-        // ⚠️ 不断言 asked 恰为 [deadUrl]：首选端点 DEAD 后循环仍会试 fallback 的公网预设端点，
-        // 它们若回 302 会再次触发探测（默认 UNKNOWN 放行）。"首选端点的假 302 必然第一个被问"
-        // 才是与环境无关的确定性断言（同一纪律见类注释与 MetingResolveTest:191-202）。
-        assertTrue("假 302 必须最先被问过探测", probe.asked.firstOrNull() == deadUrl)
+        // 注入 emptyList() 之后这条断言**可以收紧到逐字节相等**（改造前不敢这么写）：
+        // 当时链上还有 3 个真实公网端点，它们回 302 会再次触发探测，asked 的长度不可控。
+        // 现在端点链只有首选端点，AUTO 档内层 br 循环也只有 1 次迭代 ⇒ 恰好问一次。
+        assertEquals("DEAD 直链必须被问过一次，且**只**问这一次", listOf(deadUrl), probe.asked)
         assertTrue("DEAD 直链绝不能当成功返回（R4 的本体）", r.url != deadUrl)
+        assertTrue("全链判 DEAD 后应带回 probedDead 语义", r.probedDead)
     }
 
     @Test

@@ -25,14 +25,27 @@ import org.robolectric.annotation.Config
  * - 302 取 `Location`、200 走 JSON `url` 两种响应形态
  * - AUTO 档不触发降级语义
  *
- * ⚠️ 端点 fallback 会遍历 `PRESET_ENDPOINTS`（真实公网地址）。
- * 为避免测试打真实网络导致 flaky，所有用例都让**首选端点（MockWebServer）**
- * 返回结果；需要"全链失败"的用例则通过 Dispatcher 让首选端点始终 200-无 url，
- * 并对结果只断言"未拿到可用 url"，不断言具体端点。
+ * ⚠️ **本类不打真实公网**（2026-10-11 起）：`MetingApiService` 新增了带默认值的构造参数
+ * `presetEndpoints`（默认 = `PRESET_ENDPOINTS`，线上逐字符等价），本类通过 [service] 把它注入成
+ * **同一台 MockWebServer 的另一个路径**（[FALLBACK_PATH]），于是端点 fallback 链
+ * "首选端点 → fallback 端点" 的**两级结构与生产一致**，但两端都是本地桩。
+ *
+ * 改造前这里走的是 `PRESET_ENDPOINTS` 的 3 个真实公网端点
+ * （meting.mikus.ink / meting.api.redcha.cn / api.qijieya.cn），只要其中任意一个在线并应答了，
+ * 同一份断言就会在 CI 与本机给出不同结果——这正是 `Unit tests` job 偶发红的真正来源。
+ * 需要"没有 fallback 端点"的场景时传 `service(fallbackBase = null)`。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class MetingResolveTest {
+
+    private companion object {
+        /** 兼作"fallback 端点"的路径前缀（与首选端点的 `/api` 区分，仍在同一台 MockWebServer 上） */
+        const val FALLBACK_PATH = "/api-fallback"
+    }
+
+    /** fallback 端点基址（读 [server]，故必须在 [setup] 之后取） */
+    private val fallbackEndpointBase get() = server.url(FALLBACK_PATH).toString().trimEnd('/')
 
     private lateinit var server: MockWebServer
 
@@ -40,8 +53,15 @@ class MetingResolveTest {
     private val seenBr = mutableListOf<Int?>()
     private val seenPaths = mutableListOf<String>()
 
-    /** 每个 tier → 直链；未配置的 tier 视为不可用 */
+    /** 首选端点（`/api`）每个 tier → 直链；未配置的 tier 视为不可用 */
     private var urlByTier: Map<Int?, String> = emptyMap()
+
+    /**
+     * fallback 端点（[FALLBACK_PATH]）每个 tier → 直链。
+     *
+     * 与 [urlByTier] 分开，才能表达"首选端点全档失败、换端点后才拿到直链"这个真实场景。
+     */
+    private var fallbackUrlByTier: Map<Int?, String> = emptyMap()
 
     /** true 时所有请求返回 302 + Location（而非 200 + JSON） */
     private var use302 = false
@@ -50,6 +70,9 @@ class MetingResolveTest {
     fun setup() {
         seenBr.clear()
         seenPaths.clear()
+        urlByTier = emptyMap()
+        fallbackUrlByTier = emptyMap()
+        use302 = false
         server = MockWebServer()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -57,7 +80,8 @@ class MetingResolveTest {
                 seenPaths += url
                 val br = Regex("[?&]br=(\\d+)").find(url)?.groupValues?.get(1)?.toIntOrNull()
                 seenBr += br
-                val target = urlByTier[br]
+                // 同一台 MockWebServer 兼作"首选端点"与"fallback 端点"，靠路径区分
+                val target = if (url.startsWith(FALLBACK_PATH)) fallbackUrlByTier[br] else urlByTier[br]
                 return when {
                     target == null -> MockResponse().setResponseCode(200).setBody("{}")
                     use302 -> MockResponse().setResponseCode(302).addHeader("Location", target)
@@ -74,11 +98,21 @@ class MetingResolveTest {
         server.shutdown()
     }
 
-    private fun service(qualityTier: Int = QualityTiers.AUTO) = MetingApiService(
-        // 首选端点指向 MockWebServer；fallback 到预设端点时同样会被 Dispatcher 记录
+    /**
+     * 构造被测服务。
+     *
+     * @param fallbackBase 预设端点列表的唯一元素；默认 = 同一台 MockWebServer 的 [FALLBACK_PATH]，
+     *   传 null 则**不注入任何预设端点**（端点链只剩首选端点）。
+     *   ⛔ 两者都**不打真实公网**——本类不再使用默认的 `PRESET_ENDPOINTS`（见类 KDoc）。
+     */
+    private fun service(
+        qualityTier: Int = QualityTiers.AUTO,
+        fallbackBase: String? = fallbackEndpointBase
+    ) = MetingApiService(
         baseUrlProvider = { server.url("/api").toString().trimEnd('/') },
         serverProvider = { "netease" },
-        qualityTierProvider = { qualityTier }
+        qualityTierProvider = { qualityTier },
+        presetEndpoints = fallbackBase?.let { listOf(0 to it) } ?: emptyList()
     )
 
     private fun song(id: String = "1001") = Song(
@@ -189,28 +223,58 @@ class MetingResolveTest {
 
     @Test
     fun `首选端点全档不可用时 会继续尝试后续端点（fallback 行为）`() = runBlocking {
-        // ⚠️ 不能断言"最终 url == null"：buildEndpointFallbackOrder 在首选端点之后
-        // 会追加 PRESET_ENDPOINTS 里的 3 个**真实公网端点**，测试环境可能真的拿到直链
-        // （实测：netease 的 outer/url 会返回可用地址），那样断言必然 flaky。
-        // 这里只断言可确定的性质：首选端点被完整试过 999→320→192→128 四档。
+        // ⚠️ 这条用例曾因"打真实公网"而 flaky：首选端点失败后会遍历 PRESET_ENDPOINTS 的
+        // 3 个公网端点（meting.mikus.ink / meting.api.redcha.cn / api.qijieya.cn），
+        // 它们可能真的返回直链，任何"最终 url == null"的断言都不可靠。
+        // 现在 fallback 端点被换成本地 `/api-fallback`（见类 KDoc），两端都不出网。
+        //
+        // 断言仍只取与环境无关的那部分性质：**首选端点**被完整试过 999→320→192→128 四档才换端点。
         urlByTier = emptyMap()
         service().resolvePlayUrlDetailed(song(), 999)
         assertEquals(
             "首选端点应按降级链试完 4 档后才换端点",
             listOf(999, 320, 192, 128), seenBr.take(4)
         )
+        assertTrue("之后确实换到了 fallback 端点", seenPaths.any { it.startsWith(FALLBACK_PATH) })
     }
 
+    /**
+     * 端点级 fallback：首选端点整条链拿不到直链 → 换到 fallback 端点后命中，返回**实际命中档位**。
+     *
+     * ⚠️ 这条用例 2026-10-11 之前是 **CI flaky 的源头**，两个缺陷叠在一起：
+     * 1. 它没注入预设端点，于是首选端点失败后会去打 3 个真实公网端点
+     *    （meting.mikus.ink / meting.api.redcha.cn / api.qijieya.cn）。其中任意一个在
+     *    **br=192** 应答 → `actualQuality = 192`；
+     * 2. 而当时的断言写死了 `== 320 || == 128`，**漏掉了 192**——可
+     *    `QualityTiers.fallbackChainOf(320)` 明明是 `[320, 192, 128]`。
+     *
+     * 于是：本机打不通公网 → 全链失败 → `ResolveResult.failure(320)` → 320 → **绿**；
+     * CI 上公网通 → 192 → **红**。**同一个 commit 的 tag run 能过，正是这个原因。**
+     *
+     * 现在 fallback 端点是**同一台 MockWebServer 的 `/api-fallback`**，结果完全确定：
+     * - 首选端点：`urlByTier` 空 → 320/192/128 三档各回一次 `{}`（无 url），共 3 次请求
+     * - fallback 端点：320 再失败 → **192 命中** → 立即返回，`actualQuality = 192`
+     * - 因此 seenBr = [320, 192, 128] ++ [320, 192]，不再往后试
+     */
     @Test
     fun `首选端点不可用时 fallback 到后续端点并返回可用结果`() = runBlocking {
-        // 让首选端点（MockWebServer）对所有档返回空 JSON，再由 Dispatcher 记录后续端点请求
-        urlByTier = emptyMap()
+        urlByTier = emptyMap()                                   // 首选端点全档失败
+        fallbackUrlByTier = mapOf(192 to "https://cdn/fallback-192.mp3")   // 换端点后在 192 命中
+
         val r = service().resolvePlayUrlDetailed(song(), 320)
-        // 只要没抛异常、且请求确实越过了首选端点的 2 档（320→128），即证明 fallback 生效
-        assertTrue("应至少尝试过 320 与 128", seenBr.size >= 2)
+
+        assertEquals("https://cdn/fallback-192.mp3", r.url)
+        assertEquals("换端点后必须返回实际命中的 192", 192, r.actualQuality)
+        // 首选端点确实被完整试过 320→192→128 三档后才换端点
+        assertEquals(listOf(320, 192, 128), seenBr.take(3))
+        assertTrue("确实打过 fallback 端点", seenPaths.any { it.startsWith(FALLBACK_PATH) })
+        // ⛔ 降级链不变式（任务要求的写法）：actualQuality 必须落在 HIGH 的降级链内
+        //   （`QualityTiers.fallbackChainOf(320)` = `[320, 192, 128]`；全链失败时
+        //   `ResolveResult.failure` 返回的也是请求档 320，同样落在链内）。
+        //   ⛔ 写成链不变式而**不是**写死某两个值——将来链增删档（如补 256）不会再把本用例打红。
         assertTrue(
-            "actualQuality 应为合法档位",
-            r.actualQuality == 320 || r.actualQuality == 128
+            "actualQuality 应落在 320 的降级链内，实际=${r.actualQuality}",
+            r.actualQuality in QualityTiers.fallbackChainOf(320)
         )
     }
 

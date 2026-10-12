@@ -30,8 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * `/api/api/search/get` —— 判定分支用 `contains("/api/search/get")`，
  * 顺序必须在 `startsWith("/api")` 之前。
  *
- * ⛔ 不写"端点链全挂 ⇒ 结果为空"这类断言：`buildEndpointFallbackOrder` 会追加
- * 三个真实公网预设端点，那样写天然 flaky（见 MetingResolveTest 的同类注释）。
+ * ⛔ **不打真实公网**（2026-10-11 起）：`MetingApiService` 有带默认值的构造参数
+ * `presetEndpoints`（默认 = `PRESET_ENDPOINTS`，线上逐字符等价），[service] 注入
+ * `emptyList()` ⇒ 端点链只剩当前 mock 一个。改造前这里会用默认的 3 个真实公网预设端点，
+ * 于是"端点链全挂 ⇒ 结果为空"这类断言天然 flaky（同源教训见 `MetingResolveTest`）。
+ * 现在没有任何一条用例依赖第三方可用性。
  *
  * F1（分支终审）：「网易优先」只属于 `searchNativeFirst`，`search()` 必须回到改造前的端点链语义。
  */
@@ -86,7 +89,10 @@ class NeteasePrioritySearchTest {
         return MetingApiService(
             baseUrlProvider = { base },                       // 当前端点 = mock，端点链第一跳就命中
             serverProvider = { "netease" },
-            netease = NeteaseOpenApi(baseUrlProvider = { base })   // 原生接口也指到同一个 mock
+            netease = NeteaseOpenApi(baseUrlProvider = { base }),  // 原生接口也指到同一个 mock
+            // ⛔ 不注入真实预设端点：本类的用例全部在第一跳 mock 上定案，
+            //   留着默认的 3 个公网端点只会在某条用例回退时静默出网。
+            presetEndpoints = emptyList()
         )
     }
 
