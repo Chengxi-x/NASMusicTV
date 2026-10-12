@@ -14576,3 +14576,66 @@ G2 的 §4.6 十五日期向量表与 G12 的「暗区/整盘 = `(R+v)/(2R)`」�
 
 **未做**：⛔ 未推送、未打 tag、未出 release 包（owner 链未指示）；⛔ 未改 `AMP_FRACTION`（0.26 是上轮为压制整体高度定的，本次诉求是**形态**不是大小）；⛔ 未动波形以外的任何 renderer 逻辑（`heartbeatAt` 仍是 O(1) 无插值、draw 内零分配）。**遗留**：脚本 `--check` 有一条「T 起点曲率翻转」的膝检测**未镜像进 Kotlin 门禁**，且脚本数「全部超门限列」、Kotlin 数「连续段」，当前表两者同为 3.0 但未来重新生成的表可能分叉——要么把该断言镜像过去，要么明确择一口径并注明。
 ⚠️ 工作区另有**其他在办会话的未提交改动**（`.gitignore`、`docs/archive/README.md`、`docs/visualizer-effects-list.md` 的大改写、以及 blackhole / E45 轨道 / E46 雾灯若干新文件），⛔ 不属本节账，提交时须按文件甄别。
+
+### 10.227 v2.38.8 — 艺人全量搜索页真机反馈两修：计数口径 + 来源标签被角标顶掉（2026-10-12）
+
+**用户反馈（真机，搜「李宗盛」）**：① 加入队列按钮右侧显示 452 首，下一行却显示「歌曲 (421/421)」，数量不一致；② 后面的条目提示「可能无版权」，但原有的「网络」来源标签没有了。
+
+**① 先证伪「分页被截断」**（这一步是本节的关键，别跳过）：直连网易免鉴权接口逐页核对 `GET /api/v1/artist/songs?id=3683&offset&limit=100&total=true&order=hot` —— offset 0/100/200/300 各 100 行、offset 400 为 21 行且 `more=false`，累计 **421 行 / 421 首不重复 / `total=421`**；`musicSize` 亦为 421。⇒ **421 完整且正确**。两个数字量的**不是同一个东西**：
+
+| 显示位 | 取值 | 口径 |
+|---|---|---|
+| 加入队列按钮右侧 452 | `ActionBar(songCount = searchResults.size)`（`SearchTab.kt`） | **整个网格的行数**，含 NAS / 百度网盘 / Jamendo / 本地命中的 31 行；「播放全部 / 全部加入队列」正作用于此列表 |
+| 下一行 421/421 | `artistPaging.songs.size` / `.totalCount` | **仅网络音乐里该艺人**的目录计数 |
+
+⇒ ⛔ **修法不是让两个数字相等**（那会让按钮语义说谎），而是**点名口径**。`SearchTab.kt:170-193` 改为 `网络音乐 · <艺人> <已加载>/<总数> 首`，且**加载完毕后不再显示 `x/x` 分数**（改 `…首（已全部加载）`）—— 「421/421」本身就是这次误解的触发点。艺人名直接取 `searchKeyword`：两条命中路径（`hitArtistId` 的 `containsArtistWithKey` 与 `findArtist` 的 `normalizeKey` 全等）**都只在关键词等于艺人名时才激活**，故该取值安全。
+⚠️ 可见性判据由 `artistLoadedCount in 1..totalCount` **放宽为 `> 0`**：`total` 每页都被 `accumulate` 覆写，上游 total 一旦抖动到低于已加载行数，区间判据会把整行**静默隐藏**。
+
+**② 根因是角标位互斥**（不是数据丢了）：`UnifiedSongRow.kt` 的标签位是一条 `when`，`URL 失效 > 待补全 > 可能无版权 > 来源徽标` **互斥占位** ⇒ 任何 `possiblyUnplayable` 的行都丢掉来源标签；该标志又仅在艺人全量分支置位（`possiblyUnplayable = song.id in unplayableIds`），所以只在搜艺人时可见。改法：把 `possiblyUnplayable` 那一支换成 `else -> { SourceBadge(...); if (possiblyUnplayable) { Spacer(8.dp); Text(可能无版权) } }`，即**追加**而非顶替；`UNREACHABLE` / `isStub` 两支**逐字未动**。
+- 顺序有意为之：Row 内非 weight 子项**按序测量**，来源徽标在前 ⇒ 窄屏挤爆时先被压扁的是后面的提示文字，**来源标签始终完整**。
+- ⚠️ 提示文字加了 `maxLines = 1` + Ellipsis：它是该位最长的字符串（5 个汉字），不加会在竖屏 `heightIn(min = 88dp)` 的行里折行、把行撑高。
+
+**②b 所有者续裁两步：灰字 → 小药丸 → 纯图标「划斜杠的 ℗」（把横向空间还给歌名）**
+
+owner 两次裁决：① 「这几个字，改成一个小标签来体现无版权，这样空间就省出来了」；② 「℗ —— 录音制品版权符号（Phonogram），这个是版权符号，做个这个标记打个斜线，表示无版权即可，**不用中文文字**」。最终形制 = **纯图标**：药丸底 + ℗ 矢量 + 一道 45° 斜杠，角标内**零文字**。
+
+⭐ **本轮最值钱的两条沉淀**：
+
+1. **药丸本身不省空间，「文案变短」才省**。5 个汉字装进 chip、按 `QualityBadge` 的 6dp 内边距算 = 5×12 + 12 = **72dp，比它替换掉的 70dp 纯文字还宽** —— chip 是**倒贴**空间；即便收到 3dp 也只 66dp，是 4dp 的假胜利。真正的收益来自文案 5 字 → 4 字（zh 70 → 54dp，−23%）。⇒ **任何「把 N 字灰字换成 chip」的优化，先算 `字数 × 字号 + 2×padding`，别默认 chip 更省**。走完两步（文字 → chip → 图标）才拿到真正的量级：54dp → **18dp**。
+2. **⛔ 图标化让角标比文案更「断言」，必须补读屏名兜底**。文案还能说「存疑」，一个划斜杠的 ℗ 读起来就是「没版权」了 —— 而 `st != 0` 只支持后者**存疑**、不支持后者**断言**。故图标仍挂 `R.string.song_row_unplayable_badge`（「版权存疑」/「Rights unclear」）作 `clearAndSetSemantics { contentDescription = … }`；⛔ 该字符串**不可删**，删了即死资源并新增一条 `UnusedResources` lint。
+
+**⛔ 字形覆盖：为什么不用 `Text("℗")`**。U+2117 不在所有系统字体里，minSdk 22 的老电视（如创维 5.1）缺字渲染成豆腐块 □ —— **比原来的文案更糟，且只在别人设备上暴露**。故圆环、P 的竖干与半椭圆碗、斜杠一律 `drawBehind` 画矢量，**不依赖任何字形覆盖**。
+⛔ **斜杠是真画的 45° 斜线**：`TextDecoration.LineThrough` 画的是**横线**，不是这里要的。
+
+⚠️ **药丸底改用 `drawBehind` + `drawRoundRect`，⛔ 不用 `RoundedCornerShape.clip`** —— 既有实证：`VisualizerStage.kt:789-792` 记载创维 rtd2990（Android 5.1 回归基准机）的 hwui `Region::createTJunctionFreeRegion` 对大量圆形 clip 拓扑合并**段错误**（RenderThread SIGSEGV，真机三次复现）。既然已在 `drawBehind` 内，顺带避开 clip 是零成本。⚠️ **但 `SourceBadge.kt` 与 `QualityBadge.kt` 仍用 `.clip(RoundedCornerShape(...))`** —— 本行剩余的 clip 暴露在它们那里，未在本次改动范围内。
+
+**360dp竖屏预算（图标化后复算）**：固定开销 `16×2 + 64 + 14 + 36 + 12` = 158dp ⇒ Column 202dp ⇒ 标题 Row 194dp（减去原有 8dp 间距）。来源徽标 36 + 图标角标 18 +（最坏情况）画质徽标 36，各含 8dp 间距——
+| 场景 | 占位 | 歌名可用 | 相对起点（无任何角标时的 80dp… 实为 194−8−36 = 150dp） |
+|---|---|---|---|
+| **初始**（角标完全不存在） | — | 150dp | 基准 |
+| **常规**（`resolvedQuality == AUTO`，owner 报的场景） | `8+36+8+18` = 70dp | **124dp** | 文字版 88dp → 图标版 124dp |
+| **最坏**（`QualityBadge` 也渲染） | `+8+36` = 114dp | **80dp** | 文字版 44dp → 图标版 80dp |
+
+⚠️ **可读性下限**：手机 12sp 下 P 的字碗内孔（碗里的封闭空隙）约 **1.1dp**，该尺寸下碗可能读作一小团糊；TV 18sp 舒适，而 TV 是主设备。若真机在手机上发糊，修法是把 `markStroke` 由 `0.08f` 调向 `0.06f`（**一个数**）。
+⚠️ 零分配：`Stroke` 在 `remember` 里按尺寸建一次、`drawArc` 走 `topLeft`/`size` 重载（不构造 `Rect`）、`Offset`/`Size` 是 inline value class；每帧只有 `drawBehind` 的 lambda 实例本身是每组合期分配，⛔ 非每帧。图标尺寸经 `with(LocalDensity.current) { FontSize.caption().toDp() }` 推导（与 `NowPlayingScreen.kt:743` 同法），随用户调字体缩放。
+
+**验证**（**最终图标形态**下的一次跑，源码与记录一致）：`assembleDebug lintDebug testDebugUnitTest --no-daemon "-Pkotlin.compiler.execution.strategy=in-process"` ⇒ **`BUILD SUCCESSFUL in 9m 55s`**；全量 **2044 例 / 186 类、0 失败 / 0 错误**；`SearchPagingWiringGateTest` **5/5**（W4 钉的三处字面量 `artistPaging.hasMore && !artistPaging.isLoading` / `artistPaging.songs.size` / `song.id in unplayableIds` 均逐字保留）；`lintDebug` 随构建通过（CI blocking）。本节三个形态各验证过一轮，例数恒为 2044、恒零失败：
+| 形态 | 结果 |
+|---|---|
+| 计数口径 + 来源标签并存（灰字版） | `BUILD SUCCESSFUL in 11m 58s` |
+| 灰字 → 小药丸（文案缩短） | `BUILD SUCCESSFUL in 10m 33s` |
+| **药丸 → 纯图标（最终）** | **`BUILD SUCCESSFUL in 9m 55s`** |
+
+⚠️ 首轮跑挂过一次，**与代码无关**：`-Pkotlin.compiler.execution.strategy=in-process` 未加引号时被 PowerShell 拆开，Gradle 收到任务名 `.compiler.execution.strategy=in-process` ⇒ 15 秒内 `Task not found`。**必须写成 `"-Pkotlin.compiler.execution.strategy=in-process"`**。
+⚠️ **本机并发禁令**：同一时刻只准有一个 Gradle。并发跑会让某个构建在 `Could not create service of type FileHasher` 处秒失败（`.gradle/<版本>/fileHashes/fileHashes.lock` 竞争，AGENTS.md 已记）。本次出 release 包时把 `assembleRelease` **串在** debug 验证之后自动接力（先等 java 进程退出、再 `--stop`、再出包），未并发。
+
+⚠️ **PowerShell 传参坑（本次实测踩到，值得迁移）**：`-Pkotlin.compiler.execution.strategy=in-process` **不加引号**会被 PowerShell 拆开，Gradle 收到的是任务名 `.compiler.execution.strategy=in-process` ⇒ 15 秒内 `Task not found` 失败。必须写成 `"-Pkotlin.compiler.execution.strategy=in-process"`。
+
+**出包（2026-10-12）**：`assembleRelease --no-daemon "-Pkotlin.compiler.execution.strategy=in-process"` ⇒ **`EXIT=0`**，日志 `logs_temp/release_build_v2388.log`。产物 `app/build/outputs/apk/release/NASMusicTV-release-v2-38-8.apk` **25,543,529 字节**（对当日上一只 release 包的 25,542,601 增量 **+928 B** —— 两条新字符串 + 一个 `drawBehind` 组合件经 R8 收缩后的量级，与「纯 UI 微调」相符）。
+- `aapt2 dump badging`：`versionCode='177' versionName='2.38.8'`、`minSdkVersion 22` / `targetSdkVersion 34`、`native-code: arm64-v8a / armeabi-v7a / x86_64`、五个 `uses-feature-not-required`（leanback / touchscreen / portrait / landscape / usb.host ⇒ 电视与手机均仍可装）。
+- `apksigner verify --print-certs`：`CN=NASMusicTV`，证书 SHA-256 `24ed591af66cb9256597139d5a7a1a918dcd33e88244678113835b1d6cb46dfe`（**与 v2.38.6 / v2.38.7 同钥 ⇒ 覆盖安装不需卸载**）。⚠️ 该命令在 PowerShell 下**退出码为 1**，但那是 apksigner 把 `WARNING: A restricted method…` 等 stderr 行写出所致（PowerShell 把 native stderr 当错误），**不是校验失败** —— 判据看它是否打出 `V2 Signer:` 行，不要看退出码。
+- 资产清点（按 §10.226 的教训，用 `[System.IO.Compression.ZipFile]::OpenRead()` 直读 zip 并**先断言总条目数**）：**726 条**（>0，计数有效）、`assets/globe/` 恒 **9 文件**、`moon.jpg` **324,830 B**（与基线逐字节一致，E44 资产零漂移）、⛔ `node_modules` 命中 **0**。
+
+**未做**：⛔ 未推送、未打 tag、未发 GitHub Release（owner 链未指示）；⛔ 未改 `library_songs_count_with_total`（`browse/SongList.kt` 仍在消费它）。
+
+**版本**：v2.38.8（未变；versionCode 177）—— §10.226 之后的**第二笔同版本**改动，不另升版本号。

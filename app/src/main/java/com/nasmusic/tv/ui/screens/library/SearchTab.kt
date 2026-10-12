@@ -167,14 +167,25 @@ fun SearchTab(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 计数口径：分子＝艺人段已加载行数、分母＝同一艺人段的目录总数（同源；区间门使未命中艺人/首页无行时不显示该行）
+                // 计数口径（**分源**子计数，不是结果总数）：上方 ActionBar 的数字＝整个网格的行数
+                // （含 NAS/网盘/Jamendo/本地等非艺人行），播放全部/全部加入队列正是作用于此列表；
+                // 本行只描述「网络音乐里该艺人」的目录命中数，两者口径不同故必须点名来源与艺人名，
+                // 否则会被读成同一数量而显得自相矛盾（例：李宗盛 452 首 vs 421/421）。
+                // 分页仍在飞时才显示「已加载/总数」分数；拉完后只显示已全部加载，不再显示无意义的 x/x。
                 val artistLoadedCount = artistPaging.songs.size
-                if (artistLoadedCount in 1..artistPaging.totalCount) {
+                if (artistLoadedCount > 0) {
                     Text(
-                        text = stringResource(
-                            R.string.library_songs_count_with_total,
-                            artistLoadedCount, artistPaging.totalCount
-                        ),
+                        text = if (artistLoadedCount < artistPaging.totalCount) {
+                            stringResource(
+                                R.string.search_artist_source_count,
+                                searchKeyword, artistLoadedCount, artistPaging.totalCount
+                            )
+                        } else {
+                            stringResource(
+                                R.string.search_artist_source_count_loaded,
+                                searchKeyword, artistLoadedCount
+                            )
+                        },
                         color = NasMusicColors.TextSecondary,
                         fontSize = FontSize.small(),
                         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)

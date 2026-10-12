@@ -635,6 +635,8 @@
     <string name="search_enter_keyword">Enter keywords to search music</string>
     <string name="search_filter_sources">Search Sources</string>
     <string name="search_all_sources">Enable All</string>
+    <string name="search_artist_source_count">Network · %1$s %2$d/%3$d songs</string>
+    <string name="search_artist_source_count_loaded">Network · %1$s %2$d songs (all loaded)</string>
 
     <!-- Discover Tab -->
     <string name="discover_play_all">Play All ▶</string>
@@ -1033,7 +1035,7 @@
     <!-- Network music failover -->
     <string name="cross_source_replace_playing">"%1$s" link expired, playing replacement from %2$s source</string>
     <string name="same_source_replace_playing">"%1$s" link expired, playing another version "%2$s"</string>
-    <string name="song_row_unplayable_badge">Maybe unavailable</string>
+    <string name="song_row_unplayable_badge">Rights unclear</string>
     <!-- Playlist import -->
     <string name="settings_import_playlist">Import Playlist</string>
     <string name="settings_import_playlist_desc">Import from m3u / txt / json / NetEase Cloud playlist file (URL direct links supported)</string>

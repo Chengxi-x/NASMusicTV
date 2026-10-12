@@ -672,6 +672,8 @@
     <string name="search_enter_keyword">输入关键词搜索音乐</string>
     <string name="search_filter_sources">搜索来源</string>
     <string name="search_all_sources">全部点亮</string>
+    <string name="search_artist_source_count">网络音乐 · %1$s %2$d/%3$d 首</string>
+    <string name="search_artist_source_count_loaded">网络音乐 · %1$s %2$d 首（已全部加载）</string>
 
     <!-- Discover Tab -->
     <string name="discover_play_all">全部播放 ▶</string>
@@ -880,7 +882,7 @@
     <string name="resolve_url_auto_skip_with_title">无法解析播放链接，自动跳过《%s》</string>
     <string name="cross_source_replace_playing">《%1$s》链接失效，已用 %2$s 源版本替换播放</string>
     <string name="same_source_replace_playing">《%1$s》链接失效，已改播另一版本《%2$s》</string>
-    <string name="song_row_unplayable_badge">可能无版权</string>
+    <string name="song_row_unplayable_badge">版权存疑</string>
 
     <!-- Play (MainViewModel) -->
     <string name="play_failed_with_msg">播放失败: %s</string>

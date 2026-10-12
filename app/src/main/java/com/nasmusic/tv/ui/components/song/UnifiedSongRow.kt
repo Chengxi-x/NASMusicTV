@@ -30,13 +30,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -416,7 +425,7 @@ private fun SongRowModeRow(
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        // 来源标签：URL 失效（红）> 待补全（橙）> 可能无版权（灰）> 正常来源。
+                        // 来源标签：URL 失效（红）> 待补全（橙）> 其余走「来源徽标 + 版权存疑图标（灰）」。
                         // ⚠️ 角标只打标不过滤（Q1 b）；行仍可点播，失败走 Task 5/6/7 的替换链。
                         when {
                             urlStatus == UrlStatus.UNREACHABLE -> Text(
@@ -429,12 +438,24 @@ private fun SongRowModeRow(
                                 color = NasMusicColors.Primary,
                                 fontSize = FontSize.small()
                             )
-                            possiblyUnplayable -> Text(
-                                text = stringResource(com.nasmusic.tv.R.string.song_row_unplayable_badge),
-                                color = NasMusicColors.TextSecondary,
-                                fontSize = FontSize.small()
-                            )
-                            else -> SourceBadge(song = song)
+                            // 「版权存疑」角标是**追加**在来源徽标之后的，不再顶替它
+                            // （原先互斥的 when 让 artist 全量展开的行丢了「网络」标签）。
+                            // 顺序有意为之：来源徽标在前 —— Row 里非 weight 的子项按序测量，
+                            // 窄屏挤爆时先被压扁的是后面的角标，来源标签始终完整可见。
+                            // ⚠️ owner 决策：角标改为**纯图标**（℗ 上画一道斜杠，不带任何文字）。
+                            // 图标不会说话、也就没法像文案那样带不确定语气，所以角标仍挂
+                            // `song_row_unplayable_badge`（「版权存疑」/「Rights unclear」）作读屏名 ——
+                            // 图标在视觉上比文案更确定，那句带保留的文案是唯一的兜底。
+                            // ⛔ `privilege.st` 只是**发行参考**，实测这类行可播率仅 15.0%(3/20)
+                            // （docs/archive/network-artist-full-discography-plan.md T2），
+                            // ⛔ 不得改写成「不可播 / 播不了 / 无版权」这类已证实的断言。
+                            else -> {
+                                SourceBadge(song = song)
+                                if (possiblyUnplayable) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    CopyrightSuspectMark()
+                                }
+                            }
                         }
                         // v2.35.0 多码率（§5.2.3）：已下载歌曲显示**实际落盘档位**徽标。
                         // 同曲多档并存时（无损 FLAC / 极高 320 / 标准 128 各一行），
@@ -516,6 +537,87 @@ title = stringResource(R.string.download_delete_title),
             )
         }
     }
+}
+
+/**
+ * 「版权存疑」角标：℗（录音制品版权符号）上加一道斜杠，**纯图标、不带任何文字**。
+ *
+ * ⛔ 为什么不直接 `Text("℗")`：U+2117 不在所有系统字体里。minSdk 22 的老电视
+ * （如创维 5.1）缺字会渲染成豆腐块 □ —— 比原来的文案更糟，而且**只在别人设备上**暴露。
+ * 所以圆环、P 的竖干与碗、斜杠一律用 `drawBehind` 画矢量，不依赖任何字形覆盖。
+ * ⛔ 斜杠是真画的 45° 斜线：`TextDecoration.LineThrough` 画的是横线，不是这里要的。
+ *
+ * ⚠️ 图标不会说话，也没法像「版权存疑」那样带不确定语气，故仍挂
+ * `R.string.song_row_unplayable_badge` 作读屏名（`clearAndSetSemantics`）。
+ */
+@Composable
+private fun CopyrightSuspectMark(modifier: Modifier = Modifier) {
+    val label = stringResource(R.string.song_row_unplayable_badge)
+    val density = LocalDensity.current
+    // 图标随 caption 档走，与同一行的来源徽标 / QualityBadge 同一字号体系；
+    // sp→dp 走 LocalDensity（含 fontScale），用户在设置里调大字体时图标跟着缩放。
+    val markSize = with(density) { FontSize.caption().toDp() }
+    // Stroke 提到组合期缓存：滚动时每帧新建 Stroke 纯属浪费（这一行会随列表反复重绘）。
+    val markStroke = remember(markSize) {
+        Stroke(width = with(density) { (markSize * 0.08f).toPx() })
+    }
+    val slashStroke = remember(markSize) {
+        Stroke(width = with(density) { (markSize * 0.11f).toPx() })
+    }
+    Box(
+        modifier = modifier
+            .size(markSize + 6.dp)
+            .drawBehind {
+                val g = markSize.toPx()          // 图标本体边长（药丸四周各留 3.dp）
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                val ink = NasMusicColors.TextSecondary
+                val stemX = cx - g * 0.13f
+                val ringR = g / 2f - markStroke.width / 2f
+                // ① 药丸底：照 VisualizerStage 的 drawBehind 圆角底写法，
+                //    避开 RoundedCornerShape.clip 在 Android 5.1 的 hwui Region 段错误。
+                drawRoundRect(
+                    color = NasMusicColors.SurfaceVariant,
+                    cornerRadius = CornerRadius(4.dp.toPx())
+                )
+                // ② ℗ 的圆环
+                drawCircle(
+                    color = ink,
+                    radius = ringR,
+                    center = Offset(cx, cy),
+                    style = markStroke
+                )
+                // ③ P 的碗：右半椭圆。椭圆圆心 x 对齐竖干 ⇒ 弧的两端正好落在竖干上下端。
+                val bowlTop = cy - g * 0.20f
+                val bowlHalfW = g * 0.26f
+                drawArc(
+                    color = ink,
+                    startAngle = -90f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(stemX - bowlHalfW, bowlTop),
+                    size = Size(bowlHalfW * 2f, g * 0.26f),
+                    style = markStroke
+                )
+                // ④ P 的竖干（下端比碗长出一截，形成 P 的下伸段）
+                drawLine(
+                    color = ink,
+                    start = Offset(stemX, bowlTop),
+                    end = Offset(stemX, cy + g * 0.30f),
+                    strokeWidth = markStroke.width,
+                    cap = StrokeCap.Round
+                )
+                // ⑤ 斜杠：过圆心的 45° 斜线
+                drawLine(
+                    color = ink,
+                    start = Offset(cx - ringR * 0.68f, cy + ringR * 0.68f),
+                    end = Offset(cx + ringR * 0.68f, cy - ringR * 0.68f),
+                    strokeWidth = slashStroke.width,
+                    cap = StrokeCap.Round
+                )
+            }
+            .clearAndSetSemantics { contentDescription = label }
+    )
 }
 
 /**
