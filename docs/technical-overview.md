@@ -14542,3 +14542,37 @@ G2 的 §4.6 十五日期向量表与 G12 的「暗区/整盘 = `(R+v)/(2R)`」�
 ⭐ **值得迁移的测试教训**：原单测夹具是**手写的虚构信封** `{"api_code":200,"data":{…}}`（`api_code` 线上根本不存在），所以解析器的信封假设**永远得不到证伪** ⇒ 夹具必须用**真实抓取原文**，否则「测试全绿」只是自证。修后该测试 4 例 → 9 例、全量 **2040 例零回归**（唯一失败仍是 `PhotoWallControllerTest` 既有红）。
 ⇒ 这条同时把 parked 的 **M-4「取数失败零日志」从洁癖项升级为已造成实害**：那条静默路径正是这次失效**在测试与真机上双双不可被发现**的原因；后续若要动 `NetworkArtistExpansion` 的日志面，按 M-4 原修法（再穿一层返回值）执行，⛔ 不要再回到「入口复位共享状态」。
 ⚠️ 另一在办会话此刻还在改 `MetingApiService.kt` + `MetingProbeWiringTest` / `MetingResolveTest` / `NeteasePrioritySearchTest` / `NetworkArtistSongIdContractTest`（把 `PRESET_ENDPOINTS` 改成构造参数，为的是**单测不再打真实公网端点** ⇒ CI flaky 的真正来源），**未提交、不属本节账**；`CHANGELOG.md` 的 `[v2.38.7]` 段也**尚未**为 `25c570d` 补条目（是否补、是否重新出包，交 owner 定）。
+
+### 10.226 v2.38.8 — E24「心跳」PQRST 形态学返工：T 波不对称画反 + S 谷过深（2026-10-12）
+
+**用户反馈**：「感觉画出的图形，与实际心跳图形不像」（附标准 PQRST 示意图）。
+
+**根因（三条形态学错误，⛔ 时程全是对的、错的是幅度与不对称方向）**。原 `EcgWaveRenderer.HB`（50 列）的采样时刻与临床完全吻合（PR/QRS/QT 均在正常区间），所以「不像」的来源不在横轴：
+
+| | 原表 | 临床 | 判据 |
+|---|---|---|---|
+| **T 波不对称方向** | 升 65 ms / **降 95 ms**（快升慢降） | 升 155.6 / **降 111.2 ms**（**慢升快降**，1.40:1） | ⛔ **方向反了** |
+| **S 谷深度** | **−0.28**（28% ×R） | −0.17（0.10–0.25 ×R） | 过深 1.6× |
+| P 波幅度 | 0.136（13.6% ×R） | 0.10（0.07–0.15 ×R） | 偏高，且峰顶跨 2 列成平台 |
+
+**根因主体是第一条**：真实 T 波是「slow ascending ramp and faster descending ramp」（ecg.utah；形状比见 Hurtado 2013 的 59:38），原表做成近似对称小丘且**升降倒置**，叠加过深的 S 谷 ⇒ 观感是「小丘—孤峰—小丘」，而不是心电图。
+
+**修法：表由脚本再生，⛔ 不手抄**（§E44 规矩，与 E44「明月」云场基线同法）。新增 `docs/archive/verification/scripts/ecg_waveform_gen.py`，`--check` 自带 8 条形态学断言。两条关键设计决定：
+
+1. ⛔ **地标一律以「列」定义、ms 是派生量**。采样点就是列本身（`t = i × 列宽`，`heartbeatAt` 是 O(1) 整数索引）；若按 ms 定义再取整列，采样点会偏离 R 峰顶（实测把 1.000 削成 **0.980**，即 §5.1 第 1 条「⛔ 别点采样陡峭上冲支」）。改按列定义后 PR = **155.6 ms**、QRS = **88.9 ms**、QT = **400.0 ms**、J→T峰 = **200.0 ms** 全部**精确落位**，幅度取 P +0.10 / Q −0.15 / R +1.00 / S −0.17 / T +0.25（R 归一）。
+2. ⛔ **波峰用零端斜率升余弦、⛔ 不用高斯**。高斯在基线处**没有有限支撑**，采样点落在尾部会留下永不归零的「小丘」，PR/ST 段就不再是等电位平线了。波间过渡用**线性**（⛔ 不用 smoothstep——它把波界的水平切线抹成 ≈1.87 斜率，平段会拱起来）。T 用**非对称**升余弦（几何中点传中点才退化成对称波）。
+
+**⭐ 门禁返工里最值钱的一条：口径写错会让负向自证静默空转**。`EcgWaveformTest` 的宽度比判据原口径是「区间内**所有**超门限列」。实测该口径下**旧表比值恰为 2.00**，而新门禁带是 `[2.0, 4.0]` ⇒ **旧表正好卡在下界 PASS** ⇒ 负向自证不成立、门禁空转，而 CI 全绿。改用「只数峰周围的**连续**超门限段」后：生产表仍是 21/7 = **3.0**（与脚本一致），旧表变成 16/9 = **1.78** 正确失败。⚠️ 结论与 §八开头同源：**刀刃上的门限（恰好等于界）比没有门限更危险**，负向自证必须逐条复核**旧表落在带内的哪一侧**。
+⛔ 另一处口径坑：Q 谷半深判据曾写成 `-t[q] * 0.5`（`t[q]` 本身为负，取负号会把判据**翻成正阈值**，恒真）。
+
+**门禁重写**：`EcgWaveformTest` 12 正向 + 6 负向（18 例）。正负两套表（生产 `HB` / 旧表按同一列网格重采样）喂进**同一个**谓词函数；每条负向先做**前提自证**（断言旧表确实具备让它挂掉的性质：R 峰真值在两列之间被削到 0.897、S 深度 0.32×R、T 升:降 = 7:10 = 0.7、宽度比 1.78），日后改谓词也不会退化成空断言。新增关键判据 **T 升支/降支步数比 > 1.2**（慢升快降）与 **S 深度 0.10–0.25×R**。
+
+**验证**：`assembleDebug lintDebug testDebugUnitTest --no-daemon -Pkotlin.compiler.execution.strategy=in-process --rerun-tasks` ⇒ **`BUILD SUCCESSFUL in 12m 29s`**；全量 **2044 例 / 186 类零失败**（= 上轮 2040 减去旧门禁 14 例 + 新 18 例；此前 `PhotoWallControllerTest` 的套件级 flake 本轮未复现）；`EcgWaveformTest` **18/18**；`lintDebug` **128 条全为 Warning、0 Error**，两个改动文件命中 **0**（lint 在 CI 是 blocking）；`aapt2 dump badging` ⇒ `versionCode='177' versionName='2.38.8'`，产物 `NASMusicTV-debug-v2-38-8.apk`。⚠️ 表格与脚本的一致性用**独立程序化对账**核过（51/51 token 逐位差 ≤1e-6），不靠人眼。
+
+**出包（2026-10-12）**：`assembleRelease --no-daemon -Pkotlin.compiler.execution.strategy=in-process` ⇒ **`BUILD SUCCESSFUL in 7m 38s`**（54 actionable / 24 executed）。产物 `app/build/outputs/apk/release/NASMusicTV-release-v2-38-8.apk` **25,542,601 字节**（对 v2.38.7 的 25,541,663 增量 **+938 B** —— 与「50→51 个 float + KDoc」经 R8 收缩后的量级一致）。`aapt2 dump badging` 复量：`versionCode='177' versionName='2.38.8'`、`minSdkVersion 22` / `targetSdkVersion 34`、`native-code: arm64-v8a / armeabi-v7a / x86_64`、五个 `uses-feature-not-required`（leanback / touchscreen / portrait / landscape / usb.host ⇒ 电视与手机均仍可装）；`apksigner verify --print-certs` ⇒ `Verifies`（v1 + v2），签名 `CN=NASMusicTV`，证书 SHA-256 `24ed591af66cb9256597139d5a7a1a918dcd33e88244678113835b1d6cb46dfe`（**与 v2.38.6 / v2.38.7 同钥 ⇒ 覆盖安装不需卸载**）；`assets/globe/` 恒 **9 文件**、`moon.jpg` **324,830 B**（与基线逐字节一致，E44 资产零漂移）；⛔ APK 内 `node_modules` 命中 **0**。构建日志 `logs_temp/release_build_v2388.log`。
+⚠️ **量 APK 目录时踩的一个坑（值得迁移）**：`aapt2 list` 在 **build-tools 37.0.0 里已不是子命令**（只有 `dump` / `apkinfo` / …），命令直接报 `unknown subcommand` 并**返回空输出**；而 `2>$null` 会把这个错误一并吞掉 ⇒ 脚本随后数出「`assets/globe/` 0 个文件、`node_modules` 0 命中」，看起来像**资产回归**，实际是命令失败。两次都是靠「总条目数 = 0」这个自相矛盾的信号识破的。⇒ **资产清单一律用 `[System.IO.Compression.ZipFile]::OpenRead()` 直读 zip，并永远先断言总条目数 > 0**，否则后续所有计数都无意义。
+
+**版本账**：`versionCode 176→177`、`versionName 2.38.7→2.38.8`，随本节单独记账。⇒ §10.225 末尾留的「`versionCode` 是否升 177 由 owner 定」由 owner 定为 **v2.38.8 / 177**，该问题就此关闭（§10.225 正文按规矩不回改）。
+
+**未做**：⛔ 未推送、未打 tag、未出 release 包（owner 链未指示）；⛔ 未改 `AMP_FRACTION`（0.26 是上轮为压制整体高度定的，本次诉求是**形态**不是大小）；⛔ 未动波形以外的任何 renderer 逻辑（`heartbeatAt` 仍是 O(1) 无插值、draw 内零分配）。**遗留**：脚本 `--check` 有一条「T 起点曲率翻转」的膝检测**未镜像进 Kotlin 门禁**，且脚本数「全部超门限列」、Kotlin 数「连续段」，当前表两者同为 3.0 但未来重新生成的表可能分叉——要么把该断言镜像过去，要么明确择一口径并注明。
+⚠️ 工作区另有**其他在办会话的未提交改动**（`.gitignore`、`docs/archive/README.md`、`docs/visualizer-effects-list.md` 的大改写、以及 blackhole / E45 轨道 / E46 雾灯若干新文件），⛔ 不属本节账，提交时须按文件甄别。
