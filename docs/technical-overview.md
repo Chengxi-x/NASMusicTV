@@ -14640,7 +14640,7 @@ owner 两次裁决：① 「这几个字，改成一个小标签来体现无版�
 
 **版本**：v2.38.8（未变；versionCode 177）—— §10.226 之后的**第二笔同版本**改动，不另升版本号。
 
-### 10.228 未发布 — 新增第 23 套可视化效果 E46「迷雾之战 · 雾中三脚巨影」：HTML 原型移植为 Kotlin Canvas-2D 渲染器（K1–K8，2026-10-13）
+### 10.228 v2.38.8 — 新增第 23 套可视化效果 E46「迷雾之战 · 雾中三脚巨影」：HTML 原型移植为 Kotlin Canvas-2D 渲染器（K1–K8，2026-10-13）
 
 **背景**：新枚举 `TRIPOD_FOG(R.string.visualizer_theme_tripod_fog, "迷雾之战", Tier.ADV, "46", needsParticleBudget = false)` ⇒ **三档全开**（`"46"` 是空闲编号；E45 从未立项、留空不占位）。ADV + `needsParticleBudget = false` 是**可核对的事实**而非偷懒：本效果**一个粒子都不画**（火星短划 / 人群 / 建筑 / 雾条全是常量表 + 定容缓冲），且⛔ 不读 `ctx.quality.maxParticles`（全文件 `maxParticles` 命中 **0**，`ParticleBudgetGateTest` 的源码扫描与标注因此一致）⇒ `supports()` 的 `ADV -> !needsParticleBudget || maxParticles > 0` 恒真。挂 ULTRA 反而错（本效果**不用帧缓冲**）。效果数量 22 → **23**：`FxCoverageScanTest`（渲染器类数）、`VisualizerThemeTest`、`StarrySkyTest` ⑥、`AGENTS.md`、`docs/visualizer-effects-list.md` 五处同步。
 
@@ -14725,4 +14725,4 @@ JVM 侧不能回读像素 ⇒ 闸门只能走**解析判据 + 烘焙记账**。�
 
 **未做**：⛔ §十四 4 的 **13 条真机验收项**全部未执行（含 R8「MED/HIGH 铺屏是否掉帧」与降级顺序首刀候选「甩镜段建筑运动模糊」、LOW 档必须实测、三套戏要盯满 6 圈 ≈ 9 min 才能判轮换）⇒ 在真机验收通过前，本效果按**已实现、未验收**记账。⛔ 未推送、未打 tag、未发 GitHub Release（owner 链未指示）；⛔ 未改版本号。
 
-**版本**：未发布（v2.38.8 之后追加，⛔ 不升版本号 —— owner 指令第 4 条）；`CHANGELOG.md` 记在 `[Unreleased]` 段。
+**版本**：并入 **v2.38.8**（`versionCode` 仍 **177**、`versionName` 仍 **2.38.8**，⛔ 不升版本号 —— owner 口径 2026-10-13「这个效果合到当前的最新稳定版本中」）；`CHANGELOG.md` 的那一行已从 `[Unreleased]` 折进 `[v2.38.8]` 的 `Added` 段。⚠️ 之所以可以回写这一段：**v2.38.8 至今未打 tag、未推送**（最新 tag 仍是 `v2.38.7`）⇒ 它是**在建**版本段；已打 tag 的版本段按仓库纪律一律不回写。
