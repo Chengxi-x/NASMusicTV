@@ -1135,6 +1135,7 @@
     <string name="visualizer_theme_radar_grid">Radar</string>
     <string name="visualizer_theme_seaside">Seaside</string>
     <string name="visualizer_theme_star_trails">Star trails</string>
+    <string name="visualizer_theme_tripod_fog">War in the Mist</string>
     <string name="visualizer_theme_vintage_tv">Vintage TV</string>
     <string name="visualizer_theme_world">World</string>
     <!-- photo_transition -->

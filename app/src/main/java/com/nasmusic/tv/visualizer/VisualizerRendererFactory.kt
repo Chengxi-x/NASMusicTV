@@ -23,6 +23,7 @@ import com.nasmusic.tv.visualizer.renderers.MoleculeRenderer
 import com.nasmusic.tv.visualizer.renderers.VintageTvRenderer
 import com.nasmusic.tv.visualizer.renderers.DnaRenderer
 import com.nasmusic.tv.visualizer.renderers.StarrySkyRenderer
+import com.nasmusic.tv.visualizer.renderers.TripodFogRenderer
 import com.nasmusic.tv.visualizer.renderers.WorldGlobeRenderer
 import com.nasmusic.tv.visualizer.photo.PhotoRenderer
 
@@ -67,6 +68,7 @@ object VisualizerRendererFactory {
         // ⚠️ 传 applicationContext 而非 Activity：E44 要把这个 Context 存成字段用于
         // `assets/globe/moon.jpg` 的解码，存 Activity 会泄漏（`MoonlitContextLeakTest` 扫这两条）。
         VisualizerTheme.MOONLIT -> MoonlitRenderer(context.applicationContext)
+        VisualizerTheme.TRIPOD_FOG -> TripodFogRenderer()
     }
 
     /**

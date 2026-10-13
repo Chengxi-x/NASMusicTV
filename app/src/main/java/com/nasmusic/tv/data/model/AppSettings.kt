@@ -110,7 +110,7 @@ data class AppSettings(
 )
 
 /**
- * 可视化效果主题（22 套手动效果，无自动导演档）。
+ * 可视化效果主题（23 套手动效果，无自动导演档）。
  *
  * [tier] 决定该效果在各画质档位下的可用性，见 [VisualQuality.supports]。
  *
@@ -284,6 +284,30 @@ enum class VisualizerTheme(
      * `"44"` 是空闲编号（E41 的旧 2D 版已删，编号留空位不回收）。
      */
     MOONLIT(R.string.visualizer_theme_moonlit, "明月", Tier.ADV, "44", needsParticleBudget = false),
+
+    /**
+     * 迷雾之战 · 雾中三脚巨影（第 46 个效果，方案 `docs/e46-tripod-fog-plan.md`）
+     *
+     * 视觉：低机位贴地视角，浓雾里一台**三脚巨影**从远处走来 —— 三条弓形渐变腿按**距离**驱动步态
+     * （⛔ 按时间 ⇒ 滑步），机身是甲壳 + 顶罩 + 前下腺囊的一体轮廓（R28：腺囊是甲壳自身的一道鼓包，
+     * ⛔ 不是吊在腹缘外的独立球），腹下悬垂缆须在抓取段拎起地面的人（R18，⭐ 复用同一束当抓取器官）。
+     * 雾是**逐图元距离混合**（`fogOf`，⛔ 不是一层全屏雾片），人被雾"吞"进去而不是叠在雾上。
+     * 三套手写剧本按纪元轮转（R29）：V0 贴身掠过（两次穿越相机平面）/ V1 正面逼近 / V2 侧向横穿。
+     *
+     * ## 归 [Tier.ADV] + `needsParticleBudget = false`（§2.2）
+     * 档位上如实标注"比 BASIC 重"（11 层绘制 + 4 类位图烘焙），但本效果**一个粒子都不画**：
+     * 火星短划、人群剪影、建筑、雾条全部是**编译期常量表 + 固定容量缓冲**（R12：⛔ 每帧 `sort`），
+     * 逐帧按 `fx.level` 分档而非按 `maxParticles` ⇒ 第 4 参是**可核对的事实**。
+     * [VisualQuality.supports] 的 `ADV -> !needsParticleBudget || maxParticles > 0` 因此恒为真，
+     * **三档全部可选**（含 LOW）。⚠️ 别误标 `true`：那会让 LOW 档「能渲染却不可选，切走即永久
+     * 回不来」；也别改挂 ULTRA —— 本效果**不用帧缓冲**（全部矢量 + 尺寸变化时烘焙的位图）。
+     *
+     * ⚠️ 若日后渲染器真的读取 `ctx.quality.maxParticles`，`ParticleBudgetGateTest` 的源码扫描
+     * 会与本标注对撞 ⇒ 必须同步改成 `true`。
+     *
+     * `"46"` 是空闲编号（E45 留空不占位，E41 的旧 2D 版已删）。
+     */
+    TRIPOD_FOG(R.string.visualizer_theme_tripod_fog, "迷雾之战", Tier.ADV, "46", needsParticleBudget = false),
     ;
 
     /** 效果分级：决定画质档位可用性 */

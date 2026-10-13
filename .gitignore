@@ -109,3 +109,6 @@ app/src/main/assets/globe/package-lock.json
 20??-??-??-????????/
 # 依赖 classpath 转储等临时产物（工具生成，不入仓）
 .cowork-temp/
+
+# SDD 计划执行工作区（ledger / briefs / review packages，不入仓）
+.superpowers/

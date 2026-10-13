@@ -1,14 +1,14 @@
 # 可视化效果列表
 
 > **版本**：v2.38.8（versionCode 177）
-> **更新日期**：2026-10-12
+> **更新日期**：2026-10-13
 > **来源**：`app/src/main/java/com/nasmusic/tv/data/model/AppSettings.kt` — `VisualizerTheme` 枚举
 
-共 **22** 个效果，分三档。档位只决定「在哪种画质下可选」：
+共 **23** 个效果，分三档。档位只决定「在哪种画质下可选」：
 
 - **BASIC** —— 三档画质全可用。
 - **ADV** —— 逐项门控：看该效果**是否真的读取** `ctx.quality.maxParticles`（枚举第 4 参 `needsParticleBudget`），
-  不按 tier 一刀切 ⇒ 11 套里 10 套三档全可用，仅 `E14 节拍烟花` 在 LOW 档被挡。
+  不按 tier 一刀切 ⇒ 12 套里 11 套三档全可用，仅 `E14 节拍烟花` 在 LOW 档被挡。
 - **ULTRA** —— `supports()` 要求 `allowFramebuffer`，该字段只有 `HIGH` 为 `true` ⇒ MEDIUM / LOW 一律不提供。
 
 增删历史、实现细节、真机验收记录见 `docs/technical-overview.md` §10。
@@ -27,7 +27,7 @@
 | E38 | VINTAGE_TV | 怀旧 |
 | E43 | SEASIDE | 海边 |
 
-## ADV 档（11 套）
+## ADV 档（12 套）
 
 | 序号 | 枚举键 | 显示名 |
 |---|---|---|
@@ -42,6 +42,7 @@
 | E40 | DNA | DNA 双螺旋 |
 | E42 | STAR_TRAILS | 星空星轨 |
 | E44 | MOONLIT | 明月 |
+| E46 | TRIPOD_FOG | 迷雾之战 |
 
 ## ULTRA 档（2 套）
 
@@ -56,7 +57,7 @@
 ## 门控的三个特殊项（容易漏）
 
 1. **E39 照片墙是唯一有「列表级」门控的效果**：`VisualizerTheme.selectable(photoWallAvailable)` 在三个照片来源
-   开关全关时把 `PHOTO_WALL` 从列表里过滤掉（指示器不显示、左右键也切不到）。其余 21 套恒在列表里（受画质档约束）。
+   开关全关时把 `PHOTO_WALL` 从列表里过滤掉（指示器不显示、左右键也切不到）。其余 22 套恒在列表里（受画质档约束）。
 2. **E14 节拍烟花**：ADV 档里唯一 `needsParticleBudget = true` 且非 ULTRA 的效果 ⇒ `LOW.maxParticles = 0` 时被
    `supports()` 挡下。
 3. **E18 / E41**：见上「ULTRA」口径。⛔ 没有任何「按设备能力隐藏效果」的过滤逻辑（`availableThemes()` 只看画质档 +

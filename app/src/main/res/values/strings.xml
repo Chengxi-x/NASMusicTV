@@ -1143,6 +1143,7 @@
     <string name="visualizer_theme_radar_grid">雷达</string>
     <string name="visualizer_theme_seaside">海边</string>
     <string name="visualizer_theme_star_trails">星空星轨</string>
+    <string name="visualizer_theme_tripod_fog">迷雾之战</string>
     <string name="visualizer_theme_vintage_tv">怀旧</string>
     <string name="visualizer_theme_world">世界</string>
     <!-- photo_transition -->

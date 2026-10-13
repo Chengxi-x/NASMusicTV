@@ -39,7 +39,10 @@ class MoonlitAudioTest {
 
     /**
      * `updateDt` 此前全仓**零消费**（只有类定义），本效果是它的首个生产调用方。
-     * 判据形态 = "调用点只许出现在一个渲染器文件里，且恰好四行"。
+     * 判据形态 = "调用点只许出现在**名单内**的渲染器文件里，且本效果恰好四行"。
+     *
+     * ⭐ 2026-10-13：E46「迷雾之战」按同一条理由入名单（音频三通道也走 dt 变体），后半句"本效果四行"
+     *    仍逐字判 `MoonlitRenderer.kt` ⇒ 名单扩容没有稀释对本效果的计数判据。
      */
     @Test
     fun `① updateDt 的首个生产调用方是本效果 且全仓只有这四行`() {
@@ -52,8 +55,12 @@ class MoonlitAudioTest {
                 it.name.endsWith(".kt") && stripComments(it.readText()).contains(".updateDt(")
             }.map { it.name }
         // 定义处（AudioSmoother.kt 的 KDoc 引用了 `updateDt`，但它不含调用点 `\.updateDt\(`）
-        assertEquals("⛔ 定率式 update() 的隐含 60fps 就是 M10 的根因；生产侧只许 E44 一处用 dt 变体",
-            listOf("MoonlitRenderer.kt"), callers)
+        // ⭐ 名单于 2026-10-13 加入 E46：`TripodFogRenderer` 的音频三通道（bass/treble/energy）同样
+        //    必须走 dt 变体（方案 §十五 K7），理由与本条根因一致 —— 定率式 `update()` 的隐含 60fps。
+        //    ⛔ 判据形态不变（全仓**恰好这几个文件**，`sorted()` 只抹掉 listFiles 的顺序依赖）：
+        //    第三个效果要进名单得先像这里一样写明理由。
+        assertEquals("生产侧只许 E44 / E46 用 dt 变体（⛔ 定率式 update() 的隐含 60fps 就是 M10 的根因）",
+            listOf("MoonlitRenderer.kt", "TripodFogRenderer.kt"), callers.sorted())
 
         val src = rendererSource()
         assertEquals("四个频段各推进一次 ⇒ 全文恰好 4 个调用点",
@@ -396,14 +403,18 @@ class MoonlitAudioTest {
         assertEquals("VIGN_QUIET 就是那个字面量", 0.42f, MoonAudio.VIGN_QUIET.toFloat(), 0f)
         assertEquals("静止帧（包络从 0 起跳）暗角必须与 T8 一致",
             0.42f, MoonAudio.vignetteA(0.0).toFloat(), 1e-6f)
-        // ⛔ 其余 21 个效果一律不覆写：这条钩子是"默认关"的
+        // ⛔ 名单外的效果一律不覆写：这条钩子是"默认关"的
+        // ⭐ 2026-10-13 加入 E46：它的暗角 + 颗粒按方案 §五 图层 11 **烘进同一张 grade 位图**（1 图元 /
+        //    1.000 屏），但 `postFx` 的 `vignette = 0.42f` 字面量必须保留（覆盖门禁 + `needsDamageCoalescer`
+        //    两个下游读它）⇒ 唯一自洽的形制就是"字面量留着、基类那一次全屏 drawRect 用钩子关掉"
+        //    （方案 §十四 4 定稿；走基类暗角 = MED/HIGH 多付 1.000 屏，撞 R8）。
         val rendererDir = File(mainSourceRoot(), "com/nasmusic/tv/visualizer/renderers")
         val overriders = rendererDir.listFiles()!!.filter {
             it.name.endsWith(".kt") &&
                 stripComments(it.readText()).contains("override fun vignetteOverride")
         }.map { it.name }
-        assertEquals("只许 E44 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
-            listOf("MoonlitRenderer.kt"), overriders)
+        assertEquals("只许 E44 / E46 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
+            listOf("MoonlitRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
         assertTrue("基类默认值必须是哨兵（不覆盖）",
             mainFileText("RendererFx.kt").contains("vignetteOverride(fx: FxFrame): Float = NO_VIGNETTE_OVERRIDE"))
     }

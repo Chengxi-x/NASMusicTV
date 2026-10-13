@@ -14639,3 +14639,85 @@ owner 两次裁决：① 「这几个字，改成一个小标签来体现无版�
 **未做**：⛔ 未推送、未打 tag、未发 GitHub Release（owner 链未指示）；⛔ 未改 `library_songs_count_with_total`（`browse/SongList.kt` 仍在消费它）。
 
 **版本**：v2.38.8（未变；versionCode 177）—— §10.226 之后的**第二笔同版本**改动，不另升版本号。
+
+### 10.228 未发布 — 新增第 23 套可视化效果 E46「迷雾之战 · 雾中三脚巨影」：HTML 原型移植为 Kotlin Canvas-2D 渲染器（K1–K8，2026-10-13）
+
+**背景**：新枚举 `TRIPOD_FOG(R.string.visualizer_theme_tripod_fog, "迷雾之战", Tier.ADV, "46", needsParticleBudget = false)` ⇒ **三档全开**（`"46"` 是空闲编号；E45 从未立项、留空不占位）。ADV + `needsParticleBudget = false` 是**可核对的事实**而非偷懒：本效果**一个粒子都不画**（火星短划 / 人群 / 建筑 / 雾条全是常量表 + 定容缓冲），且⛔ 不读 `ctx.quality.maxParticles`（全文件 `maxParticles` 命中 **0**，`ParticleBudgetGateTest` 的源码扫描与标注因此一致）⇒ `supports()` 的 `ADV -> !needsParticleBudget || maxParticles > 0` 恒真。挂 ULTRA 反而错（本效果**不用帧缓冲**）。效果数量 22 → **23**：`FxCoverageScanTest`（渲染器类数）、`VisualizerThemeTest`、`StarrySkyTest` ⑥、`AGENTS.md`、`docs/visualizer-effects-list.md` 五处同步。
+
+唯一依据是 `docs/e46-tripod-fog-plan.md`（原型 `docs/e46-tripod-fog-preview.html` 经**八轮**判读定稿：T1–T31 全绿 + V0/V1/V2 各十帧）。⛔ 方案文档已把几何、烘焙值、三套剧本时间轴逐条定稿，本节不重复实现细节，只沉淀**移植期**才浮现、有迁移价值的六件。
+
+#### 一、架构：五个文件，连「烘焙」都不碰 Android
+
+| 文件 | 行数 | import | 职责 |
+|---|---|---|---|
+| `TripodFogMath.kt` | 1941 | ⛔ 零 Android（只 `kotlin.math.*`） | 投影 / yaw 正反变换 / Fritsch–Carlson / `fogOf`·`shade`·`contrastAt` / 两连杆 IK（显式膝点）/ `routeMX`·`routePSI` / `scanCross` / `variantOf`·`applyVariant` / `aimState` / `impProgress` / `joltOf` / `crowdEpochOf` |
+| `TripodGait.kt` | 737 | ⛔ 零 Android | `buildCum`（整数步 + 3 的倍数，吃**当前剧本**那张表）+ 距离驱动 `G(t)` + 摆动/站立相脚位（地面系钉住）+ `tripodPose`（机头滞后耦合） |
+| `TripodFogBake.kt` | 975 | ⛔ 零 Android | 雾条 A/B、48 栋战损建筑、grade、人群 4 张姿态位图 —— 产物一律 **`IntArray`（ARGB_8888 打包，与 `Bitmap.setPixels` 同格式）** |
+| `TripodOpBudget.kt` | 583 | ⛔ 零 Android | `TripodOpItem` **25 行** × 三档 + G4 三门（提交 / 填充 / native 堆） |
+| `TripodFogRenderer.kt` | 2512 | 唯一吃 Android 的一个 | `TripodFogPlan`（指令发射器）+ `DrawScope` 重放 + 位图成形（`createBitmap` + `setPixels` 一次） |
+
+⭐ **把烘焙也做成纯函数，不只是审美**：本效果的闸门有一类判据必须知道"某栋楼的破口矩形 / 雾裙 α / 羽化宽度到底落成了什么"。⛔ 走 `Bitmap` 像素回读（JVM 侧要么 `not mocked` 要么恒空 = **永远绿的假闸门**）；✅ 烘焙留在 `IntArray` 层 ⇒ `BuildingBmp.carves / skirtFrac / skirtA / featherW` 是**画面自己写出来的那份记账**，T15 / T20 直接读它。这是 E44「纯函数换可测性」那条动机的**加强版**（E44 只要求数学纯，这里连位图也纯）。
+
+**发射器形态**（§五 十一步图层序的唯一实现）：`TripodFogPlan.build` 在帧首把每一笔"落在哪个坐标、用哪几个色标、α 多少"算进**定容并行数组**，渲染侧只按发射顺序重放（⛔ 重排）+ `drawGrab` 挂在 `drawTripod` 末行。R12 的「⛔ 每帧 `sort` / ⛔ 每帧分配」由此落实：建筑 / 人群 / 火星的选取改成固定容量缓冲 + 部分选择。⚠️ 观测记录在**帧首清空、且落在档位早退之前**（否则 LOW 档读到上一档的残账）。
+
+#### 二、⭐ 5963 个字段的对账基线，再生源已入库（承 E44 D24 的纪律）
+
+`TripodFogGoldenTest` 一条用例吃 **81 条探针 / 5963 个字段**、绝对容差 `1e-9`，覆盖 `aimState` 光链、步态闭环、雾/对比度曲线、抓取梢点、`fireEnv`、纪元轮转等。期望值的**唯一再生源**是 `docs/archive/verification/scripts/e46_golden_gen.py` —— 它在 `vm` 沙箱里跑原型 HTML **原文**（`buildCum` / `setGrabKnots` / `syncRouteEpoch` / `initUI` 的 after 回调全部复刻），产出 `logs_temp/e46_golden.json` 并**重写整个测试文件**。
+
+三条移植期定下来的口径：
+1. ⛔ 手改 `TripodFogGoldenTest.kt` 里的常量，也 ⛔ 把数抄进注释或文档 —— 那正是 E44 **D24**（一个 `const minDim` 遮蔽沙箱全局，假数活了整个定稿流程）的重演。改任何被对账的数学 ⇒ 重跑脚本并**一起提交再生结果**。
+2. ⭐ **`initUI` 的 after 回调必须一起复刻**：滑杆本身是 `P → el → P` 的空往返，看着无害，但 `sRS/sRL/sRV` 三条各触发一次 `applyVariant(force=true)` ⇒ `varSwitches` 从 1 变 4，而 `state` 探针读这个计数。只复刻 boot 会对不上。
+3. ⚠️ 判"绿"要按 XML 的 `timestamp` 确认是**本轮**产物 —— 本轮把上一轮变异跑的残留 XML 读成了新结果，差点把"负样本没咬"当成"已经修好"。
+
+#### 三、移植期发现的**原型侧**缺陷：两条建筑带各起一支 LCG（⛔ 当"忠实复刻"跳过）
+
+原型 `genBuildings()` 是 `const r = Lcg(20261011)` 建在**两带之外**、`mk(BAND.mid)` 与 `mk(BAND.near)` **共用**这一支；Kotlin 首版按直觉把 LCG 提到 `mk()` 内部各自新建 ⇒ **近景带从第一个随机数起就换了一批种子**（楼的位置、宽高、破口、雾裙全部不同）。
+
+- **为什么全绿却错**：`TripodFogGoldenTest` 当时的建筑抽样走的是**测试本地复刻**的一份 `genBuildingsGeom`（照抄原型写法），于是 5963 字段照样逐位相等；生产那份抽的是另一批种子，**没有任何一条判据在看它**。
+- **怎么被抓出来的**：T14（前景不压主体）的负样本 B —— 它改的是烘焙期参数、要求"重烘同一批种子后判据仍然成立"，而测试复刻版与生产版**不同源**，负样本于是**假绿**。
+- **修法（两处，缺一不可）**：① `TripodFogBake.genBuildings` 把 `Lcg` 提到两带之外；② 对账测试改吃**生产** `TripodFogBake.genBuildings`（脚本里 `prodBuildings()`：烘焙后把 `skirtFrac/skirtA/featherW/featherTop` 归零，因为 `scene.*` 探针按"位图归 K5、几何归 K4"的口径要求这四个是 0）。守卫的有效性用**故意变异**证明过一次：把它改回每带一支 LCG ⇒ `TripodFogGoldenTest` 当场红。
+
+#### 四、闸门纪律：负样本必须改**生产侧真旋钮**，"代数等价"就是假绿
+
+JVM 侧不能回读像素 ⇒ 闸门只能走**解析判据 + 烘焙记账**。本轮踩到的坑不是"判据难写"，是**负样本改错了对象**：早期版本在闸门里直接覆写场景缓冲（`BldSel.ink`）或重推一条生成公式来"等价地"制造坏画面 ⇒ 改的**不是画面自己写出来的那份**，于是负样本**不咬自己的标签**，闸门恒绿。定下来的形态是给每个负样本配一个**只为负样本而 `var`** 的生产字段，改在 `try` 里、还原在 `finally` 里，并在还原后**再跑一次正样本**自证不留残值：
+
+| 闸门 | 旋钮（生产侧） | 负样本 |
+|---|---|---|
+| T14 前景不压主体 | `TripodBandCfg.zMin / span / xLo / ink` | 近景带压到主体前 / 墨度越界（烘焙期就读 ⇒ 改完要 `genBuildings` 用同一批种子重生成再测） |
+| T15 破口不贯穿 | `TripodFogBake.Carve.*`（9 个界） | 四条界**各自**要咬红：宽 / 高 / 边距 / 单栋总面积，⛔ 只判一个总 `!ok`（一条界失效时另外三条会替它蒙绿） |
+| T16 头身耦合 | 读 `plan.build()` 落盘的 `shellCowl/shellBody` | 解剖参数与光链分离即红 |
+| T19 触手抓人 | `TripodCrowdBandCfg.fin / span`（`crowdWindow(z)` 的实时消费者） | 人群带近端淡入拆掉 ⇒ 接缝 α 0.839 |
+| T20 贴地雾带不压立面 | `TripodFogBake.Feather.w / top` + 烘焙回填量 | **E**：羽化→0 重烘焙 ⇒ 立面回到硬直角边（读成玻璃卡片） |
+| T4 / T12 / T13 / T22 步态与路线 | `TripodGait.LEG_AZ`、`DustGeom/WakeGeom/BmGeom/EmGeom/PoolGeom`、`CrowdEpoch.LAP_K/Z_SEED_K/VICTIM_K` | 逐类见各闸门 KDoc |
+| T17 火星钉死 | `TripodFogPlan` 的 ember 表 + `dustCount` | 火星跟光柱跑即红 |
+
+⚠️ 三个 `TripodScript` 全 `val`（原型 `VARS[i].dh = …` 那种就地改写做不到）⇒ T28 的负样本 B 靠**把另一套表代入同一个纯判据函数** `dupWhy(names, dhs, yhs, chs)` 走真公式，⛔ 手喂一个越界常量。
+
+**闸门总数**：T1–T31 全部移植 ⇒ **49 例 / 8 个类**（可见性 T7–T11 5、路线 T12·T13·T22 3、门面 T14·T15·T16·T19·T20 5、光柱 T17·T18·T23·T29·T30 5、冲击与负压 T21·T24·T25·T31 4、剧本 T26·T27·T28 3、计量 23、对账 1）。§十四 4 里 R25 裁决"负压 = 留"时特别要求"⛔ 没有判据就不许移植" ⇒ 连闸门 **T31** 一起搬过来了（锚定 / 脊速 / 专属 / 钳位 / 档纪律五项）。
+
+#### 五、计量表：25 行、按**最坏帧**定门限
+
+`TripodOpItem` = §十 的 23 类 + 移植期新增的 `POST_FX` 与 `DAMAGE_COALESCER` 两行。上限取 §10.1 的**单帧最坏**口径（LOW `5.00` / MED `6.75` / HIGH 走棘轮），⛔ 沿用 §十 旧均值 `4.66` —— 那是 K2 补测之前的数，K2 实测 MED/HIGH 单帧最坏 `5.412 / 5.414`，对 E44 已验收 HIGH 最坏帧 `4.306` 是 **+26%**。
+
+⭐ `postFx` 的落地形制（方案 §十四 4 定稿，⛔ 不要"顺手修好"）：`override val postFx = PostFx(vignette = 0.42f)` **配** `vignetteOverride(fx) = 0f`。三个约束互相咬着：暗角 + 颗粒已按 §五 图层 11 烘进**同一张 grade 位图**（1 图元 / 1.000 屏），走基类暗角 = MED/HIGH 多付 1.000 屏（撞 R8）；把字面量改回 `PostFx.NONE` ⇒ `needsDamageCoalescer` 恒真 ⇒ 三档各多付 1.000 屏，且后处理覆盖名单静默掉出。所以**字面量留着**（覆盖门禁读它、`hasFullScreenPass()` 为真），再用钩子把基类那次全屏 `drawRect` 关掉。
+
+#### 六、入伙两条 E44  authored 的**全仓白名单**（本轮唯一让既有测试变红的地方）
+
+`MoonlitAudioTest` 有两把"扫描全仓渲染器目录 + 断言恰好等于某文件名单"的门，E46 按**同一条理由**入名单，⛔ 把判据改成"存在即合法"：
+
+| 门 | 原判据 | 扩容后 |
+|---|---|---|
+| ① `updateDt` 生产调用方 | `listOf("MoonlitRenderer.kt")` | `listOf("MoonlitRenderer.kt", "TripodFogRenderer.kt")`（E46 音频三通道 bass/treble/energy 同样必须走 dt 变体；根因恒在：定率式 `update()` 的隐含 60fps 就是 M10）。"本效果恰好四行"那半句仍逐字判 `MoonlitRenderer.kt` ⇒ 扩容没稀释原判据 |
+| ⑩ `vignetteOverride` 覆写者 | 同上 | 同上（理由见本节「五」的 `postFx` 形制） |
+
+⚠️ 两处都改为 `.sorted()` 比较：名单来自 `File.listFiles()`，顺序是文件系统给的，⛔ 依赖它。第三个效果要进名单必须先像这里一样写明理由 —— 判据形态仍是**精确集合相等**，多一个陌生的就红。
+
+#### 七、三套剧本与纪元（K7）
+
+时间轴不是"五张 knot 表"而是 **`VARS` 三套 × 四张 `ky`/`ty` 表 + 一张共用格点**（`DH_KX`/`YH_KX`/`CH_TX`/`ESC_TX`/`VKY`），外加每套自己的 `fire[2]` / `grabT` / `ph`。`TCROSS` 由 `DH` 扫变号点**求根**得到（⛔ 写死 59.6/79.0），零穿越时退回全局最近位；`reach` 关键帧随 `grabT` 重建。纪元驱动 `lapN ÷ routeLaps → variantOf`，实测 8 个纪元戏份 `[0,1,2,0,1,2,0,1]`（覆盖 3/3、相邻不重复）。⚠️ `syncRouteEpoch` 每轮都会走 `applyVariant` ⇒ 闸门里"钉死某一套戏"必须**每轮重写**，只在循环外写一次会假装"只出一套"其实出了整套轮转（原型与 Kotlin 两侧各踩过一次）。
+
+**验证（全量 + lint）**：`testDebugUnitTest lintDebug --no-daemon "-Pkotlin.compiler.execution.strategy=in-process"` ⇒ **`BUILD SUCCESSFUL`**；全量 **194 类 / 2093 例，0 失败 / 0 错误**（对 §10.227 基线 186 类 / 2044 例 = **+8 类 / +49 例**，与"新增 8 个 E46 测试类 + 49 条闸门/对账/计量用例"逐一对上；`TripodGateFixtures.kt` 是夹具不是类）。⛔ `clipPath(` / `clip(RoundRect` / `RoundedShape` 在渲染器里命中 **0**（API-22 创维 hwui `Region::createTJunctionFreeRegion` 段错误），⛔ 不读渲染上下文的 `nowMs`（`RendererBaseContractTest` ⑦），`lintDebug` 无新增 error（CI blocking）。
+
+**未做**：⛔ §十四 4 的 **13 条真机验收项**全部未执行（含 R8「MED/HIGH 铺屏是否掉帧」与降级顺序首刀候选「甩镜段建筑运动模糊」、LOW 档必须实测、三套戏要盯满 6 圈 ≈ 9 min 才能判轮换）⇒ 在真机验收通过前，本效果按**已实现、未验收**记账。⛔ 未推送、未打 tag、未发 GitHub Release（owner 链未指示）；⛔ 未改版本号。
+
+**版本**：未发布（v2.38.8 之后追加，⛔ 不升版本号 —— owner 指令第 4 条）；`CHANGELOG.md` 记在 `[Unreleased]` 段。
