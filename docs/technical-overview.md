@@ -14795,4 +14795,197 @@ harness 侧新增 `use301Br`（**按档位**决定回 301 还是正常应答，�
 
 **装机后的另一条既有失败（与本次改动无关，待裁决）**：21:19 电视上加载歌单时 `logcat` 有 `E/MetingDiag: parseSongs error: JsonSyntaxException ... Expected BEGIN_ARRAY but was BEGIN_OBJECT`。走的是 `getPlaylist`(:528) 的 `client`，`fetchPlayUrl` 完全不参与 ⇒ 成因是端点对 `type=playlist` 回的是 JSON **对象**（错误信封）而非歌曲数组。只影响「歌单」入口，搜索入口不受影响。
 
+### 10.230 v2.38.9 — E46 迷雾：电视端三脚巨影「只有描边没有填充」根因与修复（多顶点凹/自交路径 × `Canvas.concat`）（2026-10-13）
+
+**结论先行**：**API 22 创维 hwui 对「多顶点凹/自交路径 + 画布变换」这一交叉不落任何一个像素**，
+与渐变无关（纯色、无 shader 同样为 0）。修复 = `drawLinPoly` 的**路径与线性渐变都留在屏幕空间**。
+同版本手机正常 ⇒ 这不是新引入的回归，而是原型移植的画法**只在老电视上**露馅。所有者真机复测**已验收**。
+
+#### 一、症状
+
+v2.38.8 装到创维电视（`192.168.0.114`，Android 5.1.1 / API 22）后，E46「迷雾之战」里
+**三脚巨影的两条腿和机身甲壳只有白色的边框，中间没有填充颜色**；描边、雾、建筑、地面人群全部正常。
+同一 APK 在手机上完全正常（观感与原型一致）。
+
+⚠️ 「只有描边」这一表述本身就把范围收窄了：`STROKE_POLY`（背光轮廓，`Paint.Style.STROKE`）**画得出**，
+`LIN_POLY`（`FILL`）**画不出** ⇒ 问题不在顶点数据、不在投影、也不在 α 量化（否则描边同一条路径也该消失）。
+
+#### 二、诊断（探针 2：同一帧里用两种画法重画同一条路径，连拍 80 帧逐像素数色）
+
+之前只有肉眼证据，两个设备各执一词。加装的临时诊断构建在帧末把三条腿**各画两遍**：
+
+| 画法 | 每帧落笔像素（80 帧全部） |
+|---|---|
+| 屏幕空间路径 + 纯色填充（`drawPath` 直接吃顶点池的点） | **每帧都落笔**，量级 **1000~9800 px**（包围盒 356×884，与腿同尺寸） |
+| 同一条路径经 `Canvas.concat(轴矩阵)` 画在轴空间 | **80 帧全部 0 像素** |
+
+第二行去掉 shader、改成纯色 ⇒ **仍然 0** ⇒ 与渐变/取色完全无关。
+诊断构建按所有者口径**不入库**（同 §10.217 的埋点处置：release 里约 180 条/秒的日志开销不值得）。
+
+#### 三、交叉验证：缺填的集合 ≡ 凹/自交的集合
+
+`LIN_POLY` 全片只有三类形状（`TripodFogRenderer` 的 `shape` 分桶），逐帧统计 4812 帧：
+
+| 形状 | 凸/凹性 | 是否缺填 |
+|---|---|---|
+| `COLUMN`（建筑扫光，4 点） | **恒凸** 491/491 帧 | ✅ 正常 |
+| `SHELL`（机身甲壳） | **恒凹** 330/330 帧 | ❌ 全缺 |
+| `LEG`（腿圆柱面，34 点） | **976/981 帧自交** | ❌ 全缺 |
+
+两个集合**完全重合** ⇒ 判据是路径的**拓扑形状 × 画布变换**，而不是某条指令的参数。
+这也解释了为什么 `drawLinRect`（4 点凸矩形，走**同一个** `concat` 机制）在电视上**能**画。
+
+#### 四、改动
+
+`app/src/main/java/com/nasmusic/tv/visualizer/renderers/TripodFogRenderer.kt`：
+
+- `drawLinPoly`：路径由 `buildScreenPath(cnt, plan.cmdV0[i])` 直接取**顶点池里的屏幕点**；
+  渐变轴取指令自带的 `g0..g3`（发射器存的那两个点本来就是屏幕坐标，不需要再变换）；
+  `LinearGradient(ax0, ay0, ax1, ay1, bc, bp, CLAMP)` 直接建在屏幕轴上；**⛔ 不再 `c.save()/concat/restore`**。
+  退化轴（`dx²+dy² ≤ 1e-6`）与 `cnt < 3` 提前返回。
+- `drawLinRect` **有意保持不变**（仍走 `concat` + 单位轴着色器）：凸矩形在电视上实测能画，
+  而它依赖的正是"着色器恒建在单位轴、逐帧挪动由画布变换承载"这套机制。
+  ⛔ **不要把两者"统一"回去** —— 统一即复发。
+- ⚠️ 已知代价：屏幕空间写法下 `LinearGradient` **只能逐指令新建**（色标数组 `stopCol`/`stopPos`
+  仍可复用），HIGH 档每帧约 6 个 native 对象（三道腿 + 机身 + ≤2 道光柱）。这是"能出图"换"多几个
+  短命对象"，`PerfBudgetContractTest` 的逐帧分配扫描只禁 `DrawScope.draw*` 体内的容器/字符串分配，
+  不含这条（且 §10.217 已经证明本效果的瓶颈在别处）。
+
+#### 五、门禁
+
+`TripodFillMechanismGateTest`（5 例，源码扫描闸门，与本片既有的 `boot()`/`drawContent` 闸门同构）：
+
+| 例 | 锁住什么 |
+|---|---|
+| G1 | `drawLinPoly` 体非空且真有 `drawPath`（反空转对照，⛔ 别让它一路绿灯） |
+| G2 | ⛔ 体内不得出现 `concat` / `axisMatrix`（真机实测的 0 像素画法） |
+| G3 | 路径必须来自顶点池（`buildScreenPath`）、渐变轴必须是 `g0..g3` 原样 |
+| G4 | 屏幕空间**端点式**渐变只对线性渐变成立 ⇒ 全圈扫下来任何 `LIN_POLY` 的渐变模板都必须是 `LINEAR`（负样本：翻 `TripodGrad.RADIAL` 的某一位即变红） |
+| G5 | `drawLinRect` **仍然**用 `concat`（凸类指令不受本闸门约束，防"统一"回退） |
+
+⚠️ 这五条是**写法**闸门，不是**出图**闸门 —— 本机 JVM 没有 hwui，任何"像素数"断言都测不到
+那条真机路径。真正的像素判据只能是真机连拍（见 §二 的探针方法，下次踩同类问题照用）。
+
+### 10.231 v2.38.9 — E46 迷雾：进入效果黑屏 / 从别的效果切过来停在上一个画面 —— 首帧全量同步烘焙改为预算制分帧（2026-10-13）
+
+**结论先行**：`boot()` 把**全部素材**（48 栋楼位图 + 2 张雾条 + 4 张人群 + 一整张 1080p 暗角颗粒
+≈ **277 万像素**）压在**进入效果的那一帧**同步烘完。本机桌面 JVM ≈ 205 ms（预热后），
+而 §10.217 在同一台电视上实测**单张 1080p 程序化纹理 = 2398~3501 ms** ⇒ E46 的首帧是它的数倍，
+阻塞以**秒**计。这期间 Compose 的 draw 块一帧都没提交 ⇒ 冷进入是**黑屏**、切换是
+「上一个效果的最后一帧钉在屏幕上」。修法是照 **E43 沙纹理 / E44 月盘**的既有先例做预算制分帧烘。
+
+#### 一、症状（所有者报障原话）
+
+1. 启动迷雾效果时，会有一段时间黑屏；
+2. 从其他效果切换过来时，会停顿在上一个效果一段时间，然后才显示迷雾；
+3. 可以参考其他效果的改进方式。
+
+⚠️ 与 §10.217 的区别：那一批效果是「旧画面**冻结**」（平台免费提供了最后一帧常驻），
+本效果**冷进入**时是黑屏 —— 因为 E46 是新渲染器实例，`onExit` 已把上一效果的位图回收，
+而首帧又画不出来。同一根因的两种表现。
+
+#### 二、逐阶段成本普查（⛔ 数字只能由脚本再生）
+
+`TripodBakeCostProbeTest`（**不断言耗时** —— 墙钟断言在本机/CI 都站不住，与 2026-10-13 撤掉
+`PerfBudgetContractTest` 墙钟判据是同一条理由），把各阶段桌面 JVM 耗时写到
+`app/build/tmp/e46_bake_cost.txt`（2026-10-14 重跑）：
+
+| 阶段 | 冷 | 预热后 | 像素 |
+|---|---:|---:|---:|
+| `layout` | 0.03 ms | — | — |
+| `syncRouteEpoch` | 10.06 ms | — | — |
+| `genBuildings`（48 栋含烘焙） | 73.32 ms | 51.98 ms（含 layout+epoch） | **567,264** |
+| `genBuildings`（**纯几何**） | **0.04 ms** | — | — |
+| `bakeFogStrips` | 71.75 ms | 27.22 ms | 134,400 |
+| `bakePersons` | 21.51 ms | — | — |
+| `bakeGrade` 1920×1080 | 93.45 ms | 83.30 ms | **2,073,600** |
+| 队列单元数 | — | — | **146** |
+
+要的是**阶段占比**（桌面绝对值 ≠ 创维绝对值，本机慢一个量级）：grade 占 ~40% 时间但占 75% 像素
+（每像素最便宜，40 ns/px），雾条每像素最贵（202 ns/px，`fbm` 多重分形），建筑 129 ns/px。
+⇒ 队列顺序按「**观感承重**」而非按像素排：**雾 → 人群 → 楼 → grade**。
+
+⚠️ 表中「纯几何 0.04 ms」是本方案的地基：几何与烘焙**必须**解耦，首帧才有东西可画。
+
+#### 三、改动
+
+**① `TripodFogBake.kt`——把三个整张烘焙器拆成「整张 = 分行烘」的同一条式子**
+
+- `BAKE_UNIT_PX_CAP = 24000`：单个待烘单元的**像素上界**（grade @1920 ⇒ 12 行/单元；
+  雾条 A @256 宽 ⇒ 93 行）。预算是**时间**，上界保证「一帧多烘一个单元」的**超调有界**。⛔ 别放大。
+- `genBuildings(world, params, bake: Boolean = true)`：几何与位图烘焙解耦。
+- `bakeGradeRows(px, w, h, cx, grain, y0, y1)` / `bakeFogStripRows(…)`：写的是
+  **`px[(y - y0) * w + x]`**（缓冲区长度恰好 `(y1-y0)·w`），渲染器可以直接
+  `Bitmap.setPixels(px, 0, w, 0, y0, w, rows)` ⇒ **不需要常驻一张 8 MB 的 1080p `IntArray`**。
+- `bakeGrade` / `bakeFogStrip` 改为**委托**行区间版本（`bakeGrade(w,h,…) = bakeGradeRows(px,…,0,h)`），
+  ⛔ 两处不得留两份数学。雾条的 T6 接缝/阶次判据改从填好的缓冲里回读 α。
+- `TripodBakeQueue(stripAW, stripAH, stripBW, stripBH, midCount, nearCount, gradeW, gradeH)`：
+  一次建好 146 个单元（`next()` 单游标），`done` 供帧头空转判据；
+  `gradeOnly(w, h)` / `requeueGrade(w, h)` 供画幅变化只重排 grade。
+- **可分帧的前提是确定性**（⛔ 破坏它就等于让分帧烘出另一张图）：每栋 `bakeBuilding` 自立
+  `Lcg(b.seed)` ⇒ 烘焙**顺序无关**；grade 与雾条是**纯逐像素**式子 ⇒ 无跨行状态。
+  这两条分别由 G3、G1/G2 逐像素锁死。
+
+**② `TripodFogRenderer.kt`——首帧只建队列，之后每帧推进预算**
+
+- `boot(w, h)`：`syncRouteEpoch` → `genBuildings(world, p, **false**)` →
+  给雾条 A/B 与 grade 挂**全透明占位位图** → `bakeQueue = TripodBakeQueue(…)`。
+  ⛔ 不得出现 `bakeGrade(` / `bakeFogStrips(` / `bakePersons(` / `genBuildings(world, p, true)`
+  （G8 源码闸门直接判）。
+- `drawContent` 帧头：`if (!booted) boot(w, h)` → `prepareGrade(w, h)` → **`bakeStep()`**。
+- `bakeStep()`：`t0 = elapsedRealtimeNanos()`，循环 `runBakeUnit(q.next()!!)`，
+  超过 `BAKE_BUDGET_MS * 1_000_000L` 就 break。
+  ⚠️ **单调钟是纳秒、预算是毫秒**，换算这步⛔ 不能省 —— E43 的原始根因就是漏掉 `/1e6`
+  把 `rowsPerFrame` 钉在 1，于是烘了 105 秒。
+- `runBakeUnit`：雾条/人群/楼走各自的行区间或整张烘 + `upload`；grade 用 `bakeBuf(rows*w)`
+  复用一块行缓冲 `setPixels` 进既有位图。
+- **槽位口径改了**：建筑位图槽现在是 `TripodSlot.BUILDING0 + 扁平下标`（⛔ 不是旧的
+  「跳过 null 取下一个槽」）—— 分帧期间位图是**陆续就位**的，靠登记顺序配对必然错位。
+- 未烘好的素材天然安全：`drawBlit` 本就是 `bitmaps[slot] ?: return`，`slotOf(null) → NONE`，
+  `plan.persons == null` 是发射器既有的「本轮没人群」标志。
+- 换画幅：`prepareGrade` 只回收并重挂 grade 占位 + `requeueGrade`（**已烘好的楼⛔ 不白烘第二遍**）。
+- `onExitContent`：位图照旧全量 `recycle`，另外把 `bakeQueue` / `bakePx` 一起置 null
+  （行缓冲是 Java 堆上 `BAKE_UNIT_PX_CAP` 量级的 `IntArray`）。
+
+**③ 预算取值：`BAKE_BUDGET_MS = 24`**
+
+真机 E46 帧时实测 42~53 ms（HIGH 档 19~24 fps）⇒ 压在**半帧**，叠加后仍不碰 `FrameClock`
+的 100 ms 钳位（钳位 = 掉相位，观感是巨影"跳步"）。
+⚠️ 与 E43/E44 的 `34` 不同档是**有意**的：沙纹理/月盘的占位是**一块整色**盖在顶上（画面看着完整），
+这里的占位是**完全透明**（画面本来就逐帧在长东西）⇒ 稳一点没有代价。
+
+#### 四、门禁
+
+`TripodProgressiveBakeGateTest`（10 例）：
+
+| 例 | 锁住什么 |
+|---|---|
+| G1 / G2 | **逐像素等价**：grade / 雾条按 1、7(13)、64(96)、全高 四种块大小分行烘 ≡ 整张烘 |
+| G3 | 几何与烘焙解耦 + **顺序无关**（先近带后中带倒序烘，几何与位图都与一次成型全等） |
+| G4 | 队列顺序 = 雾→人群→楼→grade；人群 1 单元、楼 48 单元、grade ≥2 块且**行块自上而下连续**、恰好铺满 1080 行；队列必须终止 |
+| G5 | 每单元像素量 ≤ `BAKE_UNIT_PX_CAP`（超调有界）+ 队列为空即判红（反空转） |
+| G6 | `gradeOnly` 只含 grade、行数和 = 新画幅 |
+| G7 | `boot()` 体非空且真的建 `TripodBakeQueue(` |
+| G8 | `boot()` ⛔ 不得出现四个同步全量入口 + 建筑只出几何；`drawContent` 必须调 `bakeStep(` |
+| G9 | `onExitContent` 同时交还 `bakeQueue` 与 `gradePx` |
+| G10 | `requeueGrade` 保留**未消费的**场景单元在原位（⛔ 换画幅不能把排队中的雾/楼丢掉或重排） |
+
+外加 `TripodBakeCostProbeTest`（1 例，无耗时断言，只再生普查文件）。
+
+**回归**：`testDebugUnitTest --rerun-tasks` **197 类 / 2116 例 / 0 失败**，`lintDebug` **0 error**
+（136 warning，既有基线），2026-10-14 本机。
+
+#### 五、⚠️ 遗留与判据缺口
+
+- **本改动只保证「首帧必出画面」，不保证「素材几秒内齐」**。按 §10.217 的电视/桌面量级折算，
+  全部素材烘完的**墙钟**在电视上可能是**十秒量级的渐进过程**（雾先起、影后现、暗角最后收）。
+  ⛔ 本机给不出可信秒数 —— **必须真机实测**，由所有者判「能不能接受」。
+- 若嫌慢，可动的杠杆按**代价从低到高**：① 把 `BAKE_BUDGET_MS` 提到 E43 的 34（duty 更高、
+  掉相位风险上升）；② 场景与 grade 分档预算（grade 是暗角，最不急）；③ 进程级共享确定性烘焙产物
+  （**大概率不采纳**：跨效果常驻 ≈ 11 MB native，`dumpsys meminfo` 实测本机 `Native Heap Free` 仅
+  7 MB，与 §10.217 已否决的「纹理常驻」同一条理由）；④ 离线程烘焙（⛔ 全仓**无先例**，
+  且位图回收/`setPixels` 的线程纪律要重设计）。
+- ⛔ 不要为了"看起来快"去降采样烘 grade：颗粒是 1:1 像素细节，放大即糊，
+  而 `TripodFogGoldenTest` 只钉了 8 个 grade 采样点，**改错了不会被发现**。
+
 

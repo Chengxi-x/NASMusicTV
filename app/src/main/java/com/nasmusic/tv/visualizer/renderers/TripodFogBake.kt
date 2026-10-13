@@ -102,6 +102,17 @@ internal object TripodFogBake {
     /** fbm 八度数（两条雾条都是 5）。 */
     const val STRIP_OCT = 5
 
+    /**
+     * 分帧烘焙的**单个单元像素上界**（行块 = `本值 / 宽`）。
+     *
+     * 取 24000 px ⇒ 全屏 grade（1920 宽）一块 12 行、雾条 A（256 宽）一块 93 行。
+     * 上界的意义：渲染器的预算制是「烘到超时为止」⇒ 最坏情况就是**一个单元越界**，
+     * 有界的一帧超调才不会把 42~53 ms 的电视帧拖成可感知的卡顿。
+     * ⛔ 不要为了「少几块」把它放大：48 栋楼里最大的一张是 96×320 = 30720 px，
+     * 那是原子的（一栋的几何与烘焙无法再拆），本值小于它纯属两回事。
+     */
+    const val BAKE_UNIT_PX_CAP = 24000
+
     /** 建筑位图宽（原型 `const px = 96`）。 */
     const val BLD_PX = 96
 
@@ -482,45 +493,21 @@ internal object TripodFogBake {
      */
     fun bakeFogStrip(w: Int, h: Int, cells: Int, seed: Int, oct: Int, maxA: Double): FogStripBmp {
         val px = IntArray(w * h)
-        val hy = h * 0.62
-        val d = IntArray(w * h * 4) // 与原型 ImageData 同布局：只走一遍量化
-        var y = 0
-        while (y < h) {
-            val ramp = if (y < hy) lerp(0.55, 1.0, y / hy)
-            else lerp(1.0, 0.22, smoothstep(hy, h.toDouble(), y.toDouble()))
-            var x = 0
-            while (x < w) {
-                val a = clamp((fbm(x / w.toDouble(), y / h.toDouble(), cells.toDouble(), seed, oct) - 0.33) * 1.95, 0.0, 1.0) * ramp * maxA
-                val i = (y * w + x) * 4
-                d[i] = FOG_R
-                d[i + 1] = FOG_G
-                d[i + 2] = FOG_B
-                d[i + 3] = u8(a * 255.0)
-                x++
-            }
-            y++
-        }
-        var p = 0
-        var i = 0
-        while (i < w * h) {
-            px[i] = (d[p + 3] shl 24) or (d[p] shl 16) or (d[p + 1] shl 8) or d[p + 2]
-            p += 4
-            i++
-        }
+        bakeFogStripRows(px, w, h, cells, seed, oct, maxA, 0, h)
         // ── T6 的两条判据（原型 :1376/:1387 的 cv._seam / cv._step，解析重算同一式子）──
         val f = { x: Double, yv: Double, c: Double ->
             clamp((fbm(x, yv, c, seed, oct) - 0.33) * 1.95, 0.0, 1.0) * maxA
         }
         var seam = 0.0
         var seamBad = 0.0
-        y = 0
+        var y = 0
         while (y < h) {
             val yv = y / h.toDouble()
             seam = max(seam, abs(f(1.0, yv, cells.toDouble()) - f(0.0, yv, cells.toDouble())))
             seamBad = max(seamBad, abs(f(1.0, yv, cells + 0.37) - f(0.0, yv, cells + 0.37)))
             y++
         }
-        val at = { x: Int, yy: Int -> d[(yy * w + x) * 4 + 3] }
+        val at = { xx: Int, yy: Int -> (px[yy * w + xx] ushr 24) and 0xFF }
         var sMax = 0.0
         var inMax = 0.0
         y = 0
@@ -577,10 +564,36 @@ internal object TripodFogBake {
      */
     fun bakeGrade(w: Int, h: Int, cx: Double, grain: Double): IntArray {
         val px = IntArray(w * h)
+        bakeGradeRows(px, w, h, cx, grain, 0, h)
+        return px
+    }
+
+    /**
+     * 按行区间烘 grade —— 分帧烘焙的最小粒度。
+     *
+     * ⭐ 与整张烘**逐像素一致**（暗角半径只依赖 `w/h/cx`，颗粒是逐像素哈希 ⇒ 无跨行状态），
+     * 该性质由 `TripodProgressiveBakeGateTest` G1 把门 ⇒ 渲染器可以先建全透明位图、
+     * 再逐块 `setPixels`，观感只是暗角/颗粒自上而下补齐。
+     *
+     * ⚠️ `px` 是**这一块行带自己的**缓冲（长度恰好 `(y1-y0)·w`，写法 `px[(y-y0)·w+x]`），
+     * ⛔ 不是整张画幅的缓冲 —— 那样渲染器就得为 1080p 常驻一个 8 MB 的 `IntArray`。
+     * 行号仍然按**整张**算（`y` 从 `y0` 起、`h` 用真高），只有落笔位置平移。
+     */
+    fun bakeGradeRows(
+        px: IntArray,
+        w: Int,
+        h: Int,
+        cx: Double,
+        grain: Double,
+        y0: Int,
+        y1: Int,
+    ) {
         val r0 = min(w, h) * 0.34
         val r1 = max(w, h) * 0.72
-        var y = 0
-        while (y < h) {
+        val ys = max(y0, 0)
+        var y = ys
+        val ye = min(y1, h)
+        while (y < ye) {
             var x = 0
             while (x < w) {
                 val vg = clamp((hypot(x - cx, y - h * 0.5) - r0) / (r1 - r0), 0.0, 1.0)
@@ -588,12 +601,11 @@ internal object TripodFogBake {
                 val a1 = abs(h2(x, y, 1000000.0, 9999) - 0.5) * 2 * grain
                 val a = a0 + a1
                 val c = if (a < 1e-6) 0.0 else 255.0 * a1 / a
-                px[y * w + x] = (u8(a * 255.0) shl 24) or (u8(c) shl 16) or (u8(c) shl 8) or u8(c)
+                px[(y - ys) * w + x] = (u8(a * 255.0) shl 24) or (u8(c) shl 16) or (u8(c) shl 8) or u8(c)
                 x++
             }
             y++
         }
-        return px
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -932,10 +944,10 @@ internal object TripodFogBake {
      *
      * @param params 读 `skirtH/skirtA`（烘焙输入 ⇒ 改它们要重烘）
      */
-    fun genBuildings(world: TripodFogWorld, params: TripodParams) {
+    fun genBuildings(world: TripodFogWorld, params: TripodParams, bake: Boolean = true) {
         val r = TripodFogMath.Lcg(20261011)
-        world.bMid = mk(world, world.bandMid, params, r)
-        world.bNear = mk(world, world.bandNear, params, r)
+        world.bMid = mk(world, world.bandMid, params, r, bake)
+        world.bNear = mk(world, world.bandNear, params, r, bake)
     }
 
     private fun mk(
@@ -943,6 +955,7 @@ internal object TripodFogBake {
         cfg: TripodBandCfg,
         params: TripodParams,
         r: TripodFogMath.Lcg,
+        bake: Boolean,
     ): Array<TripodBuilding> {
         val arr = Array(cfg.n) { TripodBuilding() }
         var i = 0
@@ -960,7 +973,7 @@ internal object TripodFogBake {
             b.dep = lerp(14.0, 34.0, r.next())
             b.seed = (r.next() * 1e9).toInt()
             b.k = 1 + floor(r.next() * 3.0).toInt()
-            b.bmp = bakeBuilding(b, params) // 位图 + skirt/feather 回填（原型 `b.bmp = bakeBuilding(b)`）
+            if (bake) b.bmp = bakeBuilding(b, params) // 位图 + skirt/feather 回填（原型 `b.bmp = bakeBuilding(b)`）
             i++
         }
         return arr
@@ -972,4 +985,167 @@ internal object TripodFogBake {
             bakeFogStrip(STRIP_B_W, STRIP_B_H, STRIP_B_CELLS, STRIP_B_SEED, STRIP_OCT, 1.0)
 
     fun bakePersons(): Array<PersonBmp> = Array(4) { bakePerson(it) }
+
+    /**
+     * 按行区间烘一条雾带 —— 分帧烘焙的最小粒度。
+     *
+     * ⭐ [bakeFogStrip] 的**同一段式子**（`hy = h·0.62` 的垂直包络逐行独立、`fbm` 逐像素无状态）
+     * ⇒ 与整张烘逐像素一致，由 `TripodProgressiveBakeGateTest` G2 把门。
+     * ⚠️ 打包口径必须与整张路径逐字节相同：原来是「先写 `Uint8` 四通道 `d`、再压回 ARGB」，
+     * 这里直接把 α 放到 24 位，两者都是 `(u8(a·255) << 24) | R<<16 | G<<8 | B`。
+     *
+     * ⚠️ 与 [bakeGradeRows] 同一条缓冲口径：`px` 是**这一块行带**的缓冲（长度 `(y1-y0)·w`），
+     * 行号仍按整张算（垂直包络 `hy` 用的是真高 `h`）。
+     */
+    fun bakeFogStripRows(
+        px: IntArray,
+        w: Int,
+        h: Int,
+        cells: Int,
+        seed: Int,
+        oct: Int,
+        maxA: Double,
+        y0: Int,
+        y1: Int,
+    ) {
+        val hy = h * 0.62
+        val ys = max(y0, 0)
+        var y = ys
+        val ye = min(y1, h)
+        while (y < ye) {
+            val ramp = if (y < hy) lerp(0.55, 1.0, y / hy)
+            else lerp(1.0, 0.22, smoothstep(hy, h.toDouble(), y.toDouble()))
+            val yv = y / h.toDouble()
+            var x = 0
+            while (x < w) {
+                val a = clamp(
+                    (fbm(x / w.toDouble(), yv, cells.toDouble(), seed, oct) - 0.33) * 1.95,
+                    0.0,
+                    1.0,
+                ) * ramp * maxA
+                px[(y - ys) * w + x] = (u8(a * 255.0) shl 24) or (FOG_R shl 16) or (FOG_G shl 8) or FOG_B
+                x++
+            }
+            y++
+        }
+    }
+}
+
+/** [TripodBakeQueue] 的单元类型（顺序即队列顺序：雾 → 人群 → 楼 → grade）。 */
+internal object TripodBakeKind {
+    const val STRIP_A = 0
+    const val STRIP_B = 1
+    const val PERSONS = 2
+    const val BUILDING = 3
+    const val GRADE = 4
+}
+
+/**
+ * 一个待烘单元。
+ *
+ * @param kind [TripodBakeKind]
+ * @param a 行块的起始行（雾条 / grade）或楼的扁平下标（[TripodBakeKind.BUILDING]，⛔ 行号）
+ * @param b 行块的**开区间**上界；一栋楼为 `a + 1`；人群恒 [TripodSlot.PERSON_N]
+ */
+internal class TripodBakeUnit(val kind: Int, val a: Int, val b: Int)
+
+/**
+ * E46 首帧之后的**分帧烘焙队列**（纯 Kotlin：只排队「烘什么」，⛔ 不碰 `Bitmap`）。
+ *
+ * ## 为什么存在
+ * 进入效果的旧路径把 48 栋楼位图 + 2 张雾条 + 4 张人群 + 一整张全屏暗角颗粒压在**同一帧**
+ * 同步烘完（本机逐阶段普查 ≈ 2.77 M px，其中 grade 独占 2.07 M @1080p）。桌面 JVM 约 290 ms
+ * 已经是「切换时上一个画面钉在屏幕上」，创维 API 22 慢一个量级 ⇒ 以**秒**计，
+ * 而这期间 Compose 的 draw 块一帧都没提交 ⇒ 冷进入就是黑屏。
+ *
+ * ## 排法（照 E43 沙纹理 / E44 月盘的先例）
+ * - **雾最先**：观众进场第一眼要看到的就是雾，两张雾条切成行块排在最前；
+ * - 人群一个单元（4×14×34 px，不值得再拆）；
+ * - **逐栋**楼（一栋的几何与烘焙是原子的，不能再拆；最坏 96×320 = 30720 px）；
+ * - **grade 最后**：全屏暗角/颗粒是**覆盖层**，缺失时画面依然完整，最不该挤掉前景素材的帧预算。
+ *
+ * ⛔ 单元顺序即收敛顺序，⛔ 不要改成按"最耗时的先烘"。
+ *
+ * @param midCount [TripodFogWorld.bandMid] 的栋数（先中带）
+ * @param nearCount [TripodFogWorld.bandNear] 的栋数（后近带）⇒ 扁平下标 `0 until midCount+nearCount`
+ */
+internal class TripodBakeQueue(
+    stripAW: Int,
+    stripAH: Int,
+    stripBW: Int,
+    stripBH: Int,
+    midCount: Int,
+    nearCount: Int,
+    gradeW: Int,
+    gradeH: Int,
+) {
+    /** 已排好的单元，顺序 = 消费顺序（闸门直接遍历它判顺序与像素上界）。 */
+    val units = ArrayList<TripodBakeUnit>()
+
+    private var cursor = 0
+
+    /** 队列是否已排空（⛔ 判"素材是否齐"请用 `done`，⛔ 不要判位图非空）。 */
+    val done: Boolean get() = cursor >= units.size
+
+    init {
+        // 非零的雾条尺寸 = 「整场景重排」；gradeOnly 传 0 ⇒ 只排 grade。
+        val scene = stripAH > 0 && midCount > 0
+        if (scene) {
+            addRowUnits(TripodBakeKind.STRIP_A, stripAW, stripAH)
+            addRowUnits(TripodBakeKind.STRIP_B, stripBW, stripBH)
+            units.add(TripodBakeUnit(TripodBakeKind.PERSONS, 0, TripodSlot.PERSON_N))
+            var i = 0
+            while (i < midCount + nearCount) {
+                units.add(TripodBakeUnit(TripodBakeKind.BUILDING, i, i + 1))
+                i++
+            }
+        }
+        if (gradeH > 0) addRowUnits(TripodBakeKind.GRADE, gradeW, gradeH)
+    }
+
+    /** 取下一个待烘单元；排空返回 null（渲染器据此停止计时）。 */
+    fun next(): TripodBakeUnit? = if (cursor >= units.size) null else units[cursor++]
+
+    /**
+     * 画幅变化时的**换代队列**：尚未消费的场景单元原样带过去（⛔ 不重烘、⛔ 不丢），
+     * grade 部分按新画幅重排。
+     *
+     * ⛔ 不要图省事直接 `gradeOnly(w, h)` —— 那会把「场景还没烘完」的楼与雾一起从队列里抹掉，
+     * 而它们的 `bmp` 永远是 null ⇒ 画面缺一块且**再也长不回来**。
+     */
+    fun requeueGrade(w: Int, h: Int): TripodBakeQueue {
+        val q = TripodBakeQueue(0, 0, 0, 0, 0, 0, w, h)
+        val scene = ArrayList<TripodBakeUnit>(units.size - cursor)
+        var i = cursor
+        while (i < units.size) {
+            val u = units[i]
+            if (u.kind != TripodBakeKind.GRADE) scene.add(u)
+            i++
+        }
+        scene.addAll(q.units)
+        q.units.clear()
+        q.units.addAll(scene)
+        return q
+    }
+
+    /** 按 [TripodFogBake.BAKE_UNIT_PX_CAP] 把一张 h 行的图切成连续、不重叠、铺满的行块。 */
+    private fun addRowUnits(kind: Int, w: Int, h: Int) {
+        val rows = max(1, TripodFogBake.BAKE_UNIT_PX_CAP / max(1, w))
+        var a = 0
+        while (a < h) {
+            val b = min(a + rows, h)
+            units.add(TripodBakeUnit(kind, a, b))
+            a = b
+        }
+    }
+
+    companion object {
+        /**
+         * 画幅变化 ⇒ **只**重排 grade。
+         *
+         * 暗角半径是绝对像素（§十一(d)）⇒ 换画幅必须重烘；但楼与雾条与画幅无关，
+         * 整场景重排会让观众看到已经就位的素材**凭空消失再逐帧长回来**。
+         */
+        fun gradeOnly(w: Int, h: Int): TripodBakeQueue = TripodBakeQueue(0, 0, 0, 0, 0, 0, w, h)
+    }
 }

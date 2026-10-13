@@ -1936,12 +1936,26 @@ class TripodFogRenderer : RendererFx() {
     /** 槽位即下标的原生位图（[TripodSlot]：雾条 A/B、grade、4 张人群、48 栋楼）。 */
     private val bitmaps = arrayOfNulls<Bitmap>(TripodSlot.COUNT)
 
-    /** 已经烘好并登记过素材（⛔ 每帧判 `plan.persons`，那是发射器的"能不能画人群"） */
+    /** 已经建好分帧烘焙队列（⛔ 判"素材齐不齐"请用 `bakeQueue?.done`；⛔ 每帧判 `plan.persons`，那是发射器的"能不能画人群"） */
     private var booted = false
 
     /** grade 位图当前的画幅（暗角半径是**绝对像素** ⇒ 画幅一变必须整张重烘，§十一(d)） */
     private var gradeW = 0
     private var gradeH = 0
+
+    /**
+     * 首帧之后逐帧消费的**分帧烘焙队列**（null = 尚未 `boot()` 或已离效果）。
+     *
+     * 存在的全部理由见 [bakeStep]：进入效果的旧路径把 ~2.77 M px 压在**同一帧**同步烘完，
+     * 而那一帧 Compose 还没提交过任何画面 ⇒ 冷进入黑屏、切换则把上一个效果的最后一帧钉住。
+     */
+    private var bakeQueue: TripodBakeQueue? = null
+
+    /**
+     * 行块暂存（一次分配、整轮复用）：容量 [TripodFogBake.BAKE_UNIT_PX_CAP] 个 int
+     * ⇒ 任何**一个**行单元都装得下（⛔ 逐单元 `IntArray(...)` = 每帧分配）。
+     */
+    private var bakePx: IntArray? = null
 
     /** 上一次 `layout` 的画幅（[RendererFx] 的 `sizeCache` 是 private ⇒ 这里自备一份） */
     private var laidW = 0f
@@ -1975,12 +1989,20 @@ class TripodFogRenderer : RendererFx() {
     private val shaderSlots = gradBase[TripodGrad.N]
     private val shaders = arrayOfNulls<Shader>(shaderSlots)
 
-    /** 指纹存的是**派生后**的色标（见 [gradOf]）：α 归一到 `amax` 后的 ARGB + 停点。 */
+    /** 指纹存的是**派生后**的色标（见 [gradSlot]）：α 归一到 `amax` 后的 ARGB + 停点。 */
     private val cacheCol = IntArray(shaderSlots * 6)
     private val cachePos = FloatArray(shaderSlots * 6)
     private val cacheN = IntArray(shaderSlots)
 
-    /** [gradOf] 的输出旁路：本次取色要用的 paint α（`amax`，0 ⇒ 整条指令跳过） */
+    /**
+     * 同一份色标的**精确长度副本**（`bc`/`bp`，与单位空间着色器共用，不额外分配）：
+     * [LinearGradient] 的构造器只认"数组长度 == 色标数"，扁平的 `cacheCol` 切片要用
+     * `Arrays.copyOf` ⇒ 每帧分配。屏幕空间渐变（[drawLinPoly]）直接拿这两个数组建笔。
+     */
+    private val stopCol = arrayOfNulls<IntArray>(shaderSlots)
+    private val stopPos = arrayOfNulls<FloatArray>(shaderSlots)
+
+    /** [gradSlot] 的输出旁路：本次取色要用的 paint α（`amax`，0 ⇒ 整条指令跳过） */
     private var gradAm = 0
 
     private val scrCol = IntArray(6)
@@ -2039,59 +2061,151 @@ class TripodFogRenderer : RendererFx() {
         booted = false
         gradeW = 0
         gradeH = 0
+        // 分帧状态一并交出：队列里可能还压着没烘的单元，行块缓冲是 96 KB 的 Java 堆
+        bakeQueue = null
+        bakePx = null
     }
 
-    // ─────────────────────── 烘焙与上传（一次性路径）───────────────────────
+    // ─────────────────────── 烘焙与上传（分帧路径）───────────────────────
 
     /**
-     * 首帧的**一次性**烘焙（原型 `boot()`：`layout → buildCum → setGrabKnots →
-     * syncRouteEpoch(true) → genBuildings → bakeAll`）。
+     * 首帧**只建队列**（原型 `boot()`：`layout → buildCum → setGrabKnots →
+     * syncRouteEpoch(true) → genBuildings → bakeAll` 的最后一环被拆出去逐帧烘）。
      *
      * K3 的 [TripodFogMath.syncRouteEpoch] 内部已经把 `buildCum` / `setGrabKnots` /
-     * `scanCross` 串好了 ⇒ 这里只剩三步真顺序，⛔ 换序：
-     * `genBuildings` 的 `z0` 读 `GTOT`（`buildCum` 的产物），登记又读 `b.bmp`（`genBuildings` 的产物）。
+     * `scanCross` 串好了 ⇒ 这里只剩两步真顺序，⛔ 换序：`genBuildings` 的 `z0` 读 `GTOT`
+     * （`buildCum` 的产物）。位图**不**再登记在这里，改由 [bakeBuildingAt] 烘好一栋登记一栋。
      *
-     * ⚠️ 成本：48 栋建筑 + 2 张雾条 + 4 张人群，一次性约百毫秒级，落在**进入效果的那一帧**
-     * （原型同样一次性，且原型是在 `boot()` 里做的）。真机若嫌首帧硬，再走 E44 的分帧烘焙。
+     * ## 为什么首帧一像素都不烘（所有者报障，2026-10-13）
+     * 旧路径把 48 栋楼 + 2 张雾条 + 4 张人群 + **一整张全屏暗角颗粒**压在进入效果的那一帧
+     * 同步烘完（逐阶段普查 ≈ 2.77 M px，grade 独占 2.07 M @1080p，见 [TripodBakeCostProbeTest]
+     * 的口径）。桌面 JVM ≈ 290 ms 已经让「切换」把上一个效果的最后一帧钉在屏幕上，
+     * 创维 API 22 慢一个量级 ⇒ 以**秒**计，而这期间 Compose 的 draw 块一帧都没提交 ⇒
+     * 冷进入就是黑屏。⛔ 不要再把它"统一"回同步。
+     *
+     * @param w h 首帧画幅（`ctx.canvasSize` 在 `onEnter` 时还是 `Size.Zero` ⇒ 只能在这里拿）
      */
-    private fun boot() {
+    private fun boot(w: Int, h: Int) {
         val p = world.params
         TripodFogMath.syncRouteEpoch(world, true)
-        TripodFogBake.genBuildings(world, p)
+        // ⭐ 只出几何，⛔ 顺手烘位图
+        TripodFogBake.genBuildings(world, p, false)
 
-        var slot = TripodSlot.BUILDING0
-        slot = registerBuildings(world.bMid, slot)
-        registerBuildings(world.bNear, slot)
+        // 雾条与 grade 是**按槽位直取**的图层 ⇒ 位图先建成全透明的，行块逐帧往里长；
+        // 建筑相反 —— 未烘的 `b.bmp` 恒 null ⇒ `slotOf(null) = NONE`，发射器连记账一起跳过，
+        // 于是槽位天然按扁平下标预留（`BUILDING0 + index`，⛔ 依赖"跳空位顺排"的旧登记口径）。
+        bitmaps[TripodSlot.FOG_A] = blankBitmap(TripodFogBake.STRIP_A_W, TripodFogBake.STRIP_A_H)
+        bitmaps[TripodSlot.FOG_B] = blankBitmap(TripodFogBake.STRIP_B_W, TripodFogBake.STRIP_B_H)
+        gradeW = w
+        gradeH = h
+        if (w > 0 && h > 0) bitmaps[TripodSlot.GRADE] = blankBitmap(w, h)
 
-        val strips = TripodFogBake.bakeFogStrips()
-        bitmaps[TripodSlot.FOG_A] = upload(strips.first.w, strips.first.h, strips.first.px)
-        bitmaps[TripodSlot.FOG_B] = upload(strips.second.w, strips.second.h, strips.second.px)
-
-        val ps = TripodFogBake.bakePersons()
-        plan.persons = ps            // 发射器读 `bh`（⛔ 在绘制侧另存一份高度修正）
-        var k = 0
-        while (k < TripodSlot.PERSON_N) {
-            bitmaps[TripodSlot.PERSON0 + k] =
-                upload(TripodFogBake.PERSON_W, TripodFogBake.PERSON_H, ps[k].px)
-            k++
-        }
+        bakeQueue = TripodBakeQueue(
+            TripodFogBake.STRIP_A_W, TripodFogBake.STRIP_A_H,
+            TripodFogBake.STRIP_B_W, TripodFogBake.STRIP_B_H,
+            world.bMid.size, world.bNear.size, w, h,
+        )
         booted = true
     }
 
-    /** 逐栋上传并登记身份 → 槽位；返回下一个可用槽位。 */
-    private fun registerBuildings(arr: Array<TripodBuilding>, from: Int): Int {
-        var slot = from
-        var i = 0
-        while (i < arr.size && slot < TripodSlot.COUNT) {
-            val bb = arr[i].bmp
-            if (bb != null) {
-                bitmaps[slot] = upload(bb.w, bb.h, bb.px)
-                slotTable.put(slot, bb)
-                slot++
-            }
-            i++
+    /** 全透明的占位位图（native 像素清零 ⇒ 未烘的行不盖任何东西）。 */
+    private fun blankBitmap(w: Int, h: Int): Bitmap =
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+
+    /**
+     * 每帧在**固定时间预算**内推进分帧烘焙队列（[bakeQueue]），烘完即空转。
+     *
+     * 照 E43 沙纹理 / E44 月盘的先例：**分帧、留在渲染线程**（本仓库没有"离线线程烘位图"的
+     * 先例，跨线程 `Bitmap` 在 API 22 上要自己管同步与回收，收益不抵风险）。
+     * 与 E43 的**自适应步长**不同，这里用**时间预算 + 单元像素上界**（[TripodFogBake.BAKE_UNIT_PX_CAP]）：
+     * 单元粒度已经是解析式的（一行 grade ≈ 1920 px），超调最多**一个单元**，
+     * 比"实测单行耗时反推行数"少一套状态，也⛔ 不会再踩 E43 那个"纳秒当毫秒 ⇒ 步长钉死在下限"的坑。
+     */
+    private fun bakeStep() {
+        val q = bakeQueue ?: return
+        if (q.done) return
+        val t0 = android.os.SystemClock.elapsedRealtimeNanos()
+        while (!q.done) {
+            val u = q.next() ?: break
+            runBakeUnit(u)
+            // ⚠️ 单调钟是**纳秒**，BAKE_BUDGET_MS 是**毫秒** ⇒ 换算这一步⛔ 不能省（E43 根因修复的原话）
+            if (android.os.SystemClock.elapsedRealtimeNanos() - t0 >= BAKE_BUDGET_MS * 1_000_000L) break
         }
-        return slot
+    }
+
+    /** 消费一个单元 ⇒ 把该行的像素 `setPixels` 进对应的槽位位图。 */
+    private fun runBakeUnit(u: TripodBakeUnit) {
+        val p = world.params
+        when (u.kind) {
+            TripodBakeKind.STRIP_A -> bakeStripRows(
+                TripodSlot.FOG_A, TripodFogBake.STRIP_A_W, TripodFogBake.STRIP_A_H,
+                TripodFogBake.STRIP_A_CELLS, TripodFogBake.STRIP_A_SEED, u,
+            )
+
+            TripodBakeKind.STRIP_B -> bakeStripRows(
+                TripodSlot.FOG_B, TripodFogBake.STRIP_B_W, TripodFogBake.STRIP_B_H,
+                TripodFogBake.STRIP_B_CELLS, TripodFogBake.STRIP_B_SEED, u,
+            )
+
+            TripodBakeKind.PERSONS -> {
+                val ps = TripodFogBake.bakePersons()
+                plan.persons = ps            // 发射器读 `bh`（⛔ 在绘制侧另存一份高度修正）
+                var k = 0
+                while (k < TripodSlot.PERSON_N) {
+                    bitmaps[TripodSlot.PERSON0 + k] =
+                        upload(TripodFogBake.PERSON_W, TripodFogBake.PERSON_H, ps[k].px)
+                    k++
+                }
+            }
+
+            TripodBakeKind.BUILDING -> bakeBuildingAt(u.a, p)
+
+            else -> {
+                val bmp = bitmaps[TripodSlot.GRADE] ?: return
+                val rows = u.b - u.a
+                if (rows <= 0 || gradeW < 1) return
+                val px = bakeBuf(rows * gradeW)
+                TripodFogBake.bakeGradeRows(px, gradeW, gradeH, gradeW / 2.0, p.grain, u.a, u.b)
+                bmp.setPixels(px, 0, gradeW, 0, u.a, gradeW, rows)
+            }
+        }
+    }
+
+    private fun bakeStripRows(slot: Int, w: Int, h: Int, cells: Int, seed: Int, u: TripodBakeUnit) {
+        val bmp = bitmaps[slot] ?: return
+        val rows = u.b - u.a
+        if (rows <= 0) return
+        val px = bakeBuf(rows * w)
+        TripodFogBake.bakeFogStripRows(px, w, h, cells, seed, TripodFogBake.STRIP_OCT, 1.0, u.a, u.b)
+        bmp.setPixels(px, 0, w, 0, u.a, w, rows)
+    }
+
+    /** 烘一栋楼并登记 `身份 → 槽位`（队列里的扁平下标 = 中带在前、近带在后）。 */
+    private fun bakeBuildingAt(index: Int, p: TripodParams) {
+        val mid = world.bMid
+        val b = if (index < mid.size) {
+            mid[index]
+        } else {
+            val j = index - mid.size
+            if (j >= world.bNear.size) return
+            world.bNear[j]
+        }
+        val slot = TripodSlot.BUILDING0 + index
+        if (slot >= TripodSlot.COUNT) return
+        val bb = TripodFogBake.bakeBuilding(b, p)
+        b.bmp = bb
+        bitmaps[slot]?.recycle()
+        bitmaps[slot] = upload(bb.w, bb.h, bb.px)
+        slotTable.put(slot, bb)
+    }
+
+    /** 行块暂存（一次分配、整轮复用；容量由 [TripodBakeQueue] 的像素上界给定，⛔ 逐单元新建）。 */
+    private fun bakeBuf(need: Int): IntArray {
+        val cur = bakePx
+        if (cur != null && cur.size >= need) return cur
+        val next = IntArray(max(need, TripodFogBake.BAKE_UNIT_PX_CAP))
+        bakePx = next
+        return next
     }
 
     /**
@@ -2106,16 +2220,22 @@ class TripodFogRenderer : RendererFx() {
         return bmp
     }
 
-    /** 画幅变了 ⇒ 暗角/颗粒位图整张作废重烘（半径是**绝对像素**，⛔ 不能拉伸复用）。 */
-    private fun ensureGrade(w: Int, h: Int) {
+    /**
+     * 画幅变了 ⇒ 暗角/颗粒位图整张作废**重排队**（半径是**绝对像素**，⛔ 不能拉伸复用）。
+     *
+     * ⚠️ 只重排 grade：`requeueGrade` 把**尚未消费**的场景单元原样带过去。⛔ 不要写成
+     * `TripodBakeQueue.gradeOnly(...)` —— 那会把还没烘的楼与雾从队列里抹掉，它们的 `bmp`
+     * 就永远是 null ⇒ 画面缺一块且再也长不回来。
+     */
+    private fun prepareGrade(w: Int, h: Int) {
         if (w < 1 || h < 1) return
         if (gradeW == w && gradeH == h && bitmaps[TripodSlot.GRADE] != null) return
         bitmaps[TripodSlot.GRADE]?.recycle()
-        bitmaps[TripodSlot.GRADE] = null
         gradeW = w
         gradeH = h
-        val px = TripodFogBake.bakeGrade(w, h, w / 2.0, world.params.grain)
-        bitmaps[TripodSlot.GRADE] = upload(w, h, px)
+        bitmaps[TripodSlot.GRADE] = blankBitmap(w, h)
+        val q = bakeQueue
+        bakeQueue = if (q == null) TripodBakeQueue.gradeOnly(w, h) else q.requeueGrade(w, h)
     }
 
     // ─────────────────────── 帧头：尺寸 / 档位 / 时间轴 / 音频 ───────────────────────
@@ -2128,7 +2248,7 @@ class TripodFogRenderer : RendererFx() {
         world.tier = tripodLevelOf(fx.level)
         val p = world.params
 
-        // ① 画幅：只重算投影常数与重烘 grade。⛔ 绝不重跑 syncRouteEpoch / genBuildings
+        // ① 画幅：只重算投影常数与重排 grade。⛔ 绝不重跑 syncRouteEpoch / genBuildings
         //    —— 换画幅既不是换圈也不是换剧本，重跑会把观众眼前的巨影换成另一条路线。
         if (w != laidW || h != laidH) {
             laidW = w
@@ -2136,8 +2256,10 @@ class TripodFogRenderer : RendererFx() {
             TripodFogMath.layout(world, w.toDouble(), h.toDouble())
             gradeW = 0
         }
-        if (!booted) boot()
-        ensureGrade(w.toInt(), h.toInt())
+        if (!booted) boot(w.toInt(), h.toInt())
+        prepareGrade(w.toInt(), h.toInt())
+        // ⭐ 分帧烘焙：首帧之后每帧最多推进 BAKE_BUDGET_MS，烘完即一次「读两个字段比较」的空转
+        bakeStep()
 
         // ② §九 音频头（三条包络 ⇒ `params.audio*`；静默兜底在 `SpectrumRepository`，
         //    所以生产路径 `audioBreathe` **恒 false** —— 那是原型的脱机演示档）
@@ -2214,6 +2336,9 @@ class TripodFogRenderer : RendererFx() {
      * display list、重放时才读 local matrix ⇒ 后设的那一次会**覆盖**先录的那几笔。
      * `Canvas.concat` 的矩阵则在录制当刻就折进绘制项，天然逐笔独立（E44 `drawSoftEllipse`
      * 的 `translate/scale` 就是同一条已验路径）。
+     *
+     * ⚠️ 该结论**只对 4 点凸矩形成立**：多顶点的凹/自交路径走同一个 `concat` 机制在 API 22 创维
+     *    上**一个像素都不落**（真机实测），所以 [drawLinPoly] 必须留在屏幕空间。别把两者"统一"回去。
      */
     private fun DrawScope.drawLinRect(c: Canvas, i: Int) {
         val s = gradOf(i) ?: return
@@ -2243,34 +2368,42 @@ class TripodFogRenderer : RendererFx() {
         c.restore()
     }
 
-    /** 线性渐变铺一个多边形（腿的圆柱面、机身甲壳、光柱四边形）。 */
+    /**
+     * 线性渐变铺一个多边形（腿的圆柱面、机身甲壳、光柱四边形）。
+     *
+     * ⭐ **路径与渐变都在屏幕空间**：路径直接取顶点池里的屏幕点，渐变轴就是指令自带的
+     *    `g0..g3`（发射器存的那两个点本来就是屏幕坐标）。轴空间/单位空间的写法见 [drawLinRect]。
+     *
+     * ⛔ **不得改回"轴空间路径 + `Canvas.concat`"**（所有者报障的根因，2026-10-13 真机实测）：
+     * 同一条 34 点腿多边形，屏幕空间每帧落笔 1000–9800 px，经 `concat(轴矩阵)` 摆到轴空间后
+     * **80 帧全部 0 像素**；纯色、无 shader 也一样不落笔 ⇒ 与渐变无关，是"多顶点凹/自交路径 +
+     * 画布变换"这一交叉在 API 22 hwui 上不出图。对照：`drawLinRect` 的 4 点凸矩形走同一个
+     * `concat` 机制在电视上**能**画，所以只有本函数需要绕开。护栏 `TripodFillMechanismGateTest`。
+     *
+     * ⚠️ 代价：色标缓存只能复用到数组，`LinearGradient` 必须按指令的轴逐条新建（每帧腿 3 +
+     * 机身 1 + 光柱 ≤2 ≈ 6 个 native 对象）。
+     */
     private fun DrawScope.drawLinPoly(c: Canvas, i: Int) {
-        val s = gradOf(i) ?: return
+        val ci = gradSlot(i)
+        if (ci < 0) return
+        val bc = stopCol[ci] ?: return
+        val bp = stopPos[ci] ?: return
         val g = plan.cmdG
         val b = i * 8
         val ax0 = g[b].toFloat()
         val ay0 = g[b + 1].toFloat()
-        val dx = (g[b + 2] - g[b]).toFloat()
-        val dy = (g[b + 3] - g[b + 1]).toFloat()
-        val len2 = dx * dx + dy * dy
-        if (!(len2 > 1e-6f)) return
+        val ax1 = g[b + 2].toFloat()
+        val ay1 = g[b + 3].toFloat()
+        val dx = ax1 - ax0
+        val dy = ay1 - ay0
+        if (!(dx * dx + dy * dy > 1e-6f)) return   // 退化轴：渐变无方向 ⇒ 画了也是纯色一块，跳过
         val cnt = plan.cmdVCnt[i]
         if (cnt < 3) return
-        val v0 = plan.cmdV0[i]
-        val vs = plan.verts
-        polyPath.reset()
-        var k = 0
-        while (k < cnt) {
-            mapIntoPath(polyPath, vs[v0 + k * 2], vs[v0 + k * 2 + 1], ax0, ay0, dx, dy, len2)
-            k++
-        }
-        polyPath.close()
-        paintFor(fillPaint, i).shader = s
-        fillPaint.alpha = gradAm
-        c.save()
-        c.concat(axisMatrixOf(ax0, ay0, dx, dy))
-        c.drawPath(polyPath, fillPaint)
-        c.restore()
+        buildScreenPath(cnt, plan.cmdV0[i])
+        val pt = paintFor(fillPaint, i)
+        pt.shader = LinearGradient(ax0, ay0, ax1, ay1, bc, bp, Shader.TileMode.CLAMP)
+        pt.alpha = gradAm
+        c.drawPath(polyPath, pt)
     }
 
     /** 纯色闭合多边形（顶罩、腺囊）。 */
@@ -2427,6 +2560,18 @@ class TripodFogRenderer : RendererFx() {
      * 取指令 [i] 的着色器（命中缓存则复用**同一个实例**），并把本次要用的 paint α 写进 [gradAm]。
      * 返回 `null` = 本条指令**不落笔**（纯色指令 / 全透明 / 色标不足）。
      *
+     * ⚠️ 只对**凸路径**（`LIN_RECT` / `RAD_ELLIPSE`）安全：着色器建在单位空间，靠 `Canvas` 变换
+     *    摆位。多顶点的凹/自交路径不能这么画，见 [drawLinPoly]。
+     */
+    private fun gradOf(i: Int): Shader? {
+        val ci = gradSlot(i)
+        return if (ci < 0) null else shaders[ci]
+    }
+
+    /**
+     * 派生指令 [i] 的色标并刷新缓存，返回槽下标；`< 0` = 本条指令**不落笔**。
+     * 副产物：[gradAm]（paint α）与 [stopCol]/[stopPos]（精确长度副本）。
+     *
      * ⭐ 指纹用**派生后的色标**（RGB + 归一化到 `amax` 的 α + 停点），⛔ 用原始 `cmdCol`：
      * α 是逐帧连续漂移的量，而发射器已经把 RGB 与雾系数**量化进桶**（`fogBucket`/`skyBucket`）——
      * 拿原始 α 当键等于每帧必失，那 454 个槽就是摆设；归一化后"同一支笔不同亮度"共用一个实例，
@@ -2436,11 +2581,11 @@ class TripodFogRenderer : RendererFx() {
      * ⚠️ 缓存**未命中**时才分配（每桶从"没变过"到"变了"才建一次）：内部 `IntArray`/`FloatArray`
      * 各一个小数组 + 一个 native 着色器对象 —— 与 E44 `softShader` 同口径。
      */
-    private fun gradOf(i: Int): Shader? {
+    private fun gradSlot(i: Int): Int {
         val kind = plan.cmdGrad[i]
-        if (kind < 0) return null
+        if (kind < 0) return -1
         val n = plan.cmdNstop[i]
-        if (n < 2) return null
+        if (n < 2) return -1
         val cb = i * 6
         val cols = plan.cmdCol
         var amax = 0
@@ -2450,7 +2595,7 @@ class TripodFogRenderer : RendererFx() {
             if (a > amax) amax = a
             k++
         }
-        if (amax == 0) return null                 // 全透明 ⇒ 画了也不落一个像素
+        if (amax == 0) return -1                 // 全透明 ⇒ 画了也不落一个像素
         k = 0
         while (k < n) {
             val col = cols[cb + k]
@@ -2487,11 +2632,13 @@ class TripodFogRenderer : RendererFx() {
                 LinearGradient(0f, 0f, 1f, 0f, bc, bp, Shader.TileMode.CLAMP)
             }
             shaders[ci] = s
+            stopCol[ci] = bc
+            stopPos[ci] = bp
             cacheN[ci] = n
             System.arraycopy(scrCol, 0, cacheCol, off, n)
             System.arraycopy(scrPos, 0, cachePos, off, n)
         }
-        return s
+        return ci
     }
 
     companion object {
@@ -2508,5 +2655,16 @@ class TripodFogRenderer : RendererFx() {
             FxLevel.LITE -> TripodLevel.MEDIUM
             FxLevel.FULL -> TripodLevel.HIGH
         }
+
+        /**
+         * 分帧烘焙的**每帧时间预算**（毫秒）。
+         *
+         * 取 24 ms 的依据：真机（创维 E46）跑起来的帧时实测 42~53 ms（§10 的 fps 采样，
+         * HIGH 档 19~24 fps）⇒ 预算压在**半帧**，让烘焙叠加之后仍然不会把帧时推到 100 ms 的
+         * `FrameClock` 钳位（钳位 = 掉相位，观感是巨影"跳步"）。
+         * ⚠️ 与 E43 的 `SAND_BAKE_BUDGET_MS = 34` 不同档：沙纹理是**一块整色**在顶上，
+         * 而这里的占位是**完全透明**，画面本来就逐帧在长东西，稳一点没代价。
+         */
+        const val BAKE_BUDGET_MS = 24L
     }
 }
