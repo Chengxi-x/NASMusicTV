@@ -286,7 +286,7 @@ enum class VisualizerTheme(
     MOONLIT(R.string.visualizer_theme_moonlit, "明月", Tier.ADV, "44", needsParticleBudget = false),
 
     /**
-     * 迷雾之战 · 雾中三脚巨影（第 46 个效果，方案 `docs/e46-tripod-fog-plan.md`）
+     * 迷雾之战 · 雾中三脚巨影（第 46 个效果，方案 `docs/archive/e46-tripod-fog-plan.md`）
      *
      * 视觉：低机位贴地视角，浓雾里一台**三脚巨影**从远处走来 —— 三条弓形渐变腿按**距离**驱动步态
      * （⛔ 按时间 ⇒ 滑步），机身是甲壳 + 顶罩 + 前下腺囊的一体轮廓（R28：腺囊是甲壳自身的一道鼓包，

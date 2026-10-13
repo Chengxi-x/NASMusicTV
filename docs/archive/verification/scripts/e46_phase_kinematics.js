@@ -5,7 +5,7 @@
 // 用法：node docs/archive/verification/scripts/e46_phase_kinematics.js
 // ⚠️ camSpeed 的符号约定见方案 §3.3：C'<0 = 后退。
 // E46「迷雾之战」原型的**可重跑验证脚本**：在 Node 的 vm 沙箱里桩掉 DOM/canvas，
-// 载入 `docs/e46-tripod-fog-preview.html` 的**原文脚本**，跑 T1–T19 自检 + 三档图元/铺屏计量。
+// 载入 `docs/archive/e46-tripod-fog-preview.html` 的**原文脚本**，跑 T1–T19 自检 + 三档图元/铺屏计量。
 //
 // ⛔ **方案文档 §十 的 ops/fill 数字只能由本脚本再生**，不许手抄（E44 偏差 D24 的成因）。
 //    改完原型（尤其任何 `op(...)` 调用、档位分支、图层数量）必须重跑本脚本并把新数一并提交。
@@ -17,7 +17,7 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(process.cwd());
-const htmlPath = path.join(root, 'docs', 'e46-tripod-fog-preview.html');
+const htmlPath = path.join(root, 'docs', 'archive', 'e46-tripod-fog-preview.html');
 const html = fs.readFileSync(htmlPath, 'utf8');
 
 const sm = html.indexOf('<script>');

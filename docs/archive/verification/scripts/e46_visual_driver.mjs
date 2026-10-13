@@ -1,4 +1,4 @@
-// E46「迷雾之战」原型的**真截图驱动**：headless Edge + CDP 打开 docs/e46-tripod-fog-preview.html，
+// E46「迷雾之战」原型的**真截图驱动**：headless Edge + CDP 打开 docs/archive/e46-tripod-fog-preview.html，
 // 用 __E46.seek(t) / __E46.capture(w,h) 出**定稿帧**给所有者判读观感。
 //
 // ⚠️ 数值对账（自检 + 图元/铺屏计量）不走这里，走 e46_fog_harness.js（纯 vm 沙箱，无图形设备）。
@@ -18,7 +18,7 @@ const HERE = dirname(process.argv[1]);
 const ROOT = resolve(HERE, '..', '..', '..', '..');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9336;                                   // ⛔ 别和 seaside(9333)/moonlit(9334) 撞
-const PAGE = resolve(ROOT, 'docs', 'e46-tripod-fog-preview.html');
+const PAGE = resolve(ROOT, 'docs', 'archive', 'e46-tripod-fog-preview.html');
 const URL_STR = 'file:///' + PAGE.replace(/\\/g, '/');
 // ⚠️ 必须带 ?v= 并显式关缓存：复用常驻浏览器时同一 URL 会命中文档缓存，
 //    改完原型重跑却截到**上一版**的图（实测发生过：两轮 PNG 字节数完全相同）。

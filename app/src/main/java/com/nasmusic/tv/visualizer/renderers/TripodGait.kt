@@ -12,7 +12,7 @@ import kotlin.math.sin
 
 /**
  * E46「迷雾之战 · 雾中三脚巨影」—— **K4 步态 / 场景装配层**
- * （`docs/e46-tripod-fog-plan.md` §十五 K4；原型 `docs/e46-tripod-fog-preview.html`）。
+ * （`docs/archive/e46-tripod-fog-plan.md` §十五 K4；原型 `docs/archive/e46-tripod-fog-preview.html`）。
  *
  * ## 本文件放什么（§十五 K4 的逐项落点 + 原型模块函数的其余部分）
  * - [buildCum]：**整数步 + 3 的倍数**的步态积分（N=3600 梯形表 → `CUM_T`/`Gscale`/`GTOT`），

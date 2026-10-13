@@ -8,7 +8,7 @@ import org.junit.Test
  * E46 K3/K4/K5 **对账黄金测试** —— 从冻结的浏览器原型取权威期望值，逐字段核对 Kotlin 移植。
  *
  * ⭐ 生成方式（⛔ 手改本文件）：`python docs/archive/verification/scripts/e46_golden_gen.py`
- *   1. 在 Node vm 里桩掉 DOM/canvas，载入 `docs/e46-tripod-fog-preview.html` 的**原文脚本**
+ *   1. 在 Node vm 里桩掉 DOM/canvas，载入 `docs/archive/e46-tripod-fog-preview.html` 的**原文脚本**
  *      （`boot()` 因此完整跑过：layout → buildCum → setGrabKnots → syncRouteEpoch(true) → genBuildings → bakeAll）；
  *   2. 把 48 栋位图的 `_skirt` 归零（位图归 K5，几何与数学归 K3/K4 ⇒ 两边都读 0）；
  *   3. 探针驱动在**原型作用域内**求值，输出 `logs_temp/e46_golden.json`；

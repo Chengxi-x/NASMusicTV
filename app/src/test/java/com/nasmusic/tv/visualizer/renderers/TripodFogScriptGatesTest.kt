@@ -13,13 +13,13 @@ import kotlin.math.min
 
 /**
  * E46「迷雾之战 · 雾中三脚巨影」原型自检闸门 **T26 / T27 / T28** 的 Kotlin JVM 移植
- * （K1–K8 计划的 K8，见 `docs/e46-tripod-fog-plan.md` §十五）。
+ * （K1–K8 计划的 K8，见 `docs/archive/e46-tripod-fog-plan.md` §十五）。
  *
  * §十四 1 的口径：**纯函数闸门** —— 判解析记录 / 参数表 / 剧本表，⛔ Robolectric、⛔ 任何像素回读
  * （harness 的 `fill/stroke/drawImage` 是空实现，像素恒全 0 ⇒ 任何回读像素的判据永远绿）。
  *
- * 数字全部逐条移植自原型 `docs/e46-tripod-fog-preview.html` 的对应 IIFE 与
- * `docs/e46-tripod-fog-plan.md` §十二 的实测表，⛔ 手抄进生产码；每条断言消息带上量到的数值。
+ * 数字全部逐条移植自原型 `docs/archive/e46-tripod-fog-preview.html` 的对应 IIFE 与
+ * `docs/archive/e46-tripod-fog-plan.md` §十二 的实测表，⛔ 手抄进生产码；每条断言消息带上量到的数值。
  *
  * 覆盖：
  *  - **T26** 滑杆初值闸门（原型 `checkSliders()`，html:4497–4512 + 5115–5130）。

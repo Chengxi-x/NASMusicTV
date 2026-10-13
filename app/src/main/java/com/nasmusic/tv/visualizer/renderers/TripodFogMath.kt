@@ -13,7 +13,7 @@ import kotlin.math.sqrt
 
 /**
  * E46「迷雾之战 · 雾中三脚巨影」—— **K3 数学 / 世界状态层**
- * （`docs/e46-tripod-fog-plan.md` §十五 K3；原型 `docs/e46-tripod-fog-preview.html`）。
+ * （`docs/archive/e46-tripod-fog-plan.md` §十五 K3；原型 `docs/archive/e46-tripod-fog-preview.html`）。
  *
  * ## 本文件放什么（§十五 K3 的逐项落点）
  * 投影 / yaw 正反变换 / Fritsch–Carlson 单调三次（`hermite/hEval/hDeriv`）/ `pw` /

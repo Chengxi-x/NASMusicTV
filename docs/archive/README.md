@@ -225,6 +225,8 @@
 > 那句**已作废**：该方案已于 2026-10-08 经所有者裁决整篇归档，遗留四项见**第五轮**。
 > ⚠️ **2026-10-10 第六轮之后**：`docs/` 根 = **3 篇 Markdown / 0 份原型 html**（`moonlit-visualizer-plan.md`
 > 与 `moonlit-preview.html` 移入本目录），下表**未变** —— `moonlit-*` 两份从来不是活文档。
+> ⚠️ **同日第七轮**：`deskworlds-port-feasibility.md`（候选 E45，**所有者裁决放弃**）移入本目录，
+> 根目录一度因它落到 4 篇，**现已回到 3 篇**，下表依旧**未变**。
 > `docs/slow-roads-verify/` 是验证素材目录，不计入文档数。
 > `docs/snapshot/`（16 张截图）不是文档，不计入。
 > `docs/*.miora` / `docs/*_assets/`（gitignored 的 WorkBuddy 设计画布素材）已于
@@ -344,7 +346,44 @@
 > gitignored 一次性脚本，**未改**。
 
 > 上表只计「三轮归档」。另有 **2 份审查报告**自 `logs_temp/` 迁入 `docs/archive/`
-> （见上文「附：验证证据迁移」），故 `docs/archive/` 现共 **62 篇文档 + 本索引**（含第六轮 2 份）。
+> （见上文「附：验证证据迁移」）。⚠️ **原此处写「现共 62 篇文档」，实测对不上**（本轮移入前顶层 md 只有 61 篇）——
+> 计数口径本就含糊（是否含 html / 是否含本索引），今后**以实测为准**：
+> 第七轮之后 `docs/archive/` 顶层 = **62 篇 `.md` + 7 份 `.html`**（`ls docs/archive/*.md | grep -v README` → 62；含本索引另计）。
+
+---
+
+## 第七轮（2026-10-10，1 个）—— 所有者裁决：放弃
+
+| 文档 | 判定依据 |
+|---|---|
+| `deskworlds-port-feasibility.md` | ❌ **本篇不是「已落地」，也不是「已排期未开工」，而是所有者直接放弃**（原话「放弃此项工作，文档归档」，未附条件）。候选编号 **E45** 从未立项；可行性结论写在文内（⛔ 基线创维电视被三道独立闸门堵死：three r180 硬只取 `webgl2` / 引擎地板 Chrome 93 / **宿主合成墙**——第三道与 WebGL 无关且 2026-10-07 已裁决不修；✅ 现代 WebView 设备可行，代价 +0.41 MB / 18 个文件）。移动方式 = **普通 `mv`**：该文档与配套脚本**全程 untracked**，`git mv` 无历史可保留，首次提交即以归档路径入库（与第四轮同例）；**正文 §0–§11 一字未删**，只改状态头 + 加 v1.3 版本行 |
+
+**归档时仍未关闭的决策项（⛔ 归档 ≠ 已解决，D1–D6 逐条留痕；恢复推进必须先答这六条）**：
+
+1. ⛔ **D1 目标设备集合**：是否接受「只在手机/新盒子上显示、基线电视按 `Tier.ULTRA` 门控直接不出现」？
+   **放弃本身就是对它的否定回答**——若日后恢复，这条仍是第一道门。
+2. ⛔ **D2 three 双份**：E41 用 r160 ES5 兜底版、移植需 r180 ES 模块版，是并存（+0.41 MB）还是把 E41 一起升 r180
+   （要重做 E41 全部真机验证）？⛔ 不可「合并成一份省体积」。
+3. ⛔ **D3 观感期望**：是否接受「六个世界是**活的场景**而非传统频谱条」这一定位（影响验收口径：静音时必须不能看得出在跟音乐）。
+4. ⛔ **D4 M0 探针由谁跑**：需要一台 WebView ≥ Chrome 93 的 Android 设备 + **前台可见**的浏览器面板
+   —— 本机面板 `visibilityState=hidden`，而 deskworlds 全 6 场景监听 `document.hidden` 自挂起 ⇒ **无设备则 GPU 侧数据长期悬空**。
+5. ⛔ **D5 许可署名落地**：MIT 要求随分发保留版权与许可声明（`LICENSE` 1,067 B + `vendor/THREE-LICENSE.txt` 1,081 B），
+   放 `assets/` 还是仅记入 `LICENSES.md`？
+6. ⛔ **D6 频谱呈现取向**：沿用既有做法把频谱**映射成场景行为**（本项目 22 套从无满高频谱条），
+   还是**新造字面频谱条**叠在世界前面？⚠️ 后者属新显示件，本项目从未有过，需另行论证。
+
+**本篇独有的两条「不要重蹈」**（恢复时先读这两条，能省掉一整轮返工）：
+
+- ⛔ **调研子代理曾虚构三个不存在的“现成件”**（`SpectrumScales.kt` / `PeakFollower.kt` / `AdvancedRenderers.kt:211` 的「左右镜像双条」），
+  初稿凭转述写入后被逐处开文件直读推翻 ⇒ 任何引用进本文前必须**重开文件核对**（已记入版本历史 v1.1）。
+  真件是 `visualizer/VisualizerMath.kt`（`barHeight:40`、`polar:56`）与 `PeakHoldTracker.kt`。
+- ⛔ **§7.2 的 GPU 侧成本至今是「未测」**，不许从 §7.1 那两个毫秒数（plasma 0.691 / fire 0.402 ms，桌面 x64 行为层）外推帧率
+  —— 那正是偏差 D31/D34「探针典型值当最坏帧用」的同款错误。
+
+> 引用改写 **0 处**：`grep -rn deskworlds` 全仓仅命中本文与 `docs/archive/verification/scripts/deskworlds_sim_cost.mjs` 自身，
+> **没有任何外部文档 / 源码 / `AGENTS.md` / CHANGELOG 引用它**（脚本在 `docs/archive/` 下、路径未变，文内引用照旧有效）。
+> ⚠️ 未进 `CHANGELOG.md`：本篇是**纯文档、未写一行实现代码**，按本仓规矩（文档改动不入 CHANGELOG）不登记。
+> `docs/` 根因此回到 **3 篇 Markdown**（两张活文档 + `visualizer-effects-list.md` 现役名册）。
 
 ## 第八轮（2026-10-12，1 个）—— 已落地并通过 owner 真机验收
 
@@ -368,6 +407,27 @@
 >
 > 引用改写 **3 个文件 / 5 处**：`docs/technical-overview.md` §10.225（3 处：唯一方案依据、出包段尾巴、遗留③ 结案）、本文 §附录 C 的自引用 1 处、`docs/archive/verification/scripts/netease_artist_probe.py` 头注 1 处。⛔ 死链自检 `grep -rIn "docs/network-artist-full-discography-plan" --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=build --exclude-dir=output --exclude-dir=logs_temp .` → 只应剩**本行这一条自指**（命令串本身），其余文件 **0 命中**。源码里的 `艺人全量方案 §x.y` 是**角色引用**而非路径，随文档同迁、无需改写。
 > ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 验收结案**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.7]` 段内。
+
+## 第九轮（2026-10-14，2 个）—— 已落地并打 tag `v2.38.9`，两处真机返工已验收
+
+| 文档 | 判定依据 |
+|---|---|
+| `e46-tripod-fog-plan.md` | ✅ **已落地**：§十五 K1–K8 已按本文全量移植为 Kotlin（5 个主文件 6748 行 / 8 个测试类 49 例 + 81 探针 5963 字段逐位对账），首版随 **v2.38.8** 出包；两处真机返工（K9 ① 巨影填色回屏幕空间、② 进入首帧改预算制分帧烘焙）由 owner 真机判「好，就这样吧，测试效果能接受」（2026-10-14），随 **v2.38.9 / `versionCode 178`** 推送并打附注 tag（指向 `7689c3e`，与 TV 上验收通过的那份 APK 代码同源）。移动方式 = **`git mv`**，正文 §一～§十六 + 附录 A/B **一字未删**，只在顶部加归档状态头 |
+| `e46-tripod-fog-preview.html` | 同一功能的 **K0 浏览器原型**（纯 Canvas 2D，自带 31 条自检 T1–T31 全含真负样本）。⚠️ **它不是"历史草案"：它是 `docs/archive/verification/scripts/e46_golden_gen.py` 的再生源** —— `TripodFogGoldenTest` 的 81 探针 / 5963 字段期望值由本文件在 `vm` 沙箱里跑出。改过被对账的数学 ⇒ 重跑该脚本并提交再生结果；⛔ 手抄一个数进测试 = 偏差 E44 D24 的重演。移动方式 = **`git mv`** |
+
+**归档时仍未闭合的事项**（⛔ 逐条留痕，归档 ≠ 已解决；恢复推进先答这三条）：
+
+1. ⏳ **§十四 4 的 ①–⑬ 共 13 条真机验收项未执行**（已判的只有 ⑭「进入首帧必出画面」与 K9 ①②）⇒ E46 整体仍按**「已实现、未验收」**记账。风险最高的三条：**R8 铺屏**（最坏帧 5.412/5.414 屏 vs E44 已验收的 4.306，第一刀砍甩镜段建筑运动模糊，⛔ 不动雾密度与人群）、**⑥ LOW 档实测 fps**（用 `docs/archive/verification/scripts/moonlit_fps_sample.py --tier LOW\|MED\|HIGH` 读屏上角标；API 22 上 `gfxinfo framestats` / `SurfaceFlinger --latency` 均无效）、**⑩ 三套剧本轮换**需盯满 6 圈 ≈ 9 min。
+2. ⛔ **§十六 R32「行进路线能否全随机」= 只评估、不排期**，且两条前置未闭合：T12 只验过 seed 1..200；`applyRoute` 80 次抽签全失败时**没有兜底**（保留第 80 个非法解 ⇒ 视觉断裂而非崩溃）。⛔ 不推翻 R29 的「运行时随机生成骨架」裁决。
+3. ⚠️ **`[v2.38.8]` 与 `[v2.38.9]` 两段 CHANGELOG 均已随 tag 冻结** ⇒ 上述验收项暴露的任何缺陷只能开 `[v2.38.10]` 修，⛔ 不回写已冻结段（见 [[feedback-changelog-scope-and-frozen-release]] 的仓内同条纪律）。
+
+> ⚠️ **归档 ≠ 权威转移**：本篇仍是 E46 的**唯一方案依据**（所有者 2026-10-11 口径），`app/src/**` 里 16 处 `docs/archive/e46-tripod-fog-*` 的 KDoc 引用、§10.228/§10.230/§10.231 与 5 份验证脚本都指向它。⛔ 不要因为"已归档"就当历史草案处置。
+>
+> 引用改写 **18 个文件 / 33 处 `docs/` 前缀文本 + 4 处脚本路径常量**：10 个 Kotlin（`AppSettings` + 5 个 renderer 主文件 + 4 个测试类）、`docs/technical-overview.md`、两份被移动文档自身的互引，以及脚本常量 `e46_golden_gen.py:32` / `e46_fog_harness.js:14` / `e46_phase_kinematics.js:20` / `e46_visual_driver.mjs:21`（这三份 js 里的 `filename: 'e46-tripod-fog-preview.html:script'` 是 **vm 栈标签**、非路径，按原样保留）。
+> ⛔ 死链自检：`git ls-files -z | xargs -0 grep -In "docs/e46-tripod-fog"` → **只应剩本行这一条自指**（命令串本身），其余文件 **0 命中**（2026-10-14 实测；`logs_temp/` 与 `.workbuddy/` 是 gitignored 的一次性草稿，按规矩不追改，故按 `git ls-files` 扫而不是全树 grep——全树还会撞进 `output/` 里的浏览器 profile）。
+> ✅ 再生脚本已在新路径**实跑通过**：`python docs/archive/verification/scripts/e46_golden_gen.py` 重写 `TripodFogGoldenTest.kt` 后 `git diff` 为空 ⇒ 路径迁移未改变任何对账数字。
+> ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记。
+> `docs/` 根在本轮之后**入库的 Markdown = 3 篇**（`git ls-files docs | grep -E '^docs/[^/]+\.md$'` 实测：`technical-overview.md` 活文档、`conventions-adaptive-ui.md`、`visualizer-effects-list.md` 现役名册；**入库的原型 html = 0 份**）；另有另一在办会话新增、**尚未入库**的 `blackhole-*` / `e45-orbital-*` / `e47-snow-cedar-preview.html`，计数以实测为准，不在此定论。
 
 ## 回滚
 

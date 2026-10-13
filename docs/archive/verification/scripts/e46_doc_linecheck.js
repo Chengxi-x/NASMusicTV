@@ -6,8 +6,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ARGS = process.argv.slice(2).filter((s) => !s.startsWith('--'));
-const DOC = resolve(ARGS[0] || 'docs/e46-tripod-fog-plan.md');
-const HTML = resolve(ARGS[1] || 'docs/e46-tripod-fog-preview.html');
+const DOC = resolve(ARGS[0] || 'docs/archive/e46-tripod-fog-plan.md');
+const HTML = resolve(ARGS[1] || 'docs/archive/e46-tripod-fog-preview.html');
 
 /* ── 1. 建符号 → 声明行 的索引 ─────────────────────────────────────── */
 const lines = readFileSync(HTML, 'utf8').split(/\r?\n/);

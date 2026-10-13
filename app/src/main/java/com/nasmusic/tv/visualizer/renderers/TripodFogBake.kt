@@ -13,8 +13,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * E46「迷雾之战 · 雾中三脚巨影」**烘焙层**（`docs/e46-tripod-fog-plan.md` §五，
- * 原型 `docs/e46-tripod-fog-preview.html` 的 `h2/vnoise/fbm/bakeFogStrip/bakeBuilding/
+ * E46「迷雾之战 · 雾中三脚巨影」**烘焙层**（`docs/archive/e46-tripod-fog-plan.md` §五，
+ * 原型 `docs/archive/e46-tripod-fog-preview.html` 的 `h2/vnoise/fbm/bakeFogStrip/bakeBuilding/
  * bakeGrade/bakePerson/bakeAll/genBuildings`）。
  *
  * ## 本文件产出什么

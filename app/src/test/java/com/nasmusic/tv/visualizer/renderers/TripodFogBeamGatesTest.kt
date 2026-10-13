@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
  * E46「迷雾之战 · 雾中三脚巨影」K8 §十五 的**光柱 / 火星 / 落点**闸门：
  * §十二 的 **T17（火星接缝·形态·锚点）、T18（掠过—揭示—绕后剧本）、T23（落点只剩贴地亮斑）、
  * T29（光柱前端无光 / 亮斑逐帧成对 / 火星密度随 emberN）、T30（发射口无亮帽）**，
- * 逐条移植自原型 `docs/e46-tripod-fog-preview.html` 的 `selfTest()`
+ * 逐条移植自原型 `docs/archive/e46-tripod-fog-preview.html` 的 `selfTest()`
  * （T17 :3279、T18 :3412、T23 :4040、T29 :4965、T30 :4115）。
  *
  * ## 三条共同的纪律

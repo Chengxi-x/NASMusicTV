@@ -6,7 +6,7 @@ import kotlin.math.ceil
  * E46「迷雾之战 · 雾中三脚巨影」画质档 —— ⛔ **刻意不是** `androidx.tv.material3` 的 `FxLevel`、
  * 也不是 `Color`。
  *
- * 为什么自建（照 `MoonOpBudget` / `SeasideOpBudget` 先例，`docs/e46-tripod-fog-plan.md` §10.2 G4
+ * 为什么自建（照 `MoonOpBudget` / `SeasideOpBudget` 先例，`docs/archive/e46-tripod-fog-plan.md` §10.2 G4
  * 的同一条硬前提）：[TripodOpBudget] 的三道门（G4 的 ops / 填充 / native 三张表）必须在
  * **纯 JVM 单测**里直接调，而带 Compose / material3 类型的签名在 JVM 单测里会 `not mocked`
  * （`FxLevel` 是 value class、`Color` 走 inline class 包装）。

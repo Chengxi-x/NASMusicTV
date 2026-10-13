@@ -14644,7 +14644,7 @@ owner 两次裁决：① 「这几个字，改成一个小标签来体现无版�
 
 **背景**：新枚举 `TRIPOD_FOG(R.string.visualizer_theme_tripod_fog, "迷雾之战", Tier.ADV, "46", needsParticleBudget = false)` ⇒ **三档全开**（`"46"` 是空闲编号；E45 从未立项、留空不占位）。ADV + `needsParticleBudget = false` 是**可核对的事实**而非偷懒：本效果**一个粒子都不画**（火星短划 / 人群 / 建筑 / 雾条全是常量表 + 定容缓冲），且⛔ 不读 `ctx.quality.maxParticles`（全文件 `maxParticles` 命中 **0**，`ParticleBudgetGateTest` 的源码扫描与标注因此一致）⇒ `supports()` 的 `ADV -> !needsParticleBudget || maxParticles > 0` 恒真。挂 ULTRA 反而错（本效果**不用帧缓冲**）。效果数量 22 → **23**：`FxCoverageScanTest`（渲染器类数）、`VisualizerThemeTest`、`StarrySkyTest` ⑥、`AGENTS.md`、`docs/visualizer-effects-list.md` 五处同步。
 
-唯一依据是 `docs/e46-tripod-fog-plan.md`（原型 `docs/e46-tripod-fog-preview.html` 经**八轮**判读定稿：T1–T31 全绿 + V0/V1/V2 各十帧）。⛔ 方案文档已把几何、烘焙值、三套剧本时间轴逐条定稿，本节不重复实现细节，只沉淀**移植期**才浮现、有迁移价值的六件。
+唯一依据是 `docs/archive/e46-tripod-fog-plan.md`（原型 `docs/archive/e46-tripod-fog-preview.html` 经**八轮**判读定稿：T1–T31 全绿 + V0/V1/V2 各十帧）。⛔ 方案文档已把几何、烘焙值、三套剧本时间轴逐条定稿，本节不重复实现细节，只沉淀**移植期**才浮现、有迁移价值的六件。
 
 #### 一、架构：五个文件，连「烘焙」都不碰 Android
 

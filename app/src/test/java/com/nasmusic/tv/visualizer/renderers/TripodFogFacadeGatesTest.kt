@@ -16,7 +16,7 @@ import kotlin.math.sqrt
 /**
  * E46「迷雾之战 · 雾中三脚巨影」K8 §十五 的**门面 / 头身 / 抓取**闸门：
  * §十二 的 **T14（前景不压主体）、T15（破口不贯穿）、T16（头身耦合）、T19（触手抓人）、T20（贴地雾带不压立面）**，
- * 逐条移植自原型 `docs/e46-tripod-fog-preview.html` 的 `selfTest()`（T14 :3078、T15 :3131、
+ * 逐条移植自原型 `docs/archive/e46-tripod-fog-preview.html` 的 `selfTest()`（T14 :3078、T15 :3131、
  * T16 :3180、T19 :3535、T20 :3659）。
  *
  * ## 三条共同的纪律
