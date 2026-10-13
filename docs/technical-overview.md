@@ -14718,6 +14718,11 @@ JVM 侧不能回读像素 ⇒ 闸门只能走**解析判据 + 烘焙记账**。�
 
 **验证（全量 + lint）**：`testDebugUnitTest lintDebug --no-daemon "-Pkotlin.compiler.execution.strategy=in-process"` ⇒ **`BUILD SUCCESSFUL`**；全量 **194 类 / 2093 例，0 失败 / 0 错误**（对 §10.227 基线 186 类 / 2044 例 = **+8 类 / +49 例**，与"新增 8 个 E46 测试类 + 49 条闸门/对账/计量用例"逐一对上；`TripodGateFixtures.kt` 是夹具不是类）。⛔ `clipPath(` / `clip(RoundRect` / `RoundedShape` 在渲染器里命中 **0**（API-22 创维 hwui `Region::createTJunctionFreeRegion` 段错误），⛔ 不读渲染上下文的 `nowMs`（`RendererBaseContractTest` ⑦），`lintDebug` 无新增 error（CI blocking）。
 
+**出包（2026-10-13）**：`assembleRelease --no-daemon "-Pkotlin.compiler.execution.strategy=in-process"` ⇒ **`BUILD SUCCESSFUL in 5m 16s`**（日志 `logs_temp/e46_release_build.log`，⚠️ 该目录收工前清空）。产物 `app/build/outputs/apk/release/NASMusicTV-release-v2-38-8.apk` **25,609,175 字节**（对 §10.227 那只 25,543,529 B = **+65,646 B**，与"五个纯 Kotlin 文件 6748 行 + 位图烘焙经 R8 收缩"的量级相符）。
+- `aapt2 dump badging`：`versionCode='177' versionName='2.38.8'`（⛔ **未升版本号**，owner 指令第 4 条）、`minSdkVersion 22` / `targetSdkVersion 34`、`native-code: arm64-v8a / armeabi-v7a / x86_64`。
+- `apksigner verify`：`V2 Signer` 存在，`CN=NASMusicTV`，证书 SHA-256 `24ed591af66cb9256597139d5a7a1a918dcd33e88244678113835b1d6cb46dfe` ⇒ **与 v2.38.6 ~ v2.38.8 同钥，覆盖安装不需卸载**。
+- 资产与存活清点（按 §10.226 的教训先断言总条目数）：**726 条**（与 §10.227 同值 ⇒ 零新增 asset）、`assets/globe/` 恒 **9 文件**、`moon.jpg` 仍在、⛔ `node_modules` 命中 **0**；五个 E46 类名在 dex 里**逐个命中**（`TripodFogRenderer` / `TripodFogMath` / `TripodGait` / `TripodFogBake` / `TripodOpBudget`）⇒ R8 收缩没有把发射器折掉。
+
 **未做**：⛔ §十四 4 的 **13 条真机验收项**全部未执行（含 R8「MED/HIGH 铺屏是否掉帧」与降级顺序首刀候选「甩镜段建筑运动模糊」、LOW 档必须实测、三套戏要盯满 6 圈 ≈ 9 min 才能判轮换）⇒ 在真机验收通过前，本效果按**已实现、未验收**记账。⛔ 未推送、未打 tag、未发 GitHub Release（owner 链未指示）；⛔ 未改版本号。
 
 **版本**：未发布（v2.38.8 之后追加，⛔ 不升版本号 —— owner 指令第 4 条）；`CHANGELOG.md` 记在 `[Unreleased]` 段。
