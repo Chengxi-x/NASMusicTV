@@ -9,6 +9,7 @@ import com.nasmusic.tv.util.AppLog
 import com.nasmusic.tv.util.EncodingUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
@@ -124,6 +125,9 @@ class MetingApiService(
         // 诊断日志 TAG（logcat 过滤关键字：MetingDiag）
         private const val DIAG = "MetingDiag"
         private const val DEFAULT_SERVER = "netease"
+
+        /** 非-302 的 3xx（301/303/307/308）**跟跳上限**：超过即按失败处理，⛔ 不跟着死循环 */
+        private const val MAX_REDIRECT_HOPS = 2
         // 默认公共 Meting-API 端点
         const val DEFAULT_BASE_URL = "https://meting.api.redcha.cn/api"
 
@@ -295,7 +299,7 @@ class MetingApiService(
      * 2. 如果当前端点失败（异常或空结果），自动尝试其他预设端点
      * 3. 任一端点返回非空播放 URL 即返回
      *
-     * Meting-API 返回 302 重定向，需要获取 Location header
+     * 单次请求的响应形态（302 / 200 / 非-302 3xx 跟一跳）见 [fetchPlayUrl]。
      */
     /**
      * 解析播放链接（默认档位）。
@@ -309,6 +313,64 @@ class MetingApiService(
     override suspend fun resolvePlayUrl(song: Song, quality: Int): String? =
         resolvePlayUrlDetailed(song, quality).url
 
+    /** 单次端点请求的结果：候选直链（+ 它是否来自重定向），或**给人看的失败原因** */
+    private sealed class PlayUrlFetch {
+        data class Found(val url: String, val fromRedirect: Boolean) : PlayUrlFetch()
+
+        /** [reason] 只含状态码/异常类型这类短信息，⛔ 不放响应体（会被拼进 e 级日志） */
+        data class Miss(val reason: String) : PlayUrlFetch()
+    }
+
+    /**
+     * 请求一次 Meting 的 `type=url` 端点，取回候选播放直链。
+     *
+     * 三种响应形态（[noRedirectClient] 不自动跟随重定向）：
+     * - **302** → `Location` **即**可播直链，⛔ 不再跟一跳（Meting 约定的主形态；
+     *   [resolvePlayUrlDetailed] 的 probe 判据正是挂在这一跳的**结果**上，改了跟法就等于改了判据作用对象）
+     * - **200** → JSON 的 `url` 字段
+     * - **其余 3xx（301/303/307/308）且带 `Location`** → 按请求基址解析出绝对地址后**跟一跳**
+     *   （相对 `Location` 也支持），落点再按上面两种形态判定，最多 [MAX_REDIRECT_HOPS] 跳。
+     *   2026-10-13 电视端「无法播放」的根因之一：`api.qijieya.cn/meting` 先回 **301** 到自己的规范化地址，
+     *   旧实现只认 302/200，301 落到 `else -> null` 被当成空结果丢掉 —— 而那一跳之后拿到的是
+     *   **该电视（API 22，缺 Let's Encrypt 根）唯一能校验证书**的端点给出的可用直链。
+     */
+    private fun fetchPlayUrl(requestUrl: String): PlayUrlFetch {
+        var url = requestUrl
+        var hops = 0
+        while (true) {
+            var found: String? = null
+            var fromRedirect = false
+            var next: HttpUrl? = null
+            var code = 0
+            noRedirectClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                code = response.code
+                val location = response.header("Location")
+                when {
+                    code == 302 -> {
+                        found = location
+                        fromRedirect = !location.isNullOrBlank()
+                    }
+                    code == 200 -> found = response.body?.string()?.let { extractUrlFromJson(it) }
+                    code in 300..399 && !location.isNullOrBlank() ->
+                        // 相对 Location 按**实际请求的 URL**解析（端点链里已带 query）
+                        next = response.request.url.resolve(location)
+                    else -> Unit
+                }
+            }
+            // 复制进未被 lambda 捕获的局部 val：found 在 use{} 里被赋值，Kotlin 对被闭包捕获的
+            // var **不做智能转换**，直接用会编译不过
+            val hit = found
+            if (!hit.isNullOrBlank()) return PlayUrlFetch.Found(hit, fromRedirect)
+            val target = next
+                ?: return PlayUrlFetch.Miss(if (code == 200) "200 without url" else "http $code")
+            if (hops >= MAX_REDIRECT_HOPS) {
+                return PlayUrlFetch.Miss("http $code after $hops hops")
+            }
+            url = target.toString()
+            hops++
+        }
+    }
+
     /**
      * 解析播放链接（带降级信号）。
      *
@@ -320,8 +382,11 @@ class MetingApiService(
      * 档位降级链由 [QualityTiers.fallbackChainOf] 提供（AUTO → 不传 br；999 → 320 → 192 → 128）。
      * 返回的 [ResolveResult.actualQuality] 为**实际命中**的档位，不等于请求档位即表示发生降级。
      *
-     * Meting-API 返回 302 重定向，需要获取 Location header。
-     * 注入 `probe` 时，302→Location 取到的直链会跟一跳探测可播性（§3.8 第 1 步）：仅 DEAD 跳过该档位×端点组合，UNKNOWN 与 PLAYABLE 一律放行。
+     * 单次请求的响应形态（302 / 200 / 非-302 3xx 跟一跳）见 [fetchPlayUrl]。
+     * 注入 `probe` 时，来自重定向链的直链会跟一跳探测可播性（§3.8 第 1 步）：仅 DEAD 跳过该档位×端点组合，UNKNOWN 与 PLAYABLE 一律放行。
+     *
+     * ⚠️ 全链失败时逐「端点×档位」的失败原因并进**e 级**汇总日志：`AppLog.w` 在 release 里被
+     * `BuildConfig.DEBUG` 折掉，设备侧只剩这一行可看。
      */
     override suspend fun resolvePlayUrlDetailed(song: Song, quality: Int): ResolveResult =
         withContext(Dispatchers.IO) {
@@ -331,50 +396,47 @@ class MetingApiService(
             // 档位与降级链（999 → 320 → 192 → 128；AUTO 直接不传 br 走端点默认）
             val brChain = QualityTiers.fallbackChainOf(quality)
             var probedDead = false
+            val misses = mutableListOf<String>()
             for (endpoint in endpoints) {
                 for (br in brChain) {
                     try {
                         val brParam = if (br != null) "&br=$br" else ""
                         val url = "$endpoint?server=$server&type=url&id=${URLEncoder.encode(netId, "UTF-8")}$brParam"
-                        val request = Request.Builder().url(url).build()
-                        var playUrl: String? = null
-                        var fromRedirect = false
-                        noRedirectClient.newCall(request).execute().use { response ->
-                            val location = response.header("Location")
-                            when (response.code) {
-                                302 -> {
-                                    playUrl = location
-                                    fromRedirect = !location.isNullOrBlank()
+                        val fetched = fetchPlayUrl(url)
+                        when (fetched) {
+                            is PlayUrlFetch.Found -> {
+                                // br == null（AUTO 档）时 actualQuality 记为请求档位本身，不产生降级提示
+                                val actual = br ?: quality
+                                // §3.8 第 1 步（Q4）：判据**只加在跟链那一侧**（重定向 → 直链）。
+                                // 200-JSON 分支不产生重定向链，维持既有"非空即成功"（§6 验收 16 的回归口径，
+                                // 百度网盘 / jamendo 走的是接口默认实现，本方法根本不参与）。
+                                // ⛔ 只有 DEAD 才 continue；UNKNOWN 与 PLAYABLE 一律放行。
+                                if (fetched.fromRedirect && probe?.probe(fetched.url) == Playability.DEAD) {
+                                    probedDead = true
+                                    misses += "$endpoint br=$br → probe DEAD"
+                                    AppLog.w(TAG, "resolvePlayUrl: probe DEAD via '$endpoint' br=$br for netId=$netId")
+                                    continue   // 只跳内层 for(br)：该端点×该档失败，继续降级链
                                 }
-                                200 -> playUrl = response.body?.string()?.let { extractUrlFromJson(it) }
-                                else -> null
+                                AppLog.d(TAG, "resolvePlayUrl: resolved via '$endpoint' br=$br (actual=$actual) for netId=$netId")
+                                return@withContext ResolveResult(fetched.url, actual)
+                            }
+                            is PlayUrlFetch.Miss -> {
+                                misses += "$endpoint br=$br → ${fetched.reason}"
+                                AppLog.w(TAG, "resolvePlayUrl: empty from '$endpoint' br=$br for netId=$netId")
                             }
                         }
-                        // 必须复制进一个未被 lambda 捕获的局部 val：playUrl 在 use{} 里被赋值，
-                        // Kotlin 对被闭包捕获的 var **不做智能转换**，直接用会编译不过
-                        val resolved = playUrl
-                        if (!resolved.isNullOrBlank()) {
-                            // br == null（AUTO 档）时 actualQuality 记为请求档位本身，不产生降级提示
-                            val actual = br ?: quality
-                            // §3.8 第 1 步（Q4）：判据**只加在跟链那一侧**（302 → Location → 跟一跳）。
-                            // 200-JSON 分支不产生重定向链，维持既有"非空即成功"（§6 验收 16 的回归口径，
-                            // 百度网盘 / jamendo 走的是接口默认实现，本方法根本不参与）。
-                            // ⛔ 只有 DEAD 才 continue；UNKNOWN 与 PLAYABLE 一律放行。
-                            if (fromRedirect && probe?.probe(resolved) == Playability.DEAD) {
-                                probedDead = true
-                                AppLog.w(TAG, "resolvePlayUrl: probe DEAD via '$endpoint' br=$br for netId=$netId")
-                                continue   // 只跳内层 for(br)：该端点×该档失败，继续降级链
-                            }
-                            AppLog.d(TAG, "resolvePlayUrl: resolved via '$endpoint' br=$br (actual=$actual) for netId=$netId")
-                            return@withContext ResolveResult(resolved, actual)
-                        }
-                        AppLog.w(TAG, "resolvePlayUrl: empty from '$endpoint' br=$br for netId=$netId")
                     } catch (e: Exception) {
+                        // 异常类型名是**唯一**能在 release 里区分"TLS 不信任 / DNS / 连接被拒 / 超时"的信息
+                        misses += "$endpoint br=$br → ${e.javaClass.simpleName}: ${e.message?.take(80)}"
                         AppLog.w(TAG, "resolvePlayUrl: endpoint '$endpoint' br=$br failed: ${e.message}")
                     }
                 }
             }
-            AppLog.e(TAG, "resolvePlayUrl: all endpoints failed for netId=$netId (requested=$quality) probedDead=$probedDead")
+            AppLog.e(
+                TAG,
+                "resolvePlayUrl: all endpoints failed for netId=$netId (requested=$quality) " +
+                    "probedDead=$probedDead misses=${misses.joinToString("; ")}"
+            )
             ResolveResult.failure(quality, probedDead)
         }
 

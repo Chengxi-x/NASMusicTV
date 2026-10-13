@@ -1,6 +1,7 @@
 package com.nasmusic.tv.backend.network
 
 import com.nasmusic.tv.data.model.Song
+import android.util.Log
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -15,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 
 /**
  * Meting 直链解析测试（多码率方案 §10.1 / §3.2）。
@@ -24,6 +26,7 @@ import org.robolectric.annotation.Config
  * - 降级链按顺序回退并返回**实际命中档位**
  * - 302 取 `Location`、200 走 JSON `url` 两种响应形态
  * - AUTO 档不触发降级语义
+ * - **301/303/307/308 跟一跳**后再按 302/200 口径取直链（`use301` 一组，见下方章节）
  *
  * ⚠️ **本类不打真实公网**（2026-10-11 起）：`MetingApiService` 新增了带默认值的构造参数
  * `presetEndpoints`（默认 = `PRESET_ENDPOINTS`，线上逐字符等价），本类通过 [service] 把它注入成
@@ -42,6 +45,9 @@ class MetingResolveTest {
     private companion object {
         /** 兼作"fallback 端点"的路径前缀（与首选端点的 `/api` 区分，仍在同一台 MockWebServer 上） */
         const val FALLBACK_PATH = "/api-fallback"
+
+        /** [use301Br] 时端点 `Location` 指向的路径：301 落点，仍在这台 MockWebServer 上 */
+        const val HOP_PATH = "/api-hop"
     }
 
     /** fallback 端点基址（读 [server]，故必须在 [setup] 之后取） */
@@ -66,6 +72,41 @@ class MetingResolveTest {
     /** true 时所有请求返回 302 + Location（而非 200 + JSON） */
     private var use302 = false
 
+    /**
+     * 非 null 时：br **命中该集合**的端点请求返回 `301 + Location: [HOP_PATH]`，其余档位照常应答。
+     *
+     * 复刻 `api.qijieya.cn/meting` 的真实形态。2026-10-13 电视端「无法播放」的根因：实现只认
+     * 302/200，301 落到 `else -> null` 被当成空结果丢掉 —— 而跟完这一跳 301 后拿到的，
+     * 恰恰是**该电视唯一能校验证书**的端点给出的可用直链。
+     */
+    private var use301Br: Set<Int?>? = null
+
+    /** 301 落点（[HOP_PATH]）的应答形态 */
+    private enum class HopShape {
+        /** 302 + [hopTarget]：落点是正常的 Meting 端点 */
+        REDIRECT,
+
+        /** 200 + `{}`：落点里没有 url ⇒ 该档位必须判失败 */
+        EMPTY,
+
+        /** 再 301 回自己：验证跟跳有**跳数上限**、不会死循环 */
+        LOOP
+    }
+
+    private var hopShape = HopShape.REDIRECT
+
+    /** [HopShape.REDIRECT] 时的直链 */
+    private var hopTarget = "https://cdn/after-301.mp3"
+
+    /** true 时 301 的 `Location` 写成**相对路径**（`[HOP_PATH]`），而不是绝对 URL */
+    private var use301Relative = false
+
+    /** 非 null 时**首选端点**恒返回该状态码（fallback 端点不受影响）；用于验证失败原因进了日志 */
+    private var primaryStatusCode: Int? = null
+
+    /** 非法 URL 的端点：只会走异常路径，不出网（用于验证失败原因进了日志） */
+    private val invalidEndpoint = "not a valid url"
+
     @Before
     fun setup() {
         seenBr.clear()
@@ -73,16 +114,36 @@ class MetingResolveTest {
         urlByTier = emptyMap()
         fallbackUrlByTier = emptyMap()
         use302 = false
+        use301Br = null
+        use301Relative = false
+        primaryStatusCode = null
+        hopShape = HopShape.REDIRECT
+        hopTarget = "https://cdn/after-301.mp3"
         server = MockWebServer()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val url = request.path ?: ""
                 seenPaths += url
+                if (url.startsWith(HOP_PATH)) {
+                    // 301 落点：不计入 seenBr（跟跳产生的请求不是档位请求）
+                    return when (hopShape) {
+                        HopShape.REDIRECT -> MockResponse().setResponseCode(302).addHeader("Location", hopTarget)
+                        HopShape.EMPTY -> MockResponse().setResponseCode(200).setBody("{}")
+                        HopShape.LOOP -> MockResponse().setResponseCode(301)
+                            .addHeader("Location", server.url(HOP_PATH).toString())
+                    }
+                }
                 val br = Regex("[?&]br=(\\d+)").find(url)?.groupValues?.get(1)?.toIntOrNull()
                 seenBr += br
                 // 同一台 MockWebServer 兼作"首选端点"与"fallback 端点"，靠路径区分
                 val target = if (url.startsWith(FALLBACK_PATH)) fallbackUrlByTier[br] else urlByTier[br]
+                val hop301Br = use301Br
+                val hopLocation = if (use301Relative) HOP_PATH else server.url(HOP_PATH).toString()
                 return when {
+                    hop301Br != null && br in hop301Br ->
+                        MockResponse().setResponseCode(301).addHeader("Location", hopLocation)
+                    primaryStatusCode != null && !url.startsWith(FALLBACK_PATH) ->
+                        MockResponse().setResponseCode(primaryStatusCode!!)
                     target == null -> MockResponse().setResponseCode(200).setBody("{}")
                     use302 -> MockResponse().setResponseCode(302).addHeader("Location", target)
                     else -> MockResponse().setResponseCode(200)
@@ -209,6 +270,68 @@ class MetingResolveTest {
         assertEquals("https://cdn/200-target.mp3", r.url)
     }
 
+    // ── 非-302 的 3xx 跟跳（2026-10-13 电视端「无法播放」修复）──
+
+    @Test
+    fun `301 跟一跳后取到落点的 302 直链`() = runBlocking {
+        use301Br = setOf(320)
+        hopShape = HopShape.REDIRECT
+        hopTarget = "https://cdn/after-301.mp3"
+        val r = service().resolvePlayUrlDetailed(song(), 320)
+        assertEquals("跟随 301 后必须拿到落点 302 的直链，而不是把 301 当空结果丢掉", "https://cdn/after-301.mp3", r.url)
+        assertEquals("跟跳不改变档位判定，仍应记为请求档位 320", 320, r.actualQuality)
+    }
+
+    @Test
+    fun `301 的 Location 是相对路径时也能跟`() = runBlocking {
+        use301Br = setOf(320)
+        use301Relative = true
+        hopShape = HopShape.REDIRECT
+        hopTarget = "https://cdn/after-relative-301.mp3"
+        val r = service().resolvePlayUrlDetailed(song(), 320)
+        assertEquals("https://cdn/after-relative-301.mp3", r.url)
+        assertTrue("相对 Location 必须按请求基址解析后再请求", seenPaths.any { it.startsWith(HOP_PATH) })
+    }
+
+    /**
+     * 回归护栏：302 的口径**不许**因为本次改造而变成"再跟一跳"。
+     *
+     * 302 的 `Location` 本身就是可播直链，交给 ExoPlayer 由它自己跟；
+     * 若改成跟一跳，探测判据（§3.8 第 1 步）作用的对象就换了。
+     */
+    @Test
+    fun `302 的 Location 原样返回 不会被再跟一跳`() = runBlocking {
+        val target = server.url(HOP_PATH).toString()   // 一个"跟过去还会再 302"的地址
+        urlByTier = mapOf(320 to target)
+        use302 = true
+        val r = service().resolvePlayUrlDetailed(song(), 320)
+        assertEquals(target, r.url)
+        assertTrue("302 分支不应产生跟跳请求", seenPaths.none { it.startsWith(HOP_PATH) })
+    }
+
+    @Test
+    fun `301 跟跳后仍无直链时按失败处理并继续降级链`() = runBlocking {
+        // 999 走 301 → 落点里没有 url ⇒ 该档判失败；320 正常应答 ⇒ 命中 320
+        use301Br = setOf(999)
+        hopShape = HopShape.EMPTY
+        urlByTier = mapOf(320 to "https://cdn/320.mp3")
+        val r = service().resolvePlayUrlDetailed(song(), 999)
+        assertEquals("https://cdn/320.mp3", r.url)
+        assertEquals(320, r.actualQuality)
+        assertEquals("301 落点失败后必须继续往下降档", listOf(999, 320), seenBr.take(2))
+    }
+
+    @Test
+    fun `301 重定向链有跳数上限 不会死循环`() = runBlocking {
+        // 端点 301 → 落点又 301 回自己：必须在上限处停手并按失败处理
+        use301Br = setOf(128)
+        hopShape = HopShape.LOOP
+        val r = service(fallbackBase = null).resolvePlayUrlDetailed(song(), QualityTiers.STANDARD)
+        assertNull(r.url)
+        val hopRequests = seenPaths.count { it.startsWith(HOP_PATH) }
+        assertTrue("跟跳次数必须有界（实际 $hopRequests 次）", hopRequests in 1..4)
+    }
+
     // ── AUTO 档语义 ────────────────────────────────────────
 
     @Test
@@ -306,4 +429,43 @@ class MetingResolveTest {
         assertEquals("https://cdn/192.mp3", url)
         assertEquals("应按 provider 的 192 档请求", 192, seenBr.first())
     }
+
+    // ── 失败原因必须进 e 级日志（release 侧唯一可见的一级）──
+
+    /**
+     * 全端点失败时，聚合错误行要带上**逐端点×逐档**的失败原因。
+     *
+     * 为什么这是闸门而不是装饰：`AppLog.w` 被 `if (BuildConfig.DEBUG)` 守卫，release 包里
+     * R8 连字符串常量一起折掉 ⇒ 真机上"为什么解析不到"完全不可见（2026-10-13 那次
+     * 只能靠把电视的 cacerts 拉到 PC 上复刻，见 §10.229）。HTTP 状态码是那条线里
+     * 唯一能区分"端点挂了 / 端点回了没认的状态码 / 端点压根没应答"的信息。
+     */
+    @Test
+    fun `全端点失败时错误日志带上 HTTP 状态码`() = runBlocking {
+        ShadowLog.clear()
+        primaryStatusCode = 503
+        val r = service(fallbackBase = null).resolvePlayUrlDetailed(song(), QualityTiers.STANDARD)
+        assertNull(r.url)
+        val err = errorLog()
+        assertTrue("聚合错误行必须带状态码，实际=$err", err.contains("503"))
+        assertTrue(err.contains("all endpoints failed"))
+    }
+
+    @Test
+    fun `异常端点的失败原因也带上异常类型名与端点`() = runBlocking {
+        ShadowLog.clear()
+        // 首选端点回 200 但 JSON 里没有 url；fallback 端点是非法 URL ⇒ 请求构造期就抛异常（不出网）
+        val r = service(fallbackBase = invalidEndpoint).resolvePlayUrlDetailed(song(), QualityTiers.STANDARD)
+        assertNull(r.url)
+        val err = errorLog()
+        assertTrue("异常必须被记成原因而不是被吞掉，实际=$err", err.contains("Exception"))
+        assertTrue("原因必须标出是哪个端点，实际=$err", err.contains(invalidEndpoint))
+    }
+
+    /** 本类 TAG 下的所有 **ERROR** 级日志拼成一段文本 */
+    private fun errorLog(): String =
+        ShadowLog.getLogs()
+            ?.filter { it.tag == "MetingApiService" && it.type == Log.ERROR }
+            ?.joinToString(" | ") { it.msg ?: "" }
+            ?: ""
 }

@@ -14728,3 +14728,70 @@ JVM 侧不能回读像素 ⇒ 闸门只能走**解析判据 + 烘焙记账**。�
 ⚠️ **打 tag 的后果必须记牢**：`v2.38.8` 一旦打上，`CHANGELOG.md` 的 `[v2.38.8]` 段按仓库纪律**冻结**，而本效果的 13 条真机验收**尚未执行** ⇒ 若验收暴露缺陷（最可能是 R8 铺屏超限），后续修复只能开**新**版本段（v2.38.9），⛔ 不许回写 `[v2.38.8]`。
 
 **版本**：并入 **v2.38.8**（`versionCode` 仍 **177**、`versionName` 仍 **2.38.8**，⛔ 不升版本号 —— owner 口径 2026-10-13「这个效果合到当前的最新稳定版本中」）；`CHANGELOG.md` 的那一行已从 `[Unreleased]` 折进 `[v2.38.8]` 的 `Added` 段。✅ 折入**当时是合法的**、且**只在那一刻合法**：该段彼时未打 tag、未推送 ⇒ 属**在建**版本段；2026-10-13 打完 tag 后该段即冻结（见上）。
+
+### 10.229 网络播放链接解析 — 电视端「无法播放歌曲」根因与修复：只认 302/200，**301 被当成空结果丢掉**（2026-10-13）
+
+**症状**：创维电视（`192.168.0.114`，Android 5.1.1 / **API 22**）上装 v2.38.8 release 后，网络歌曲点不开；**搜索与歌词正常**。
+
+**症状链（⚠️ 看到的报错不是根因）**：`logcat` 里 ExoPlayer 抛 `java.io.FileNotFoundException: : ENOENT` —— 因为 `PlayerManager.kt:629` 用 `buildMediaItem(song, song.streamUrl ?: "")` 建 MediaItem，**网络歌在解析成功前 `streamUrl` 恒为空** ⇒ `Uri.parse("")` 被 `DefaultDataSource` 判成本地文件 ⇒ 落到 `FileDataSource` 报 ENOENT。真凶在上游：`resolvePlayUrlDetailed` 的 `AppLog.e` 行 `all endpoints failed` 连续出现 3 次（重试 3 首，`probedDead=false`）。
+
+**根因（三个预设端点在这台电视上各以一种方式失效）**
+
+| 端点 | 电视侧真实状态 | 证据 |
+|---|---|---|
+| `meting.mikus.ink`（LE 证书） | 服务正常（PC 上 302 + 真实 mp3），**但电视不信任其证书链** | 把电视的 `/system/etc/security/cacerts` 拉到 PC：`store/` **162 个文件**、拼出的 bundle **161 张证书**，其中⛔ **无 `2ae6433e.0`（ISRG Root X1）**、⛔ **无 `062cdee6.0`（DST Root CA X3）** ⇒ 用**电视自己那份信任库**跑 `curl --cacert tv_bundle.pem --tls-max 1.2` ⇒ **exit 60**（证书校验失败）。设备上是 `SSLHandshakeException`，被逐端点 `catch` 吞掉。 |
+| `meting.api.redcha.cn`（代码里的 `DEFAULT_BASE_URL`） | **站点已死** | PC 直连 `curl` 无响应；对电视 bundle **exit 35**（SSL 连接直接断）。 |
+| `api.qijieya.cn/meting` | **电视能校验、服务也活着**，但被**代码丢掉** | 它回的是 **301**（`Location` 指向自身规范化地址），而 `when(response.code)` 只有 **302 / 200** 两条分支，301 落 `else -> null` ⇒ 日志只留一句 "empty"。按**与电视完全相同的约束**（同一份 cacerts + TLS ≤1.2）手动跟这一跳 301 ⇒ 拿到 **302 + 可播的 `m801.music.126.net` mp3 直链**。⇒ 电视唯一用得上的端点，输在**一个状态码缺口**上。 |
+
+**为什么搜索还是好的**：`searchNativeFirst` 走网易免鉴权原生 `music.163.com`（**DigiCert** 链，电视信任），只有播放链接解析这一段（Meting 端点）坏了。
+
+**已排除**（逐项验证过，不是猜）：电视 DNS（两域名可解析可 ping）、系统时间（与 PC 精确到秒一致）、系统代理/VPN（`settings get global http_proxy` 等为 null）、**v2.38.8 是否引入回归**（`git diff v2.38.7..HEAD -- backend/ player/` 对本文件只多了带默认值的构造参数 `presetEndpoints`，在线行为零变化）。⚠️ 过程中自我否决的两个假设：`requested=0` 是降级链为空（读完 `QualityTiers.fallbackChainOf(AUTO) = listOf(null)` 否掉）、本版本引入回归（上面的 diff 否掉）。
+
+**修复 A（主）**：把单次请求的逻辑从 `resolvePlayUrlDetailed` 的双层循环里**抽出**为 `fetchPlayUrl(requestUrl): PlayUrlFetch`（`Found(url, fromRedirect)` / `Miss(reason)`）：
+- **302 → `Location` 即可播直链，⛔ 不许改成跟一跳**：`probe` 判据（§3.8 第 1 步）挂在"重定向链的结果"上，改了跟法等于改了判据作用对象。
+- **200 → JSON 的 `url`**：维持"非空即成功"。
+- **其余 3xx（301/303/307/308）且带 `Location`** → 用 `response.request.url.resolve(location)` 解析（**相对 `Location` 也支持**）后跟一跳，落点再按上面两形态判定，上限 `MAX_REDIRECT_HOPS = 2`，超限按失败处理（⛔ 不死跟着环）。
+- 档位口径不变：跟跳只发生在**端点侧**，`actualQuality` 仍记**请求档位**（301 的落点会丢 `br`，但降级链的档位判定不以落点为准）。
+- ⛔ **不采用**"所有 3xx 一律取 `Location` 即成功"（方案 B）：那会把 qijieya 的 **API 地址**当成 mp3 交给 ExoPlayer，换个坏法。
+- ⛔ **不动** `buildEndpointFallbackOrder` 的 `trimEnd('/')`：原本它是为了"手写带尾斜杠的可用形态"而需要的口子，301 跟跳落地后该绕行不再需要（记此以免有人把 `trimEnd('/')` 当 bug 删掉或当限制去扩）。
+
+**修复 C（可诊断性）**：逐「端点×档位」的失败原因收进 `misses`，并进**e 级**汇总行（`… misses=<端点> br=<档> → <原因>; …`）。原因词汇：`http <code>` / `200 without url` / `http <code> after N hops` / `probe DEAD` / `<异常类型名>: <message 前 80 字符>`。
+⚠️ 为什么必须是 e 级：`AppLog.d/i/w` 全被 `if (BuildConfig.DEBUG)` 守卫，release 里 R8 连字符串常量一起折掉 ⇒ **本次的 TLS 不信任原因，设备侧完全看不到**，是靠在 PC 上复刻约束才定位出来的；异常类型名是 release 里唯一能区分"证书不信任 / DNS / 连接被拒 / 超时"的信息。
+
+**闸门（`MetingResolveTest` 7 例新增，先红后绿）**：`301 跟一跳后取到落点的 302 直链`（红：`expected <https://cdn/after-301.mp3> but was <null>`）、`301 的 Location 是相对路径时也能跟`、`301 跟跳后仍无直链时按失败处理并继续降级链`、`301 重定向链有跳数上限 不会死循环`（红：跟跳 **0 次**）、`302 的 Location 原样返回 不会被再跟一跳`（**回归护栏**，写绿在前也要留，锁住 302 语义）、`全端点失败时错误日志带上 HTTP 状态码`、`异常端点的失败原因也带上异常类型名与端点`（后两条用 `ShadowLog` 断言 e 级行，红：聚合行里只有 `probedDead=false`）。
+harness 侧新增 `use301Br`（**按档位**决定回 301 还是正常应答，才能表达"999 走 301 且落点无 url、320 正常"这类链）、`use301Relative`、`hopShape`（`REDIRECT`/`EMPTY`/`LOOP`）、`primaryStatusCode`；落点 `/api-hop` 与首选/`/api-fallback` 同在一台 MockWebServer 上，⛔ 全程不出网。
+
+**验证**：`MetingResolveTest` **22 例 / 0 失败**；网络与探测相关套件（`MetingProbeWiring` / `PlayerDeadProbeResolveGate` / `NetworkDeadProbeCache` / `PlayabilityProbe` / `PlayUrlCache*` / `Network*` 等 24 类）0 失败；`testDebugUnitTest --rerun-tasks` 全量 **194 类 / 2100 例 / 0 失败 / 0 错误**（对 §10.228 基线 2093 = **+7**，与新增 7 例逐一对上）；`lintDebug` **0 errors / 136 warnings**（CI blocking 只看 error）。
+`assembleRelease` ⇒ `NASMusicTV-release-v2-38-8.apk` **25,610,210 B**（对 §10.228 的 25,609,175 B = **+1,035 B**，与"一个私有方法 + 一条日志拼接"的量级相符）；`adb install -r` 到电视 **Success**（同签名，`versionCode` 仍 **177**，覆盖安装不需卸载）；装机后 `logcat -c` 已清空，等待真机点播复测。
+
+**真机复测（2026-10-13 21:28，✅ 通过）**：owner 在同一台创维电视上连播数首网络歌曲，口径「已经播放了几首歌曲了，都能正常播放」。我方同时窗留证：`SpectrumAnalyzer`/`SpectrumRepository`（pid 13452）正在消费**非静音**音频帧 —— `21:26:31 seq=11322 nonZero=402 maxMag=25.65` → `21:26:41 seq=11557 nonZero=456 maxMag=62.40`，`silent` 恒 **3** ⇒ 确有声音且频谱在动。窗口内 `MetingApiService: all endpoints failed` **0 命中**。
+⚠️ **逐首批播行没能留住**（取证方法的缺陷，记账以免下次重犯）：`main` buffer 在 `21:26:05` 滚动（`--------- beginning of main`），且我的后台捕获按 tag 白名单过滤，名单里没有 `ExoPlayerImplInternal` / `SpectrumAnalyzer` ⇒ 只剩窗口尾部残余。**下次设备侧长跑验证一律用 `adb logcat --pid=<pid>`（不带 tag 过滤）直接落盘。**
+⚠️ 窗口里另有一条 `E/ExoPlayerImplInternal 21:26:10 FileDataSourceException: java.io.FileNotFoundException: : ENOENT` —— 就是上文「解析成功前 `streamUrl` 恒为空」的既有下游签名，其后仍在出声 ⇒ 与 v2.38.7「点播失败后自动换用同名可播版本继续播放」的路径自洽，⛔ **不判为本条修复失败**，但记为**待查项**：若复现，需用 pid 全量捕获拿到那一首的 `misses=` 内容再定性。
+
+**未做**：⛔ 本次**没有**动证书校验，也未内置自定义信任锚（2026-09-09 移除 6 处 trust-all 的底线不动）⇒ mikus 那条 LE 链在这台电视上**仍然不可用**，修复靠的是让已被信任的 qijieya 能用起来。⛔ 未推送、未打 tag（owner 未指示）。
+
+**版本**：⚠️ `[v2.38.8]` 已打 tag ⇒ **冻结**，本条修复记账在新开的 `[Unreleased]` 段；是否升 **v2.38.9**（`versionCode` 177 → 178）待 owner 决定，⛔ 本次未擅自升版本号。
+
+**补记（2026-10-13 晚，回答 owner 两问：证书问题怎么解 / 为什么手机能播、电视以前能播）**
+
+三条链的实测形态（PC `openssl s_client -showcerts`）：
+
+| 端点 | 证书链 | 电视可用性 |
+|---|---|---|
+| `meting.mikus.ink` | `*.mikus.ink ← YR2 ← ISRG Root YR ← ISRG Root X1` | ⛔ **从来不可用**：链里两级 ISRG 根（YR、X1）都不在这台电视的 162 根里，连过渡用的 `DST Root CA X3` 也被厂商裁剪掉了 ⇒ 不是"以前能用现在坏了"，是这台设备**任何时候**都校验不过它。 |
+| `api.qijieya.cn` | `api.qijieya.cn ← LiteSSL RSA CA 2025 ← TrustAsia TLS RSA Root CA ← Certum Trusted Network CA` | ✅ 可信（exit 0）——`Certum Trusted Network CA` 是老 AOSP 商店里的根，所以这条路是唯一走得通的。 |
+| `meting.api.redcha.cn` | ClientHello 即被 RST，链取不到 | ⛔ 站点整体消失（PC 直连 `curl: (35) Recv failure: Connection was reset`、`http=000`），与电视无关。 |
+
+**「为什么搜索/歌词一直正常、只有播放挂」——原文只归因了一半**（原写"走网易原生 `music.163.com` DigiCert 链"）。代码级的另一半是**同一个端点、同一记 301，两种 client 两种命运**：`client`（OkHttp 自动跟随重定向）用在 `search`(:279)、`resolveLyrics`(:458)、`getPlaylist`(:528)；`noRedirectClient` **只用**在 `fetchPlayUrl`(:345)（为了能拿到重定向目标喂可播性探针）。⇒ 那记 301 对前三条路完全透明、照样返回结果，只有解析播放直链这一条路上它被折成"空结果"。症状因此精确表现为「搜得到、点了不放」。
+
+**「电视以前能播」的谱系（⛔ 不是本仓库的回归）**：`noRedirectClient` + `when(code){302,200}` 的写法是 `MetingApiService.kt` **首个提交**（`3fbd4fc`，2026-06-25，网络音乐功能落地）自带的，`git log -S noRedirectClient` 只命中那一次。过去电视能播靠的是另外两条腿同时健在——redcha 活着（它当初被写进 `DEFAULT_BASE_URL`/`PRESET_ENDPOINTS` 正因为它可用），qijieya 的 `/meting?...` 直接回 302/200。此后**两个第三方端点各变一次形**（redcha 下线、qijieya 的 nginx 把 `/meting` 改成目录型 location ⇒ `301 → Location: https://api.qijieya.cn/meting/?<原 query 原样保留>`，纯尾斜杠规范化），三条腿同时归零，电视才第一次暴露出来。手机不受影响的对称解释：`ISRG Root X1` 自 **Android 7.1.1+** 内置 ⇒ mikus 在手机上校验通过、直接吃到它的 302；手机上 qijieya 那记 301 也一样存在，只是轮不到它。
+
+**证书问题的处置阶梯（决定记账）**：
+1. ✅ **已由修复 A 绕开（采纳）**：不动任何证书逻辑，靠电视信任的 qijieya 走通。
+2. ✅ **根治手段（推荐 owner 做，零代码）**：在 NAS/局域网自建 Meting-API 走 **http**——设置页「自定义端点」本就有自由输入入口（`NetworkMusicSection.kt:108` → `onShowMetingUrlDialog`），`usesCleartextTraffic=true` 已放开。没有 TLS 就没有 CA、没有证书轮换、也没有公共端点腐化这一类故障；家庭局域网场景唯一不受第三方端点寿命影响的路。
+3. ⛔ **自定义信任锚：不采纳，且在 minSdk 22 上基本不可行**——声明式 `android:networkSecurityConfig` 的 per-domain `trust-anchors` **要求 API 24+**，API 22 上系统**整份配置直接忽略** ⇒ 想生效只能代码级挂 `X509TrustManager`，那正是 2026-09-09 移除 6 处 trust-all 之后禁止再引入的机制，写偏一次等于关掉校验。老设备补根的常规途径（GMS `ProviderInstaller` 安全 provider 更新）在这台无 GMS 的创维上不存在；厂商 OTA 补 ISRG 根不可控。
+   ⛔ 同理**不采用**"预设 URL 加个尾斜杠"这种一字符绕行：它只治 qijieya 一家，端点下次换形态（换域名、改路径、改 https 重定向层级）照样复发；跟跳才是通用解。
+
+**装机后的另一条既有失败（与本次改动无关，待裁决）**：21:19 电视上加载歌单时 `logcat` 有 `E/MetingDiag: parseSongs error: JsonSyntaxException ... Expected BEGIN_ARRAY but was BEGIN_OBJECT`。走的是 `getPlaylist`(:528) 的 `client`，`fetchPlayUrl` 完全不参与 ⇒ 成因是端点对 `type=playlist` 回的是 JSON **对象**（错误信封）而非歌曲数组。只影响「歌单」入口，搜索入口不受影响。
+
+
