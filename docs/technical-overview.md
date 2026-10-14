@@ -14992,4 +14992,70 @@ v2.38.8 装到创维电视（`192.168.0.114`，Android 5.1.1 / API 22）后，E4
 - ⛔ 不要为了"看起来快"去降采样烘 grade：颗粒是 1:1 像素细节，放大即糊，
   而 `TripodFogGoldenTest` 只钉了 8 个 grade 采样点，**改错了不会被发现**。
 
+### 10.232 v2.38.10 — K 歌页升降调 / 变速弹窗：TV 遥控器「确定后选不中按钮」根因与修复 + 档位改为即时试听（2026-10-14）
+
+方案与决策全文见 `docs/karaoke-picker-tv-focus-fix-plan.md`（§2 根因表、§3 方案 A、§6 三条决策）。
+本节只记**落地实况**。
+
+#### 一、所有者反馈的两件事是**两个独立缺陷**
+
+> tv 版 MTV 模式，选择调原调、调原速，确定后，遥控器便无法再次选中这 2 个按键；
+> 其次，调原调必须确定后才能生效，无法及时预览调整后的音调。
+
+⚠️ 该功能**不在 MTV 页**（`MvPlaybackScreen` grep `pitch|speed|Picker` 零命中），全仓库只有
+K 歌页 `KaraokePlaybackScreen` 有升降调 / 变速。底栏「原唱/伴唱」按钮一并"选不中"是 F-A 的**后遗症**，
+它自己无缺陷。
+
+- **F-A（主因）**：弹窗是**内联覆盖层**（页面根 `Box` 的兄弟节点），不是真 `Dialog {}` 独立窗口。
+  关闭时整棵弹窗子树离开组合，焦点随之**悬空在 Compose 焦点树之外** —— 此后方向键不再移动 UI 焦点，
+  而 `Activity.onKeyDown → MediaKeyHandler` 在 `Screen.NowPlaying`（K 歌页是其内部分支）把
+  DPAD_CENTER 当播放/暂停处理，所以「按 OK 变成播放/暂停」就是 F-A 的**真机可证伪判据**。
+- **F-B**：遮罩 `Box`、内容 `Box`、页面根 `Box` 三处都是 `Modifier.clickable`（自带可聚焦）
+  ⇒ 焦点会掉进**无高亮的隐形节点**，观感是"焦点不见了"。
+- **F-C**：档位行左右箭头是可聚焦节点，`←`/`→` 在值节点上被焦点搜索接管 ⇒ 按左右只会"焦点跑掉"。
+- **F-D**：顶行 `onPreviewKeyEvent` 吞 UP、底行吞 DOWN，吞键 + 看不见焦点 = "卡死"感。
+- **F-E**：弹窗内换档只改临时状态，必须「确定」才生效 ⇒ 无试听。
+
+#### 二、改动（走方案 A + 决策 D1=①、D2、D3）
+
+| 位置 | 改动 |
+|---|---|
+| `KaraokePlaybackScreen.kt:170, 454, 472, 521-527` | 两个档位按钮各持一个 `FocusRequester`，打开弹窗时记入 `pickerReturnFocus`；`LaunchedEffect(showPitchPicker, showSpeedPicker)` 在两者皆关时 `requestFocus()` 归还（**F-A**）。⚠️ 首次组合时 flag 同为 false 且 `pickerReturnFocus == null` ⇒ 不抢走进页焦点 |
+| `:740, 754, 794, 852` | 遮罩 / 内容 / 左右箭头一律 `.focusProperties { canFocus = false }`（**F-B**；箭头按 D1-① 降级为纯装饰，点击仍换档） |
+| `:769-772` | 弹窗内容 `Column` 改 `.focusGroup() + focusProperties { exit = { FocusRequester.Cancel } }` 取代吞键（**F-D**）：越界时焦点**显式回环**在本弹窗内，抄 `SettingsScreen.kt:502-519` 的既有写法 |
+| `:819-826` | 档位值节点是这一行**唯一**焦点节点，`onKeyEvent` 直接吃 `DirectionLeft/Right` 换档（**F-C**）。⚠️ `focusRequester` 由旧的**条件挂载**（`tempIndex == selectedIndex`）改为**恒定挂载** —— 条件挂载会在换档瞬间把 requester 从节点上摘掉，焦点无处可去 |
+| `:699-722` | `initialValue`（**值快照**，非 `steps[initialIndex]`）+ `keepValueOnDismiss` + `stepTo/commitAndClose/cancelAndClose`：BACK / 点遮罩 ⇒ 回滚预览值、**不落盘**（**F-E**） |
+| `VocalSeparationViewModel.kt:216-245` | 旧 `setPitchSemitones/setPlaybackSpeed` 拆成 `previewPitch/commitPitch/previewSpeed/commitSpeed`：preview 只改 `StateFlow` + `playerManager`，commit 才 `prefs.player.set…`（**决策 D2**：25 档步进 ≠ 25 次磁盘写）。`resetPitch/resetSpeed` 保持原样（自带落盘） |
+| `NowPlayingScreen.kt:153-156, 220-223` / `branches/NowPlayingBranch.kt:143-146` | 参数改名并透传四个新回调 |
+
+⛔ MTV 页（`MvPlaybackScreen`）不改（决策 D3）。
+
+#### 三、门禁
+
+- `KaraokePickerTvFocusScanTest`（8 例，源码扫描）：`canFocus = false` ≥ 4 处、`Key.DirectionUp/Down` 计数为 **0**、
+  必须有 `.focusGroup()` + `exit = { FocusRequester.Cancel }`、值节点必须有 `onKeyEvent` + `DirectionLeft/Right`、
+  ⛔ 不得再出现 `tempIndex == selectedIndex` 条件挂载、必须有 `LaunchedEffect(showPitchPicker, showSpeedPicker)` + `pickerReturnFocus`、
+  call-site 必须是 `onPreview*/onCommit*`（⛔ `onConfirm` / `onSetPitch` / `onSetSpeed`）、回滚必须走 `onPreview(initialValue)`。
+  ⚠️ 全树**无** `createComposeRule` 依赖 ⇒ D-Pad 行为**测不了**，此门禁只能锁住"结构还在"，
+  真正的焦点归还得靠真机（§5 第 5 步判据）。
+- `VocalPitchSpeedPreviewCommitTest`（4 例，Robolectric）：preview 不落盘 / commit 落盘 / speed 同构 / 越界夹取（±12、0.5~2.0）。
+  ⚠️ 踩过的坑：commit 走 `viewModelScope`（`Dispatchers.Main`），Robolectric 主线程 Looper 在 `runBlocking` 期间**不转**
+  ⇒ 必须 `Dispatchers.setMain(UnconfinedTestDispatcher())`（与 `ArtistExpansionGenerationGateTest` 同法），
+  否则表现为 `TimeoutCancellationException` 而不是断言失败，极易误判成产品缺陷。
+- `KaraokePlaybackScreen.kt:680-683` 需 `@OptIn(ExperimentalComposeUiApi::class)` ——
+  `focusProperties { exit = … }` 与 `FocusRequester.Cancel` 在本 Compose 版本仍是实验 API。
+
+**回归**：`testDebugUnitTest --rerun-tasks` **199 类 / 2128 例 / 0 失败**，`lintDebug` **0 error**（136 warning，既有基线），2026-10-14 本机。
+
+#### 四、真机验收与遗留
+
+- ⏳ 方案文档 §5 的 **7 步真机验收尚未执行**（TV `192.168.0.114:5555`，v2.38.10 / versionCode 179）。
+- ⏳ **F-F 未验证**：pitch 依赖 `AudioTrack.setPitch`（**API 23+**），而 minSdk 22 的创维开发机上
+  `ExoPlayer` 的 `PlaybackParameters.pitch` **可能整体不生效** ⇒ 若真机"换档听不出差别"，
+  那是 F-F 而不是本次改动失败，须另立 issue。
+- ⏳ 高质量分离（Demucs）模式下 preview 是否**即时可闻**未验证（该路径走模型输出而非播放器 pitch/speed），留待真机判定。
+- 方案 B（改成真 `Dialog {}` 独立窗口，焦点归还自动成立）**留作后备**：
+  ⚠️ 真 Dialog 内 `RegisterDialogBackHandler` **无效**，BACK 必须改用 `androidx.activity.compose.BackHandler`，
+  否则穿透到 Level 3「退出确认」（`DialogBackHandler.kt:53-57`）。
+
 

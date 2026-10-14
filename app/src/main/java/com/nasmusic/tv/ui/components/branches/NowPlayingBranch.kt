@@ -140,8 +140,10 @@ internal fun NowPlayingBranch(
                             onChangeQuality = { tier, scope -> viewModel.setQualityTier(tier, scope) },                            // === K 歌页面：升降调 / 变速 ===
                             pitchSemitones = pitchSemitones,
                             playbackSpeed = playbackSpeed,
-                            onSetPitch = { viewModel.vocalVM.setPitchSemitones(it) },
-                            onSetSpeed = { viewModel.vocalVM.setPlaybackSpeed(it) },
+                            onPreviewPitch = { viewModel.vocalVM.previewPitch(it) },
+                            onCommitPitch = { viewModel.vocalVM.commitPitch() },
+                            onPreviewSpeed = { viewModel.vocalVM.previewSpeed(it) },
+                            onCommitSpeed = { viewModel.vocalVM.commitSpeed() },
                             onResetPitch = { viewModel.vocalVM.resetPitch() },
                             onResetSpeed = { viewModel.vocalVM.resetSpeed() },
                             // === 分离模式（快速/高质量） ===

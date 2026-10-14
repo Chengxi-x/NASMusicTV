@@ -8,6 +8,7 @@ package com.nasmusic.tv.ui.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.draw.alpha
@@ -19,7 +20,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -109,10 +112,14 @@ fun KaraokePlaybackScreen(
     pitchSemitones: Int = 0,
     /** 播放速度（0.5~2.0，1.0 = 原速） */
     playbackSpeed: Double = 1.0,
-    /** 设置升降调回调 */
-    onSetPitch: (Int) -> Unit = {},
-    /** 设置播放速度回调 */
-    onSetSpeed: (Double) -> Unit = {},
+    /** 预览升降调（即时试听、不落盘）—— 步进弹窗换档时调用 */
+    onPreviewPitch: (Int) -> Unit = {},
+    /** 提交升降调（弹窗「确定」/落盘） */
+    onCommitPitch: () -> Unit = {},
+    /** 预览变速（即时试听、不落盘） */
+    onPreviewSpeed: (Double) -> Unit = {},
+    /** 提交变速（弹窗「确定」/落盘） */
+    onCommitSpeed: () -> Unit = {},
     /** 重置升降调回调 */
     onResetPitch: () -> Unit = {},
     /** 重置播放速度回调 */
@@ -151,9 +158,16 @@ fun KaraokePlaybackScreen(
     // 控制按钮对齐 MTV 页：5 秒无操作虚化到 0.15，操作/焦点时显化（二维码仍完全隐藏）
     val controlsAlpha = if (controlsVisible) 1f else 0.15f
 
-    // ── 升降调 / 变速选择弹窗状态 ──
+    // ── 升降调 / 变速选择弹窗显隐 ──
     var showPitchPicker by remember { mutableStateOf(false) }
     var showSpeedPicker by remember { mutableStateOf(false) }
+    // ⛔ 弹窗是内联覆盖层（不是独立 Dialog 窗口），与下面的页面根 Box 是**兄弟**关系，
+    // 关闭时弹窗子树整棵离开组合、焦点没有可聚焦祖先可回退 ⇒ 焦点变无归属，
+    // 遥控器方向键全部落空、OK 键穿透到 Activity 的 MediaKeyHandler（变成播放/暂停）。
+    // 所以必须由这两个 requester 在关闭后把焦点显式还给打开弹窗的那个设置按钮。
+    val pitchButtonFocus = remember { FocusRequester() }
+    val speedButtonFocus = remember { FocusRequester() }
+    var pickerReturnFocus by remember { mutableStateOf<FocusRequester?>(null) }
 
     Box(
         modifier = Modifier
@@ -434,7 +448,12 @@ fun KaraokePlaybackScreen(
                         else -> "$pitchSemitones"
                     },
                     isModified = pitchSemitones != 0,
-                    onClick = { activateControls(); showPitchPicker = true }
+                    focusRequester = pitchButtonFocus,
+                    onClick = {
+                        activateControls()
+                        pickerReturnFocus = pitchButtonFocus
+                        showPitchPicker = true
+                    }
                 )
                 Spacer(Modifier.width(10.dp))
 
@@ -447,7 +466,12 @@ fun KaraokePlaybackScreen(
                         else -> String.format("%.1f", playbackSpeed)
                     },
                     isModified = playbackSpeed != 1.0,
-                    onClick = { activateControls(); showSpeedPicker = true }
+                    focusRequester = speedButtonFocus,
+                    onClick = {
+                        activateControls()
+                        pickerReturnFocus = speedButtonFocus
+                        showSpeedPicker = true
+                    }
                 )
                 Spacer(Modifier.width(16.dp))
 
@@ -491,6 +515,19 @@ fun KaraokePlaybackScreen(
         }
     }
 
+    // 步进弹窗关闭后**显式**把焦点还给打开它的那个设置按钮（F-A 修复）。
+    // ⛔ 不能在弹窗的 onDismiss 回调里同步 requestFocus() —— 那一刻弹窗节点还在组合中，
+    // 同帧的焦点清理会把它盖掉；必须以「两个弹窗都不可见」为 key，在节点移除之后再请求。
+    // 首次组合时两个 flag 都是 false，但 pickerReturnFocus 仍为 null ⇒ 不会抢走进页焦点。
+    LaunchedEffect(showPitchPicker, showSpeedPicker) {
+        if (!showPitchPicker && !showSpeedPicker) {
+            try {
+                pickerReturnFocus?.requestFocus()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     // ── 升降调选择弹窗 ──
     if (showPitchPicker) {
         val originalTuneLabel = stringResource(R.string.karaoke_original_tune)
@@ -505,7 +542,8 @@ fun KaraokePlaybackScreen(
                     else -> "$semitones"
                 }
             },
-            onConfirm = { onSetPitch(it) },
+            onPreview = { onPreviewPitch(it) },
+            onCommit = { onCommitPitch() },
             onReset = { onResetPitch() },
             onDismiss = { showPitchPicker = false }
         )
@@ -524,7 +562,8 @@ fun KaraokePlaybackScreen(
                     else -> String.format("%.1f", speed)
                 }
             },
-            onConfirm = { onSetSpeed(it) },
+            onPreview = { onPreviewSpeed(it) },
+            onCommit = { onCommitSpeed() },
             onReset = { onResetSpeed() },
             onDismiss = { showSpeedPicker = false }
         )
@@ -587,10 +626,12 @@ private fun KaraokeSettingButton(
     label: String,
     value: String,
     isModified: Boolean,
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     FocusableSurface(
         onClick = onClick,
+        focusRequester = focusRequester,
         modifier = Modifier.size(width = 84.dp, height = 56.dp),
         shape = RoundedCornerShape(12.dp),
         focusedScale = 1.08f,
@@ -628,41 +669,80 @@ private fun KaraokeSettingButton(
 /**
  * K 歌步进选择弹窗（升降调 / 变速通用）
  *
- * TV 遥控器适配：D-Pad 左右切换选项，OK 键确认。
+ * TV 遥控器适配（决策 D1）：
+ * - `←` / `→` 在**档位值节点上**直接换档并即时试听（左右箭头降级为纯装饰，不可聚焦）
+ * - `↑` / `↓` 在「档位值」与「重置 / 确定」之间走
+ * - OK 确认 ⇒ 落盘；BACK / 点遮罩 ⇒ 回滚到打开弹窗时的档位（不落盘）
+ *
+ * ⚠️ 本弹窗是**内联覆盖层**、不是独立 `Dialog` 窗口，与调用方的页面根 Box 是兄弟关系，
+ * 所以关闭后的焦点归还由外层 `LaunchedEffect(showPitchPicker, showSpeedPicker)` 负责（F-A）。
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(
+    ExperimentalTvMaterial3Api::class,
+    androidx.compose.ui.ExperimentalComposeUiApi::class,
+)
 @Composable
 private fun <T> KaraokeStepPickerDialog(
     title: String,
     steps: List<T>,
     currentValue: T,
     formatLabel: (T) -> String,
-    onConfirm: (T) -> Unit,
+    onPreview: (T) -> Unit,
+    onCommit: () -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val selectedIndex = remember(steps, currentValue) {
-        steps.indexOf(currentValue).coerceAtLeast(0)
-    }
-    var tempIndex by remember { mutableStateOf(selectedIndex) }
+    // 打开时的**值**快照：取消路径（BACK / 点遮罩）按它回滚。
+    // ⛔ 不能回滚到 steps[initialIndex] —— currentValue 不在 steps 里时
+    // indexOf 返回 -1（手机遥控网页/历史数据可能给出 1.05 这类值），
+    // 取整到 0 会让"什么都没改就按 BACK"变成直接跳到 -12 半音 / 0.5 倍速。
+    val initialValue = remember { currentValue }
+    val initialIndex = remember { steps.indexOf(currentValue).coerceAtLeast(0) }
+    var tempIndex by remember { mutableStateOf(initialIndex) }
+    // true = 关闭时保留当前预览值（确定 / 重置）；false = 取消路径，需要回滚
+    var keepValueOnDismiss by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
 
-    // 修复：注册 BACK 键回调，使 BACK 关闭本弹窗而非穿透到应用退出确认。
-    RegisterDialogBackHandler(onDismiss)
+    fun stepTo(index: Int) {
+        val next = index.coerceIn(steps.indices)
+        if (next == tempIndex) return
+        tempIndex = next
+        onPreview(steps[next])
+    }
 
-    // 弹窗打开时自动聚焦到选项区域
+    fun commitAndClose() {
+        keepValueOnDismiss = true
+        onCommit()
+        onDismiss()
+    }
+
+    fun cancelAndClose() {
+        if (!keepValueOnDismiss) onPreview(initialValue)
+        onDismiss()
+    }
+
+    // 修复：注册 BACK 键回调，使 BACK 关闭本弹窗而非穿透到应用退出确认。
+    // 取消路径必须先回滚预览值再关窗，否则"没按确定却改了音"。
+    RegisterDialogBackHandler { cancelAndClose() }
+
+    // 弹窗打开时自动聚焦到档位值节点
     LaunchedEffect(Unit) {
         try { focusRequester.requestFocus() } catch (_: Exception) {}
     }
 
+    // ⛔ 遮罩与内容卡的 `clickable` 各自都会创建一个**可聚焦、却没有任何焦点视觉**的节点
+    // （同类教训见 FocusableSurface.kt 的粘滞焦点注释）：方向键一旦落到它们身上，
+    // 屏幕上看不到高亮、OK 又只做 dismiss，用户读到的就是"遥控器整个失灵"（F-B）。
+    // 触摸点遮罩关闭的行为要保留，所以只掐掉焦点资格，不删 clickable。
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .focusProperties { canFocus = false }
             .background(Color(0x80000000))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onDismiss
+                onClick = { cancelAndClose() }
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -671,6 +751,7 @@ private fun <T> KaraokeStepPickerDialog(
                 .width(420.dp)
                 .padding(24.dp)
                 .background(NasMusicColors.Background, RoundedCornerShape(16.dp))
+                .focusProperties { canFocus = false }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -678,8 +759,17 @@ private fun <T> KaraokeStepPickerDialog(
                 ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // TV 焦点域：弹窗内部自成一组，任何方向想越出这一组都**取消移动**
+            // （FocusRequester.Cancel），焦点始终留在弹窗里看得见的地方。
+            // 替代了原先"顶行吞 UP / 底行吞 DOWN"两处无条件吞键（F-D）——
+            // 吞键本身不让焦点回环，配上无高亮的节点就是"卡死"观感。
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .padding(24.dp)
+                    .focusGroup()
+                    .focusProperties {
+                        exit = { FocusRequester.Cancel }
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // 标题
@@ -691,22 +781,17 @@ private fun <T> KaraokeStepPickerDialog(
                 )
                 Spacer(Modifier.height(20.dp))
 
-                // 选项区域：左右箭头 + 当前值
-                // TV焦点：消费UP键防止焦点逃出弹窗上边界
+                // 选项区域：左右箭头（TV 上不可聚焦的装饰，仅触摸可点）+ 当前档位值
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
-                    modifier = Modifier.onPreviewKeyEvent { event ->
-                        event.key == Key.DirectionUp
-                            && event.type == KeyEventType.KeyDown
-                    }
+                    horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally)
                 ) {
                     // 左箭头
                     FocusableSurface(
-                        onClick = {
-                            if (tempIndex > 0) tempIndex--
-                        },
-                        modifier = Modifier.size(48.dp),
+                        onClick = { stepTo(tempIndex - 1) },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .focusProperties { canFocus = false },
                         shape = RoundedCornerShape(50),
                         focusedScale = 1.1f,
                         animationDurationMs = 200,
@@ -722,13 +807,23 @@ private fun <T> KaraokeStepPickerDialog(
                         }
                     }
 
-                    // 当前值
+                    // 当前档位值：TV 上档位行唯一的焦点节点，
+                    // `←` / `→` 在这里直接换档并即时试听（原实现把左右键让给了箭头焦点搜索，
+                    // 于是按左右只会"焦点跑掉"，这就是所有者反馈的"切不到其他选项"，F-C）
                     FocusableSurface(
-                        onClick = { onConfirm(steps[tempIndex]); onDismiss() },
+                        onClick = { commitAndClose() },
                         modifier = Modifier
                             .width(200.dp)
                             .height(56.dp)
-                            .then(if (tempIndex == selectedIndex) Modifier.focusRequester(focusRequester) else Modifier),
+                            .focusRequester(focusRequester)
+                            .onKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                when (event.key) {
+                                    Key.DirectionLeft -> { stepTo(tempIndex - 1); true }
+                                    Key.DirectionRight -> { stepTo(tempIndex + 1); true }
+                                    else -> false
+                                }
+                            },
                         shape = RoundedCornerShape(12.dp),
                         focusedScale = 1.08f,
                         animationDurationMs = 200,
@@ -751,10 +846,10 @@ private fun <T> KaraokeStepPickerDialog(
 
                     // 右箭头
                     FocusableSurface(
-                        onClick = {
-                            if (tempIndex < steps.lastIndex) tempIndex++
-                        },
-                        modifier = Modifier.size(48.dp),
+                        onClick = { stepTo(tempIndex + 1) },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .focusProperties { canFocus = false },
                         shape = RoundedCornerShape(50),
                         focusedScale = 1.1f,
                         animationDurationMs = 200,
@@ -773,18 +868,14 @@ private fun <T> KaraokeStepPickerDialog(
 
                 Spacer(Modifier.height(16.dp))
 
-                // 重置 + 确定按钮
-                // TV焦点：消费DOWN键防止焦点逃出弹窗下边界
+                // 重置 + 确定按钮（越出弹窗的焦点由上面 Column 的 focusGroup + exit 兜住）
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.onPreviewKeyEvent { event ->
-                        event.key == Key.DirectionDown
-                            && event.type == KeyEventType.KeyDown
-                    }
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     FocusableSurface(
-                        onClick = { onReset(); onDismiss() },
+                        // 重置是明确动作：立即生效并落盘（resetPitch/resetSpeed 自带持久化）
+                        onClick = { keepValueOnDismiss = true; onReset(); onDismiss() },
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp),
@@ -804,7 +895,7 @@ private fun <T> KaraokeStepPickerDialog(
                     }
 
                     FocusableSurface(
-                        onClick = { onConfirm(steps[tempIndex]); onDismiss() },
+                        onClick = { commitAndClose() },
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp),

@@ -209,26 +209,39 @@ class VocalSeparationViewModel(
         }
     }
 
-    /** 设置升降调（半音 -12~+12）并持久化 */
-    fun setPitchSemitones(semitones: Int) {
+    /**
+     * 预览升降调（半音 -12~+12）：只改播放器与页面状态，**不落盘**。
+     * K 歌步进弹窗换档时实时试听用（方案 §3-A3 / 决策 D2）；落盘由 [commitPitch] 负责。
+     */
+    fun previewPitch(semitones: Int) {
         val clamped = semitones.coerceIn(-12, 12)
         _pitchSemitones.value = clamped
         playerManager.setPitch(clamped)
-        viewModelScope.launch {
-            prefs.player.setPitchSemitones(clamped)
-        }
-        AppLog.d("VocalSeparationViewModel", "setPitchSemitones -> $clamped")
+        AppLog.d("VocalSeparationViewModel", "previewPitch -> $clamped")
     }
 
-    /** 设置播放速度（0.5~2.0）并持久化 */
-    fun setPlaybackSpeed(speed: Double) {
+    /** 提交当前升降调值并持久化（弹窗「确定」） */
+    fun commitPitch() {
+        val value = _pitchSemitones.value
+        viewModelScope.launch { prefs.player.setPitchSemitones(value) }
+        AppLog.d("VocalSeparationViewModel", "commitPitch -> $value")
+    }
+
+    /**
+     * 预览播放速度（0.5~2.0）：只改播放器与页面状态，**不落盘**。
+     */
+    fun previewSpeed(speed: Double) {
         val clamped = speed.coerceIn(0.5, 2.0)
         _playbackSpeed.value = clamped
         playerManager.setSpeed(clamped.toFloat())
-        viewModelScope.launch {
-            prefs.player.setPlaybackSpeed(clamped)
-        }
-        AppLog.d("VocalSeparationViewModel", "setPlaybackSpeed -> $clamped")
+        AppLog.d("VocalSeparationViewModel", "previewSpeed -> $clamped")
+    }
+
+    /** 提交当前播放速度并持久化（弹窗「确定」） */
+    fun commitSpeed() {
+        val value = _playbackSpeed.value
+        viewModelScope.launch { prefs.player.setPlaybackSpeed(value) }
+        AppLog.d("VocalSeparationViewModel", "commitSpeed -> $value")
     }
 
     /** 重置升降调到原调 */
