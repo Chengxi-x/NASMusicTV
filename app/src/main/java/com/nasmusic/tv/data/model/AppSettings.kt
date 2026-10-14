@@ -110,7 +110,7 @@ data class AppSettings(
 )
 
 /**
- * 可视化效果主题（23 套手动效果，无自动导演档）。
+ * 可视化效果主题（24 套手动效果，无自动导演档）。
  *
  * [tier] 决定该效果在各画质档位下的可用性，见 [VisualQuality.supports]。
  *
@@ -308,6 +308,11 @@ enum class VisualizerTheme(
      * `"46"` 是空闲编号（E45 留空不占位，E41 的旧 2D 版已删）。
      */
     TRIPOD_FOG(R.string.visualizer_theme_tripod_fog, "迷雾之战", Tier.ADV, "46", needsParticleBudget = false),
+    /**
+     * E47「雪松」：漫天大雪 + 中右侧落雪大树 + 树下有人（完全静止、雪落肩）+ 阴天模糊太阳。
+     * 纯 Canvas 2D，⛔ WebView/three.js（TV 上死）。分帧烘焙预算 [SnowCedarBakes.BAKE_BUDGET_MS] ms。
+     */
+    SNOW_CEDAR(R.string.visualizer_theme_snow_cedar, "雪松", Tier.ADV, "47", needsParticleBudget = false),
     ;
 
     /** 效果分级：决定画质档位可用性 */

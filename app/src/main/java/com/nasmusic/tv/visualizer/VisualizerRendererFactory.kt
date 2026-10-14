@@ -17,6 +17,7 @@ import com.nasmusic.tv.visualizer.renderers.HypnoticFunctionRenderer
 import com.nasmusic.tv.visualizer.renderers.OrbitalRingsRenderer
 import com.nasmusic.tv.visualizer.renderers.RadarGridRenderer
 import com.nasmusic.tv.visualizer.renderers.SeasideRenderer
+import com.nasmusic.tv.visualizer.renderers.SnowCedarRenderer
 import com.nasmusic.tv.visualizer.renderers.ConcentricGearsRenderer
 import com.nasmusic.tv.visualizer.renderers.LightBeamsRenderer
 import com.nasmusic.tv.visualizer.renderers.MoleculeRenderer
@@ -69,6 +70,8 @@ object VisualizerRendererFactory {
         // `assets/globe/moon.jpg` 的解码，存 Activity 会泄漏（`MoonlitContextLeakTest` 扫这两条）。
         VisualizerTheme.MOONLIT -> MoonlitRenderer(context.applicationContext)
         VisualizerTheme.TRIPOD_FOG -> TripodFogRenderer()
+        // E47「雪松」零外部资产（8 类位图全在 onEnter 后按画幅烘焙）⇒ ⛔ 不收 Context。
+        VisualizerTheme.SNOW_CEDAR -> SnowCedarRenderer()
     }
 
     /**

@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>E45 黑洞 · Canvas 2D 原型（路线 A / 零 GL / 零测地线）</title>
+<!--
+  自包含单文件原型，零外部依赖，file:// 直接打开。
+
+  ⛔ 本文件**不含 WebGL、不含测地线积分**。上一版 WebGL 原型已按所有者 2026-10-10
+     改判离场（「WebView + three.js 已验证无法在电视上展现」+ 全仓红线「零 GLSL / 零 OpenGL /
+     零 AGSL」），暂存 logs_temp/blackhole-webgl-offroute.html，不再是任何数字的来源。
+
+  为什么用 Canvas 2D：本文件必须能 1:1 移植到 Compose DrawScope / android.graphics.Canvas。
+  这里每个 API 调用都对应一个 Android 侧的原语：
+     ctx.ellipse(...)          ->  Path.addOval / canvas.drawArc
+     ctx.createConicGradient   ->  android.graphics.SweepGradient（API 1 就有）
+     ctx.arc(阴影)             ->  canvas.drawCircle
+  ⛔ 不用 clip / mask 做任何遮挡 —— API 22 创维在 clipPath 上原生 SIGSEGV，
+     遮挡全部靠 §三 的绘制顺序。改这个文件时不要把 clip / save+clip 加回来。
+
+  规格见 docs/blackhole-visualizer-plan.md；几何数表由
+  docs/archive/verification/scripts/blackhole_model_table.mjs 再生，⛔ 勿手抄。
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #cv { display: block; width: 100vw; height: 100vh; }
+  #hud {
+    position: fixed; left: 10px; top: 8px; z-index: 5;
+    font: 11px/1.5 ui-monospace, Consolas, monospace; color: #9fe8c8;
+    text-shadow: 0 0 4px #000, 0 0 2px #000; pointer-events: none; white-space: pre;
+  }
+  #panel {
+    position: fixed; right: 0; top: 0; height: 100%; width: 264px; z-index: 6;
+    background: rgba(8,10,14,.85); border-left: 1px solid #232a34;
+    padding: 10px 12px 24px; overflow-y: auto; color: #c9d3de;
+    font: 11px/1.45 ui-monospace, Consolas, monospace; transition: transform .18s ease;
+  }
+  #panel.hidden { transform: translateX(100%); }
+  #panel h1 { font-size: 12px; margin: 2px 0 8px; color: #fff; letter-spacing: .5px; }
+  #panel h2 { font-size: 10px; margin: 13px 0 5px; color: #6f8296; text-transform: uppercase;
+              letter-spacing: 1px; border-bottom: 1px solid #1c232c; padding-bottom: 3px; }
+  .row { display: flex; align-items: baseline; }
+  .row label { flex: 1; color: #aab6c3; }
+  .row output { color: #9fe8c8; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; margin: 0 0 7px; accent-color: #d99a4e; height: 15px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+  button { flex: 1 1 auto; background: #172029; color: #c9d3de; border: 1px solid #2b3743;
+           border-radius: 3px; padding: 4px 6px; font: inherit; cursor: pointer; }
+  button:hover { background: #22303c; color: #fff; }
+  .chk { display: flex; gap: 6px; align-items: center; margin: 3px 0; color: #aab6c3; }
+  .chk input { accent-color: #d99a4e; }
+  #note { margin-top: 12px; color: #5f6f7f; font-size: 10px; line-height: 1.5; }
+  kbd { background: #1b242e; border: 1px solid #2d3a47; border-radius: 2px; padding: 0 3px; color: #b9c6d3; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud"></div>
+<div id="panel"></div>
+
+<script>
+'use strict';
+
+/* 启动失败必须上屏。否则 shader/脚本一抛异常，页面就停在纯黑上，
+   和"渲染出来了但很暗"无法区分 —— 这个坑在本效果的第一版上真踩过一次
+   （我把一张无关的图当成了渲染证据）。 */
+addEventListener('error', e => {
+  const h = document.getElementById('hud');
+  if (h) h.textContent = '启动失败: ' + (e.message || e.error) + '\n' + (e.lineno ? '行 ' + e.lineno : '');
+});
+
+/* ------------------------------------------------------------ 参数表
+ * 与 docs/blackhole-visualizer-plan.md §五 一一对应。 */
+
+const SCHEMA = [
+  { g: '机位' },
+  { k: 'incl',     n: '倾角 0=侧视',    min: 0,   max: 78,  step: 0.5,  d: 9 },
+  { k: 'dist',     n: '相机距离 rs',    min: 12,  max: 80,  step: 0.5,  d: 26 },
+  { k: 'fov',      n: '焦距 大=窄',     min: 0.8, max: 3.5, step: 0.05, d: 1.85 },
+  { g: '吸积盘' },
+  { k: 'rin',      n: '盘内缘 rs',      min: 1.6, max: 6,   step: 0.05, d: 3.0 },
+  { k: 'rout',     n: '盘外缘 rs',      min: 6,   max: 30,  step: 0.5,  d: 13 },
+  { k: 'rings',    n: '环数 N',         min: 8,   max: 48,  step: 1,    d: 24 },
+  { k: 'feather',  n: '俯视重叠系数',   min: 1.5, max: 8,   step: 0.1,  d: 6 },
+  { k: 'bright',   n: '盘亮度',         min: 0,   max: 3,   step: 0.02, d: 1.0 },
+  { k: 'streak',   n: '条纹对比',       min: 0,   max: 1,   step: 0.01, d: 0.28 },
+  { k: 'tipFade',  n: '端头收束',       min: 0,   max: 1,   step: 0.01, d: 0.25 },
+  { k: 'spin',     n: '自转速度',       min: 0,   max: 3,   step: 0.02, d: 1.0 },
+  { g: '透镜抬升（方案 §二）' },
+  { k: 'L0',       n: '抬升 L0',        min: 0,   max: 2,   step: 0.01, d: 1.15 },
+  { k: 'lexp',     n: '抬升指数 p',     min: 0.5, max: 3,   step: 0.05, d: 1.6 },
+  { k: 'tau',      n: '三阶几何比 τ',   min: 0.5, max: 1,   step: 0.01, d: 0.96 },
+  { k: 'terBright',n: '三阶亮度比',     min: 0,   max: 1,   step: 0.02, d: 0.45 },
+  { k: 'mpow',     n: '抬升 cos 幂 m',  min: 0,   max: 2,   step: 0.05, d: 1.0 },
+  { g: '光环与色调' },
+  { k: 'ring',     n: '光子环强度',     min: 0,   max: 3,   step: 0.02, d: 1.0 },
+  { k: 'exposure', n: '曝光',           min: 0.2, max: 4,   step: 0.02, d: 1.35 },
+  { k: 'ct',       n: '色温 0暖1冷',    min: 0,   max: 1,   step: 0.01, d: 0.22 },
+  { k: 'doppler',  n: '多普勒（默认关）', min: 0, max: 1,   step: 0.02, d: 0 },
+  { g: '背景与性能' },
+  { k: 'starDen',  n: '星野密度',       min: 0,   max: 1,   step: 0.01, d: 0.35 },
+  { k: 'scale',    n: '分辨率缩放',     min: 0.25,max: 1,   step: 0.05, d: 1 },
+];
+
+const CHECKS = [
+  { k: 'planet', n: '前景行星剪影（默认关）', d: false },
+  { k: 'paused', n: '暂停时间推进',           d: false },
+];
+
+/* 预设对准五张参考图的倾角。 */
+const PRESETS = {
+  '图2 正侧视': { incl: 1.5, ct: 0.82, bright: 0.9,  ring: 1.9, starDen: 0.14, exposure: 1.7, fov: 2.1 },
+  '图1 近侧视': { incl: 7,   ct: 0.20, bright: 1.05, ring: 1.15, starDen: 0.30, exposure: 1.35 },
+  '图4 中倾角': { incl: 12,  ct: 0.25, bright: 1.0,  ring: 1.2,  starDen: 0.30, exposure: 1.4 },
+  '图3 高倾角': { incl: 40,  ct: 0.08, bright: 1.1,  ring: 0.9,  starDen: 0.8,  exposure: 1.3, rout: 16 },
+  '俯视':       { incl: 62,  ct: 0.18, bright: 1.0,  ring: 0.7,  starDen: 0.4,  exposure: 1.3, rout: 16 },
+};
+
+const P = {}, C = {};
+SCHEMA.forEach(s => { if (s.k) P[s.k] = s.d; });
+CHECKS.forEach(c => { C[c.k] = c.d; });
+
+(function readHash() {
+  if (!location.hash) return;
+  try {
+    const o = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+    if (o.p) Object.keys(P).forEach(k => { if (typeof o.p[k] === 'number' && isFinite(o.p[k])) P[k] = o.p[k]; });
+    if (o.c) Object.keys(C).forEach(k => { if (typeof o.c[k] === 'boolean') C[k] = o.c[k]; });
+  } catch (e) { /* 坏 hash 不该挡住渲染 */ }
+})();
+
+let saveT = 0;
+function saveHash() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    try { history.replaceState(null, '', '#' + encodeURIComponent(JSON.stringify({ p: P, c: C }))); } catch (e) {}
+  }, 250);
+}
+
+/* ------------------------------------------------------------ 常量 */
+
+const RSH_RS = 3 * Math.sqrt(3) / 2;   // 2.598 rs，阴影（表观）半径
+const STOPS = 48;                       // 角向渐变档数；Kotlin 侧 SweepGradient 同数
+
+/* 纤维场：6 次谐波叠加，对 θ 天然周期 ⇒ 环的接缝不存在。
+   ⚠️ 径向相位漂移系数是"螺旋纹"的开关：0.62 时相邻环错开 ≈0.5 rad，
+   静态帧上直接读成一条从内绕到外的螺旋臂（高倾角最明显，实测被判"百叶窗"）。
+   剪切拉丝**本来**由 `rot = t·r^-1.5` 的时间项提供，所以这里只留 0.2 做细粒度错位。 */
+const PH = [], AMP = [];
+(function initFilament() {
+  let s = 12345;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (let k = 1; k <= 6; k++) { PH.push(rnd() * Math.PI * 2); AMP.push(1 / Math.pow(k, 1.15)); }
+})();
+
+const FIL_N = 256, FIL = new Float64Array(FIL_N);
+function filamentRaw(theta, r) {
+  let v = 0, n = 0;
+  for (let k = 0; k < 6; k++) {
+    v += AMP[k] * Math.sin((k + 1) * theta + PH[k] + (k + 1) * r * 0.2);
+    n += AMP[k];
+  }
+  return 0.5 + 0.5 * v / n;
+}
+/* 每环一张 LUT：把 6 次三角从**每帧每色标**挪到**每次参数变更**。
+   Kotlin 侧同构 = FloatArray(256) + 线性插值，⛔ 不要在 onDraw 里算三角。 */
+const filCache = new Map();
+function filament(theta, r) {
+  const key = Math.round(r * 64);
+  let tab = filCache.get(key);
+  if (!tab) {
+    tab = new Float64Array(FIL_N);
+    for (let i = 0; i < FIL_N; i++) tab[i] = filamentRaw(i / FIL_N * Math.PI * 2, key / 64);
+    if (filCache.size > 512) filCache.clear();
+    filCache.set(key, tab);
+  }
+  let u = theta / (Math.PI * 2); u -= Math.floor(u);
+  const f = u * FIL_N, i0 = f | 0, i1 = (i0 + 1) & (FIL_N - 1);
+  return tab[i0] + (tab[i1] - tab[i0]) * (f - i0);
+}
+
+/* ------------------------------------------------------------ 几何模型
+ * 方案 §二 的三条 b。这是本文件唯一的"物理"，其余都是画。 */
+
+function ringGeom(r, inclRad) {
+  const s = Math.sin(inclRad), c = Math.cos(inclRad);
+  const L = P.L0 * Math.pow(RSH_RS / r, P.lexp) * Math.pow(c, P.mpow);
+  return {
+    bNear: s,
+    bFar:  s + L,
+    bTer:  s + P.tau * L,
+  };
+}
+
+function rampColor(t) {
+  const lerp = (a, b, u) => a + (b - a) * u;
+  const hot  = [lerp(255,255,P.ct), lerp(224,250,P.ct), lerp(168,242,P.ct)];
+  const mid  = [255, lerp(140, 209, P.ct), lerp(46, 153, P.ct)];
+  const cold = [lerp(153,133,P.ct), lerp(38, 102, P.ct), lerp(13, 97, P.ct)];
+  let a, b, u;
+  if (t < 0.5) { a = hot; b = mid; u = t * 2; } else { a = mid; b = cold; u = (t - 0.5) * 2; }
+  return [Math.round(lerp(a[0],b[0],u)), Math.round(lerp(a[1],b[1],u)), Math.round(lerp(a[2],b[2],u))];
+}
+
+/* ------------------------------------------------------------ 画布 */
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d', { alpha: false });
+const hud = document.getElementById('hud');
+
+let W = 0, H = 0, sizeOverride = null;
+
+function resize() {
+  let w, h;
+  if (sizeOverride) { w = sizeOverride[0]; h = sizeOverride[1]; }
+  else { w = Math.round(innerWidth * P.scale); h = Math.round(innerHeight * P.scale); }
+  w = Math.max(64, w); h = Math.max(64, h);
+  if (w !== W || h !== H) { W = w; H = h; cv.width = w; cv.height = h; }
+}
+
+/* 星野：屏幕空间静态点阵（简化 S1：不随方位角滑动，本原型没有方位角）。
+   靠近阴影的星被**外推 + 切向拉长**，这是唯一一处廉价的"透镜"暗示。 */
+let stars = [], starKey = '';
+function buildStars() {
+  const key = P.starDen + '|' + W + 'x' + H;
+  if (key === starKey) return;
+  starKey = key;
+  stars = [];
+  let s = 99991;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const n = Math.round(P.starDen * 260);
+  for (let i = 0; i < n; i++) {
+    stars.push({ x: rnd() * W, y: rnd() * H, m: 0.25 + 0.75 * rnd() * rnd(), t: rnd() });
+  }
+}
+
+function drawStars(cx, cy, rsh) {
+  ctx.fillStyle = '#fff';
+  for (const st of stars) {
+    let dx = st.x - cx, dy = st.y - cy;
+    let d = Math.hypot(dx, dy);
+    if (d < 0.5) continue;
+    /* 外推：真实透镜把背景天区往**外**推，阴影附近挤成环 */
+    const d2 = Math.hypot(dx, dy) + rsh * rsh * 0.42 / Math.max(d, rsh * 0.7);
+    const ux = dx / d, uy = dy / d;
+    const px = cx + ux * d2, py = cy + uy * d2;
+    if (px < -4 || py < -4 || px > W + 4 || py > H + 4) continue;
+    const squeeze = d2 / Math.max(d, 1);
+    const a = st.m * Math.min(1, squeeze * 1.6);
+    if (d < rsh * 1.45 && a > 0.06) {
+      /* 贴着阴影的星被切向拉成弧 —— 一眼就读作"这里弯了"。
+         ⚠️ 幅度必须压得很低：±0.16 rad / alpha 0.85 时，这些弧在纯黑背景上
+         读成几根**飘在阴影上方的乱线**（实测缺陷，像头发丝）。
+         参考图里根本没有透镜星野，所以这里只留一个几乎看不见的暗示。 */
+      ctx.strokeStyle = 'rgba(210,225,255,' + (a * 0.22).toFixed(3) + ')';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const ang = Math.atan2(uy, ux);
+      ctx.arc(cx, cy, d2, ang - 0.055, ang + 0.055);
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = a;
+      ctx.fillRect(px, py, 1.3, 1.3);
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+/* 一环 = 一次**半环带填充**（方案 §四）。笔刷是角向渐变，所以条纹不额外花 op。
+   ⚠️ 为什么不是 stroke：stroke 的 lineWidth 是**垂直于路径的常量**，
+   而一个径向宽度 dr 的环带投影到屏幕上，厚度在左右两端是 dr、
+   在正对视线的那段是 dr·sin i —— 常量 lineWidth 两头只能顾一头：
+   取 dr 则侧视的近侧带糊成一根 16 px 的棒，取 dr·sin i 则斜视的陡段之间露缝成梳齿（实测两种都翻车）。
+   半环带 = 外椭圆弧 + 内椭圆弧反向 + 闭合，**每一点的厚度都精确等于投影后的 dr**，
+   两个缺陷同时消失。Kotlin 侧对应 `Path` 两个 `addOval` + `FillType.EVEN_ODD`，
+   ⛔ 仍然不用 clip。
+   曝光**只在发射体上做**（不整帧乘）：整帧 additive 会把阴影填灰，
+   而"阴影中心读数为黑"是 §一 的对账判据，⛔ 不能靠后期手段破坏。
+   e > 1 时亮度增益 + 向白溢出（过曝芯），e < 1 只衰减。 */
+function paintRing(cx, cy, aLo, bLo, aHi, bHi, from, to, col, alpha, rot, r) {
+  if (aHi < 0.5 || alpha <= 0.002) return;
+  const e = Math.min(3, P.exposure);
+  const over = Math.max(0, e - 1) * 0.45;
+  const a = (aLo + aHi) / 2;
+  const bEff = Math.max(0.6, (bLo + bHi) / 2);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, Math.max(0.05, aHi), Math.max(0.05, bHi), 0, from, to);
+  ctx.ellipse(cx, cy, Math.max(0.05, aLo), Math.max(0.05, bLo), 0, to, from, true);
+  ctx.closePath();
+  if (typeof ctx.createConicGradient === 'function') {
+    const g = ctx.createConicGradient(rot, cx, cy);
+    const pw = 1 + P.streak * 4, base = 1 - P.streak;
+    for (let s = 0; s <= STOPS; s++) {
+      const u = s / STOPS;
+      const psi = rot + u * Math.PI * 2;
+      /* 屏幕角 ψ → 椭圆参数角 φ：色标只能按屏幕角摆放，但纤维是**沿盘环本身**分布的。
+         不换算的话扁椭圆两端附近 dφ/dψ 极大 ⇒ 条纹挤成一排竖直梳齿（实测缺陷）。
+         Kotlin 侧同理：SweepGradient 的色标必须走这个换算。 */
+      const phi = Math.atan2(a * Math.sin(psi), bEff * Math.cos(psi));
+      let m = base + P.streak * Math.pow(filament(phi, r), pw) * 2.2;
+      if (P.doppler > 0.001) {
+        /* 多普勒在**屏幕系**（固定左/右 limb），不随 rot 一起转 */
+        m *= 1 + P.doppler * Math.cos(psi);
+      }
+      /* 端头收束：环的左右两端（φ=0/π）淡出，否则近侧带读成一根两头顶格的冰棍棒 */
+      m *= Math.pow(Math.abs(Math.sin(phi)), P.tipFade);
+      m = Math.max(0, Math.min(1.6, m));
+      const al = Math.min(1, alpha * m * e);
+      const w = Math.min(1, over * alpha * m);
+      g.addColorStop(u, 'rgba(' + Math.round(col[0] + (255 - col[0]) * w) + ',' +
+                              Math.round(col[1] + (255 - col[1]) * w) + ',' +
+                              Math.round(col[2] + (255 - col[2]) * w) + ',' + al.toFixed(4) + ')');
+    }
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' +
+                              Math.min(1, alpha * e).toFixed(3) + ')';
+  }
+  ctx.fill();
+}
+
+/* 环的径向亮度：内缘亮、外缘淡。⚠️ 衰减必须够陡 ——
+   `1/(1+3t)` 时外环仍有 0.25 的权重，24 环叠起来就把盘画成一大片均匀的光晕，
+   近侧带也因此粗成一根棒（实测缺陷）。改成 1/(1+7t) 后外环 ≈0.12。 */
+function ringBright(r) {
+  const t01 = (r - P.rin) / Math.max(P.rout - P.rin, 0.001);
+  return {
+    t01,
+    gain: (1 / (1 + 7 * t01)) * Math.min(1, t01 / 0.05) * (1 - Math.pow(t01, 2.2)),
+  };
+}
+
+/* `feather` = 相邻环描边的**重叠系数**，用来抹掉「N 条描边 = N 段平台」的径向台阶。
+   ⚠️ 加大重叠必须同步降 alpha，否则一个点被 f 条描边覆盖会把盘画亮；
+   归一化取**严格 1/f**（`fnorm = f/1.5`）。实测按 `f^-0.7` 只压一半时
+   俯视的同心台阶原样保留（f=3 峰值 128→81 但台阶没平），严格 1/f 才压得平，
+   代价是内缘系数要从 0.9 提到 1.5 才够亮。
+   拱与近侧带各用一套，见 render() 里的 `fthA` / `fthN`。 */
+function ringGap(rr, j) {
+  const n = rr.length;
+  return (rr[Math.min(j + 1, n - 1)] - rr[Math.max(j - 1, 0)]) / 2;
+}
+
+function render(t) {
+  const inclRad = P.incl * Math.PI / 180;
+  const viewHalf = P.dist / P.fov;
+  const k = (H / 2) / viewHalf;          // 像素每 rs
+  const cx = W / 2, cy = H / 2;
+  const rsh = RSH_RS * k;
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  buildStars();
+  drawStars(cx, cy, rsh);
+
+  const N = Math.round(P.rings);
+  const rr = [];
+  for (let j = 0; j < N; j++) {
+    const u = N > 1 ? j / (N - 1) : 0;
+    rr.push(P.rin + (P.rout - P.rin) * Math.pow(u, 1.45));
+  }
+  /* 重叠系数分两套 —— 拱和近侧带的**屏幕几何**不同，不能用同一个：
+     - 二/三阶拱：透镜把远侧抬起来，`b = r(sin i + L)`，L 不随 i→0 消失，
+       所以拱**永远**是一大片未被压缩的面，任何倾角下都需要重叠来抹平台阶；
+     - 一次像（近侧带）：`b = r·sin i`，侧视时被压成一条线，
+       再重叠就把那条线糊回成棒。故只按 `sin i` 加权。 */
+  const fthA = Math.max(1.5, P.feather);
+  const fnA = fthA / 1.5;
+  const fthN = 1.5 + Math.max(0, P.feather - 1.5) * Math.sin(inclRad);
+  const fnN = fthN / 1.5;
+
+  const TOP = [Math.PI, Math.PI * 2];    // 上半（画布 y 向下）
+  const BOT = [0, Math.PI];              // 下半
+
+  /* 层 2/3：二阶像（上拱）+ 三阶像（下拱）。都在阴影**后**，
+     靠后面层 4 的实心圆遮住沉进阴影的部分 —— ⛔ 不用 clip。 */
+  for (let pass = 0; pass < 2; pass++) {
+    for (let j = 0; j < N; j++) {
+      const r = rr[j];
+      const { t01, gain } = ringBright(r);
+      const col = rampColor(Math.max(0, Math.min(1, t01 * 1.15 - 0.06)));
+      const rot = t * Math.pow(r, -1.5) * P.spin * 6.0;
+      const dr = Math.max(0.02, ringGap(rr, j) * fthA);      // 环带径向宽度（rs），含重叠
+      const rLo = Math.max(0.05, r - dr / 2), rHi = r + dr / 2;
+      const gLo = ringGeom(rLo, inclRad), gHi = ringGeom(rHi, inclRad);
+      if (pass === 0) {
+        paintRing(cx, cy, k * rLo, k * rLo * gLo.bFar, k * rHi, k * rHi * gHi.bFar,
+                  TOP[0], TOP[1], col,
+                  Math.min(1, gain * P.bright * 1.5) / fnA, rot, r);
+      } else {
+        paintRing(cx, cy, k * rLo, k * rLo * gLo.bTer, k * rHi, k * rHi * gHi.bTer,
+                  BOT[0], BOT[1], col,
+                  Math.min(1, gain * P.bright * 1.5 * P.terBright) / fnA, rot, r);
+      }
+    }
+  }
+
+  /* 层 4：阴影 + 光子环。这一步**就是**遮挡。 */
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(cx, cy, rsh, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (P.ring > 0.001) {
+    /* 光晕必须从半径 0 开始铺，并在 0.98 R_sh 之前保持 alpha=0。
+       Canvas 径向渐变会把**起始圆以内**的像素全填成第 0 个 stop 的颜色，
+       所以若把起始圆设在 rsh*0.98，整个阴影面会被刷成 55% 暖白 ——
+       实测阴影中心读数 182（判据要求接近 0）。 */
+    const gl = ctx.createRadialGradient(cx, cy, 0, cx, cy, rsh * 1.22);
+    const core = 0.98 / 1.22;
+    const aCore = Math.min(1, P.ring * 0.42 * Math.min(3, P.exposure));
+    gl.addColorStop(0, 'rgba(255,246,228,0)');
+    gl.addColorStop(core, 'rgba(255,246,228,0)');
+    gl.addColorStop(core + 0.03, 'rgba(255,246,228,' + aCore.toFixed(3) + ')');
+    gl.addColorStop(1, 'rgba(255,246,228,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath(); ctx.arc(cx, cy, rsh * 1.22, 0, Math.PI * 2); ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,250,240,' + Math.min(1, P.ring * 0.9).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(1, rsh * 0.035);
+    ctx.beginPath(); ctx.arc(cx, cy, rsh * 1.045, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  /* 层 5：一次像（近侧带），在阴影**前** ⇒ 最后画。图4 的"横切阴影"在这一步成立。
+     半环带填充让投影厚度自动 = dr·sin i（盘心下方）到 dr（左右两端），
+     不需要任何 `sin i` 补偿系数 —— 那是 stroke 时代凑出来的，已随 nearTh 一起删掉。 */
+  for (let j = 0; j < N; j++) {
+    const r = rr[j];
+    const { t01, gain } = ringBright(r);
+    const col = rampColor(Math.max(0, Math.min(1, t01 * 1.15 - 0.06)));
+    const alpha = Math.min(1, gain * P.bright * 1.55) / fnN;
+    const rot = t * Math.pow(r, -1.5) * P.spin * 6.0;
+    const dr = Math.max(0.02, ringGap(rr, j) * fthN);
+    const rLo = Math.max(0.05, r - dr / 2), rHi = r + dr / 2;
+    const gLo = ringGeom(rLo, inclRad), gHi = ringGeom(rHi, inclRad);
+    paintRing(cx, cy, k * rLo, k * rLo * gLo.bNear, k * rHi, k * rHi * gHi.bNear,
+              BOT[0], BOT[1], col, alpha, rot, r);
+  }
+
+  /* 层 6：前景行星剪影，默认关（它是对账数字的噪声源）。 */
+  if (C.planet) {
+    const pr = H * 0.02, px = cx - W * 0.3, py = cy - H * 0.235;
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,228,190,.55)';
+    ctx.lineWidth = Math.max(1, pr * 0.14);
+    ctx.beginPath(); ctx.arc(px, py, pr * 0.93, -0.9, 1.0); ctx.stroke();
+  }
+}
+
+/* ------------------------------------------------------------ 主循环 */
+
+let clock = 0, last = performance.now(), frames = 0, fpsAt = last, fps = 0;
+
+function loop(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (!C.paused) clock += dt;
+  resize();
+  render(clock);
+  frames++;
+  if (now - fpsAt >= 500) {
+    fps = frames * 1000 / (now - fpsAt);
+    frames = 0; fpsAt = now;
+    hud.textContent = 'fps ' + fps.toFixed(1) + '\n' +
+      W + '×' + H + '  rings ' + Math.round(P.rings) +
+      '  ops ≈ ' + (Math.round(P.rings) * 3 + 3 + Math.round(P.starDen * 260)) +
+      '\nincl ' + P.incl.toFixed(1) + '°  t=' + clock.toFixed(2) + 's' + (C.paused ? '  [暂停]' : '');
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ------------------------------------------------------------ 面板 */
+
+const panel = document.getElementById('panel');
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+
+panel.appendChild(el('h1', null, 'E45 黑洞 · Canvas 2D（路线 A）'));
+panel.appendChild(el('h2', null, '参考图预设'));
+const pb = el('div', 'btns');
+Object.keys(PRESETS).forEach(name => {
+  const b = el('button', null, name);
+  b.onclick = () => { Object.assign(P, PRESETS[name]); sync(); saveHash(); };
+  pb.appendChild(b);
+});
+panel.appendChild(pb);
+
+const W_ = {};
+SCHEMA.forEach(s => {
+  if (s.g) { panel.appendChild(el('h2', null, s.g)); return; }
+  const row = el('div', 'row');
+  const out = el('output', null, '');
+  row.appendChild(el('label', null, s.n));
+  row.appendChild(out);
+  const inp = document.createElement('input');
+  inp.type = 'range'; inp.min = s.min; inp.max = s.max; inp.step = s.step; inp.value = P[s.k];
+  const fmt = () => { out.textContent = (+P[s.k]).toFixed(s.step >= 1 ? 0 : 2); };
+  inp.oninput = () => { P[s.k] = parseFloat(inp.value); fmt(); if (s.k === 'scale') resize(); saveHash(); };
+  fmt();
+  panel.appendChild(row); panel.appendChild(inp);
+  W_[s.k] = { inp, fmt, type: 'range' };
+});
+
+panel.appendChild(el('h2', null, '开关'));
+CHECKS.forEach(c => {
+  const row = el('label', 'chk');
+  const inp = document.createElement('input');
+  inp.type = 'checkbox'; inp.checked = C[c.k];
+  inp.onchange = () => { C[c.k] = inp.checked; saveHash(); };
+  row.appendChild(inp); row.appendChild(el('span', null, c.n));
+  panel.appendChild(row);
+  W_[c.k] = { inp, type: 'check' };
+});
+
+panel.appendChild(el('h2', null, '动作'));
+const ab = el('div', 'btns');
+const jb = el('button', null, '复制参数 JSON');
+jb.onclick = () => {
+  const j = JSON.stringify({ p: P, c: C });
+  console.log(j);
+  if (navigator.clipboard) navigator.clipboard.writeText(j).then(() => { jb.textContent = '已复制'; });
+};
+const rb = el('button', null, '复位');
+rb.onclick = () => {
+  SCHEMA.forEach(s => { if (s.k) P[s.k] = s.d; });
+  CHECKS.forEach(c => { C[c.k] = c.d; });
+  sync(); resize(); saveHash();
+};
+ab.appendChild(jb); ab.appendChild(rb); panel.appendChild(ab);
+
+function sync() {
+  Object.keys(W_).forEach(k => {
+    const w = W_[k];
+    if (w.type === 'check') w.inp.checked = !!C[k];
+    else { w.inp.value = P[k]; w.fmt(); }
+  });
+}
+
+const note = el('div', null);
+note.innerHTML = '<kbd>空格</kbd> 暂停 · <kbd>H</kbd> 收起面板 · 拖动竖=倾角<br><br>' +
+  '⛔ 零 GL / 零测地线 / 零 clip。遮挡全靠绘制顺序（方案 §三）。<br>' +
+  '几何数表：blackhole_model_table.mjs';
+panel.appendChild(note);
+
+let open = true;
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); C.paused = !C.paused; W_.paused.inp.checked = C.paused; saveHash(); }
+  if (e.key === 'h' || e.key === 'H') { open = !open; panel.classList.toggle('hidden', !open); }
+});
+let drag = null;
+cv.addEventListener('pointerdown', e => { drag = { y: e.clientY, i: P.incl }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  P.incl = Math.max(0, Math.min(78, drag.i + (e.clientY - drag.y) * 0.15));
+  W_.incl.inp.value = P.incl; W_.incl.fmt(); saveHash();
+});
+addEventListener('pointerup', () => { drag = null; });
+
+/* ------------------------------------------------------------ 探针
+ * V 系列判据的数字只能从这里读，⛔ 不接受截图目测当证据。 */
+
+window.__bh = {
+  params: () => ({ p: { ...P }, c: { ...C }, size: { w: W, h: H } }),
+  setParams(o) { Object.assign(P, o.p || {}); if (o.c) Object.assign(C, o.c); sync(); saveHash(); },
+  applyPreset: n => { Object.assign(P, PRESETS[n]); sync(); saveHash(); },
+  /* ⛔ applyPreset 是**叠加**而非重置（预设只写自己那几个键），
+     逐预设出图时必须先 reset()，否则上一个预设的 fov/rout 会串进来。 */
+  reset: () => {
+    SCHEMA.forEach(s => { if (s.k) P[s.k] = s.d; });
+    CHECKS.forEach(c => { C[c.k] = c.d; });
+    sync(); saveHash();
+    return true;
+  },
+  presets: () => Object.keys(PRESETS),
+  setSize: (w, h) => { sizeOverride = (w && h) ? [w, h] : null; resize(); },
+  setTime: t => { clock = t; },
+
+  /* 原始几何函数，全精度。对账脚本必须走这条，⛔ 不要拿 ringTable 的
+     4 位小数显示值当逐行对账源（精度不够会把真偏差藏进舍入里）。 */
+  ringGeom: (inclDeg, r) => ringGeom(r, (inclDeg == null ? P.incl : inclDeg) * Math.PI / 180),
+  RshRs: RSH_RS,
+
+  /* 环几何表，单位 = 阴影半径。方案 §2.2 数表与本表必须逐行相等（G4 对账）。
+     rList 给定时按那几个半径逐行出表 —— 与 mjs 数表用同一组 r 才能对上。 */
+  ringTable(inclDeg, rList) {
+    const ir = (inclDeg == null ? P.incl : inclDeg) * Math.PI / 180;
+    const viewHalf = P.dist / P.fov;
+    const k = (H / 2) / viewHalf;
+    const N = Math.round(P.rings);
+    const out = [];
+    const rs = rList || (() => {
+      const t = [];
+      for (let j = 0; j < N; j++) {
+        const u = N > 1 ? j / (N - 1) : 0;
+        t.push(P.rin + (P.rout - P.rin) * Math.pow(u, 1.45));
+      }
+      return t;
+    })();
+    for (const r of rs) {
+      const g = ringGeom(r, ir);
+      out.push({ r: +r.toFixed(4), aRs: +r.toFixed(4),
+                 bNear: +g.bNear.toFixed(4), bFar: +g.bFar.toFixed(4), bTer: +g.bTer.toFixed(4),
+                 archTopFarRsh: +(r * g.bFar / RSH_RS).toFixed(4),
+                 archTopTerRsh: +(r * g.bTer / RSH_RS).toFixed(4),
+                 archTopFarPx: +(r * g.bFar * k).toFixed(2) });
+    }
+    return { inclDeg: inclDeg == null ? P.incl : inclDeg, RshRs: +RSH_RS.toFixed(4), rings: out };
+  },
+
+  /* 沿 +x / -y 从中心向外的亮度剖面，用于阴影半径与环抱紧度的实测。 */
+  profile(axis, samples) {
+    const n = samples || 240;
+    resize(); render(clock);
+    const img = ctx.getImageData(0, 0, W, H).data;
+    const cx = W >> 1, cy = H >> 1;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const d = (i / (n - 1)) * (H / 2);
+      let x, y;
+      if (axis === 'right') { x = cx + d; y = cy; }
+      else if (axis === 'up') { x = cx; y = cy - d; }
+      else if (axis === 'down') { x = cx; y = cy + d; }
+      else { x = cx - d; y = cy; }
+      if (x < 0 || y < 0 || x >= W || y >= H) { out.push(null); continue; }
+      const p = ((y | 0) * W + (x | 0)) * 4;
+      out.push({ dPx: +d.toFixed(2),
+                 lum: +(0.2126 * img[p] + 0.7152 * img[p + 1] + 0.0722 * img[p + 2]).toFixed(1),
+                 rgb: [img[p], img[p + 1], img[p + 2]] });
+    }
+    return { w: W, h: H, axis, rshPx: +(RSH_RS * ((H / 2) / (P.dist / P.fov))).toFixed(2), prof: out };
+  },
+
+  captureStill(w, h) {
+    const so = sizeOverride, sw = W, sh = H;
+    sizeOverride = [w || 1280, h || 800];
+    resize(); render(clock);
+    const url = cv.toDataURL('image/png');
+    sizeOverride = so; W = sw; H = sh; cv.width = sw; cv.height = sh;
+    return url;
+  },
+};
+
+sync();
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

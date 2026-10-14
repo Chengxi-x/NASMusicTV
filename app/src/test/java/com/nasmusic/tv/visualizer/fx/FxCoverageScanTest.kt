@@ -55,6 +55,15 @@ class FxCoverageScanTest {
         "SeasideRenderer",             // E43 海边（§4.9.2 裁决：只保留暗角 0.30，去掉颗粒）
         "MoonlitRenderer",             // E44 明月（§9.2 填充账：只保留暗角 0.42，⛔ 不加颗粒 = 第二次全屏 drawRect）
         "TripodFogRenderer",           // E46 迷雾之战（暗角+颗粒烘进 grade 位图 = 1 图元/1.000 屏；postFx 字面量仅为门禁证据与洼地合成的账，绘制由 vignetteOverride 恒 0 关断，见该类 KDoc）
+        // ⭐ 2026-10-14 真机帧率返工：E47 从 exempt 移入 covered。第一版落地时本类登记在豁免名单，
+        //    理由写的是「postFx 恒 PostFx.NONE ⇒ 真·零绘制」—— ⛔ **那条理由只算对了 `applyPostFx`**：
+        //    `PostFx.NONE` 让 `hasFullScreenPass()` 恒假 ⇒ `RendererFx.needsDamageCoalescer`
+        //    在 **LITE/FULL 也为真** ⇒ `OverlayFx.drawDamageCoalescer()` 每帧补一次**整画布**
+        //    `drawRect`（肉眼不可见，铺屏 1.000 屏）。E47 每帧头一笔就是全屏 `blitFull(bSky)`，
+        //    脏区早已并成一整块 ⇒ 这次补画零收益。⚠️ 这条分叉本仓在 E46 已踩过两次并写进
+        //    `TripodFogRenderer.postFx` 与 `docs/archive/e46-tripod-fog-plan.md`，E47 逐字抄了 E46 的形制
+        //    （字面量留着 + `vignetteOverride` 恒 0）——**别再让它退回 NONE**。
+        "SnowCedarRenderer",           // E47 雪松（暗角+颗粒烘进 grade 位图 = 1 图元/1.000 屏；字面量 0.34f 为门禁证据与 needsDamageCoalescer 的账，绘制由 vignetteOverride 恒 0 关断）
     )
 
     // ── 豁免名单：阶段推进时逐条移入 covered（理由必须写明，便于复核） ──
@@ -74,6 +83,12 @@ class FxCoverageScanTest {
         // 零实例化死代码）已整文件删除归档；本条目随之从豁免名单移除（stale 判据
         // 会在文件存在而名单缺失时报错，删除后名单必须同步，见 :266-267 的 stale 门禁）。
         "PhotoRenderer" to "E39 照片墙：§八 G7 原始口径即豁免 PHOTO_WALL（照片优先，暗角/颗粒降到 0.34 / 0.018）",
+        // ⭐ 2026-10-14 真机帧率返工：E47「雪松」已从豁免名单移入 `covered`（见该名单内的登记与
+        //    类内 `postFx`/`vignetteOverride` 的 KDoc）。第一版把它写进豁免的理由——「暗角+颗粒
+        //    烘进 grade 位图 ⇒ postFx 恒 NONE ⇒ 真·零绘制」——⛔ **只算对了 `applyPostFx`**：
+        //    `PostFx.NONE` 让 `hasFullScreenPass()` 恒假 ⇒ `RendererFx.needsDamageCoalescer`
+        //    在 LITE/FULL 也为真 ⇒ 每帧白补一次整画布 `drawRect`（铺屏 1.000 屏）。E47 现与 E46
+        //    同形制：字面量 `0.34f` 留着当门禁证据 + `vignetteOverride` 恒 0 关断基类绘制。
     )
 
     private val scannedRoots = listOf("renderers", "photo")
@@ -251,7 +266,7 @@ class FxCoverageScanTest {
     fun `在册渲染器全部有归属 名单无重叠无遗漏`() {
         val decls = rendererDecls()
         assertTrue("扫描到的渲染器类应 > 0（空转自证）", decls.isNotEmpty())
-        assertTrue("渲染器类数应 ≥ 23（2026-10-05 删 9 个效果后 22；M11 修复（2026-10-06）再删死代码 WorldRenderer → 21；2026-10-08 新增 E44 明月 → 22；2026-10-13 新增 E46 迷雾之战 → 23），实测 ${decls.size}", decls.size >= 23)
+        assertTrue("渲染器类数应 ≥ 24（2026-10-05 删 9 个效果后 22；M11 修复（2026-10-06）再删死代码 WorldRenderer → 21；2026-10-08 新增 E44 明月 → 22；2026-10-13 新增 E46 迷雾之战 → 23；2026-10-14 新增 E47 雪松 → 24），实测 ${decls.size}", decls.size >= 24)
         // ⛔ 解析器自证：多行构造参数的两个类必须被解析到，否则是"静默漏类"
         // ⚠️ 2026-10-05：原样本 `WaterfallRenderer` 随效果删除 ⇒ 只摘它一个，保留其余样本。
         for (n in listOf("MoleculeRenderer", "HypnoticFunctionRenderer", "PhotoRenderer")) {

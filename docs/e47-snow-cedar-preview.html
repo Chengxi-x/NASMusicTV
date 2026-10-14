@@ -1,0 +1,1972 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>雪松 · SNOW CEDAR — E47 效果原型（方案验证）</title>
+<!--
+  E47「雪松 · 漫天大雪下的落雪大树」纯 Canvas 2D 方案验证原型。
+  ⛔ 硬约束（继承 E45/E46）：不得使用 WebView + three.js；不得使用 ctx.filter / shadowBlur /
+     CSS blur（电视 Compose Canvas 无对应能力）⇒ 一切"模糊"一律用径向渐变或烘焙位图。
+  ⛔ 逐帧图元必须合批：雪 = 每层 1 次 stroke（Kotlin 侧 1 次 Canvas.drawPoints）；
+     大树 = 烘焙位图 + 逐行错位（Kotlin 侧折叠为 1 次 drawBitmapMesh）；
+     人物 = 2 张烘焙位图各 1 次 blit（深色剪影本体 + 肩雪盖，⛔ 不走动、无脚印）。
+  数值口径（图元数 / 铺屏数）只能由 docs/archive/verification/scripts/e47_snow_harness.js 再生。
+-->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #0d1014; color: #eef2f6;
+    font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #cv { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: #cfd4da; }
+
+  #gate {
+    position: fixed; inset: 0; z-index: 40; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: rgba(16, 20, 26, .55); transition: opacity .7s ease;
+  }
+  #gate.hide { opacity: 0; pointer-events: none; }
+  #gate h1 { font-weight: 300; font-size: 30px; letter-spacing: .35em; margin: 0; text-indent: .35em; }
+  #gate p { font-size: 12px; letter-spacing: .18em; color: rgba(238,242,246,.55); margin: 0; }
+
+  .panel {
+    position: fixed; left: 16px; bottom: 16px; z-index: 20; width: 400px;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 12px 9px; border-radius: 14px;
+    background: rgba(14, 18, 24, .5); border: 1px solid rgba(238,242,246,.14);
+    box-shadow: 0 10px 34px rgba(0,0,0,.4);
+    backdrop-filter: blur(15px) saturate(1.15); -webkit-backdrop-filter: blur(15px) saturate(1.15);
+    opacity: 0; transform: translateY(10px); transition: opacity .8s ease, transform .8s ease;
+    pointer-events: none; max-height: calc(100vh - 34px); overflow-y: auto;
+  }
+  .panel.ready { opacity: 1; transform: none; pointer-events: auto; }
+  .row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    appearance: none; border: 1px solid transparent; cursor: pointer; font: inherit; font-size: 11.5px;
+    color: rgba(238,242,246,.66); background: rgba(255,255,255,.05); padding: 5px 9px; border-radius: 8px;
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .btn:hover { background: rgba(255,255,255,.11); color: #eef2f6; }
+  .btn.on { background: rgba(150, 195, 235, .18); color: #e6f2fb; border-color: rgba(150,195,235,.34); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(238,242,246,.28); }
+  .btn.on .dot { background: #a8d3f2; }
+  .sep { width: 1px; height: 16px; background: rgba(238,242,246,.14); margin: 0 3px; }
+  .grp { font-size: 9.5px; letter-spacing: .2em; color: rgba(238,242,246,.34); margin-top: 3px; }
+  .sld { display: flex; align-items: center; gap: 6px; font-size: 10px; color: rgba(238,242,246,.5); }
+  .sld label { min-width: 72px; letter-spacing: .04em; }
+  .sld input[type=range] { flex: 1; accent-color: #9dc3e8; height: 14px; }
+  .sld output { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; color: #dceaf5; }
+  .sld select { background: rgba(255,255,255,.07); color: #dceaf5; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; font: inherit; font-size: 10px; padding: 2px 4px; }
+
+  #hud {
+    position: fixed; right: 16px; top: 14px; z-index: 20; width: 320px;
+    padding: 9px 11px; border-radius: 12px;
+    background: rgba(14, 18, 24, .46); border: 1px solid rgba(238,242,246,.12);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 10.5px; line-height: 1.7; letter-spacing: .03em; color: rgba(238,242,246,.62);
+    opacity: 0; transition: opacity .8s ease; pointer-events: none;
+  }
+  #hud.ready { opacity: 1; }
+  #hud b { color: #dceaf5; font-weight: 500; font-variant-numeric: tabular-nums; }
+  #hud .ok { color: #92e0a8; } #hud .bad { color: #ff9d8a; }
+  #hud .t { font-size: 9px; letter-spacing: .2em; color: rgba(238,242,246,.32); }
+  @media (max-width: 900px) { .panel { width: calc(100% - 24px); left: 12px; } #hud { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="cv" width="1600" height="900"></canvas>
+
+<div id="gate">
+  <h1>雪 松</h1>
+  <p>E47 · SNOW CEDAR — 漫天大雪 · 落雪大树 · 树下有人</p>
+  <p>点击任意处开始</p>
+</div>
+
+<div class="panel" id="panel">
+  <div class="row">
+    <button class="btn" id="bPause"><span class="dot"></span>暂停</button>
+    <button class="btn on" id="bAudio"><span class="dot"></span>模拟音频</button>
+    <button class="btn on" id="bGrade"><span class="dot"></span>调色层</button>
+    <span class="sep"></span>
+    <button class="btn" id="bRecheck">重跑自检</button>
+    <div class="sld" style="flex:1"><label>档位</label>
+      <select id="sTier"><option value="LOW">LOW</option><option value="MED" selected>MED</option><option value="HIGH">HIGH</option></select>
+    </div>
+  </div>
+
+  <div class="grp">构图锚点</div>
+  <div class="sld"><label>地平线 ×H</label><input type="range" id="sHz" min="480" max="700" value="600" /><output id="oHz">0.600</output></div>
+  <div class="sld"><label>树位 ×W</label><input type="range" id="sTreeX" min="560" max="880" value="745" /><output id="oTreeX">0.745</output></div>
+  <div class="sld"><label>树基 ×H</label><input type="range" id="sTreeY" min="640" max="820" value="735" /><output id="oTreeY">0.735</output></div>
+  <div class="sld"><label>冠顶 ×H</label><input type="range" id="sTop" min="40" max="300" value="115" /><output id="oTop">0.115</output></div>
+  <div class="sld"><label>冠幅 ×高</label><input type="range" id="sCrown" min="50" max="150" value="116" /><output id="oCrown">1.16</output></div>
+  <div class="sld"><label>日晕 ×W/×H</label><input type="range" id="sSunX" min="80" max="600" value="265" /><output id="oSunX">0.265</output></div>
+  <div class="sld"><label>日晕 ×H 高</label><input type="range" id="sSunY" min="80" max="450" value="205" /><output id="oSunY">0.205</output></div>
+
+  <div class="grp">大树（程序化分枝 · 固定种子）</div>
+  <div class="sld"><label>分枝层级</label><input type="range" id="sDepth" min="3" max="9" value="7" /><output id="oDepth">7</output></div>
+  <div class="sld"><label>枝长衰减</label><input type="range" id="sDecay" min="600" max="880" value="780" /><output id="oDecay">0.780</output></div>
+  <div class="sld"><label>分叉角 °</label><input type="range" id="sSpread" min="240" max="900" value="600" /><output id="oSpread">60.0</output></div>
+  <div class="sld"><label>下垂系数</label><input type="range" id="sDroop" min="0" max="400" value="150" /><output id="oDroop">0.150</output></div>
+  <div class="sld"><label>段数上限</label><input type="range" id="sMaxSeg" min="120" max="2000" value="660" /><output id="oMaxSeg">660</output></div>
+
+  <div class="grp">枝上积雪</div>
+  <div class="sld"><label>水平阈值</label><input type="range" id="sHMin" min="200" max="900" value="500" /><output id="oHMin">0.500</output></div>
+  <div class="sld"><label>雪厚 ×枝粗</label><input type="range" id="sSnowK" min="10" max="180" value="110" /><output id="oSnowK">1.10</output></div>
+  <div class="sld"><label>团雪强度</label><input type="range" id="sClump" min="0" max="180" value="105" /><output id="oClump">1.05</output></div>
+
+  <div class="grp">漫天大雪</div>
+  <div class="sld"><label>雪粒总数</label><input type="range" id="sFlakes" min="80" max="1400" value="540" /><output id="oFlakes">540</output></div>
+  <div class="sld"><label>下落速度 ×H/s</label><input type="range" id="sFall" min="100" max="1400" value="560" /><output id="oFall">0.560</output></div>
+  <div class="sld"><label>基风速 ×W/s</label><input type="range" id="sWind" min="0" max="120" value="26" /><output id="oWind">0.026</output></div>
+  <div class="sld"><label>阵风幅度</label><input type="range" id="sGust" min="0" max="160" value="72" /><output id="oGust">0.72</output></div>
+  <div class="sld"><label>摆幅 ×W</label><input type="range" id="sSway" min="0" max="300" value="72" /><output id="oSway">0.0072</output></div>
+  <div class="sld"><label>逐粒大小抖动</label><input type="range" id="sRvar" min="0" max="80" value="42" /><output id="oRvar">0.42</output></div>
+  <div class="sld"><label>近层拖尾 ×直径</label><input type="range" id="sStreak" min="0" max="120" value="42" /><output id="oStreak">0.42</output></div>
+
+  <div class="grp">真实度（全部烘进位图 / 单批）</div>
+  <div class="sld"><label>天幕云质</label><input type="range" id="sSkyTex" min="0" max="80" value="30" /><output id="oSkyTex">0.030</output></div>
+  <div class="sld"><label>冰晶闪烁粒数</label><input type="range" id="sGlint" min="0" max="140" value="56" /><output id="oGlint">56</output></div>
+
+  <div class="grp">树下的人（站定 · 雪落肩）</div>
+  <div class="sld"><label>积满肩雪用时 s</label><input type="range" id="sDust" min="40" max="900" value="140" /><output id="oDust">14.0</output></div>
+  <div class="sld"><label>抖雪阵风阈值</label><input type="range" id="sShake" min="10" max="95" value="72" /><output id="oShake">0.72</output></div>
+  <div class="sld"><label>抖雪速率 ×/s</label><input type="range" id="sShakeR" min="0" max="90" value="14" /><output id="oShakeR">1.40</output></div>
+
+  <div class="grp">音频映射（纯氛围克制）</div>
+  <div class="sld"><label>bass→风压</label><input type="range" id="sKB" min="0" max="200" value="80" /><output id="oKB">0.80</output></div>
+  <div class="sld"><label>energy→横扫</label><input type="range" id="sKE" min="0" max="200" value="90" /><output id="oKE">0.90</output></div>
+  <div class="sld"><label>treble→日晕</label><input type="range" id="sKT" min="0" max="200" value="60" /><output id="oKT">0.60</output></div>
+</div>
+
+<div id="hud">
+  <div class="t">E47 雪松 · 计量</div>
+  <div>fps <b id="hFps">—</b> · 帧时 <b id="hMs">—</b> ms</div>
+  <div>图元 <b id="hOp">—</b> · 铺屏 <b id="hFill">—</b> 屏</div>
+  <div>雪粒 <b id="hFlake">—</b> · 肩雪 <b id="hDust">—</b> · 树段 <b id="hSeg">—</b></div>
+  <div>风 <b id="hWind">—</b> · 摆 <b id="hSway">—</b> · 日晕 <b id="hSun">—</b></div>
+  <div class="t" style="margin-top:6px">自检</div>
+  <div id="hTest">—</div>
+</div>
+
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════════════
+   0 · 数学工具（全部确定性；⛔ 任何逐帧随机）
+   ══════════════════════════════════════════════════════════════════════════ */
+const TAU = Math.PI * 2, D2R = Math.PI / 180;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+
+/** 确定性 PRNG（Kotlin 侧对应 VisualizerRandom） */
+function mulberry32(a) {
+  a |= 0;
+  return function () {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hash2(i, j) {
+  let h = (Math.imul(i | 0, 374761393) + Math.imul(j | 0, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  return lerp(lerp(hash2(xi, yi), hash2(xi + 1, yi), u), lerp(hash2(xi, yi + 1), hash2(xi + 1, yi + 1), u), v);
+}
+function fbm(x, y, oct, gain, lac) {
+  let s = 0, a = 0.5, f = 1, n = 0;
+  for (let i = 0; i < oct; i++) { n += a; s += a * vnoise(x * f, y * f); a *= gain; f *= (lac || 2); }
+  return s / n;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1 · 参数表（唯一默认值口径；附录 A 由本表再生）
+   ══════════════════════════════════════════════════════════════════════════ */
+const P = {
+  tier: 'MED', paused: false, audioSim: true, gradeOn: true,
+
+  comp: {
+    horizon: 0.600,      // 地平线 ×H
+    treeX: 0.745,        // 树干基 ×W（中右侧）
+    treeBaseY: 0.735,    // 树干基 ×H（比地平线近 ⇒ 站在雪原上）
+    crownTop: 0.115,     // 冠顶 ×H
+    crownW: 1.16,        // 冠幅 ÷ 树高
+    sunX: 0.265, sunY: 0.205, sunR: 0.200, sunStrength: 0.210,
+    // 站定在**树冠下、树干左侧**，朝右面向树。
+    // ⭐ 所有者裁决（2026-10-14 第三轮）：「人要跟树在一个水平线上」⇒ **没有独立的 personY**，
+    //    脚线恒等于树基（layout 里 `L.personY = L.treeBaseY`）。留一个字段就是留一条会漂移的路。
+    //    同线 ⇒ 同人同深度 ⇒ 身高按真实比例回到 0.090H（树 0.62H ≈ 12 m ⇒ 1.75 m 人 ≈ 0.090H）。
+    //    ⛔ 不要再把人往画面下方挪：0.885H 那版被判"远处有个人"、0.792H 那版被判"不在一条线上"。
+    personH: 0.090, personX: 0.702,
+  },
+  tree: {
+    seed: 20261014, depth: 7, lenDecay: 0.780, spreadDeg: 60.0, jitter: 0.34,
+    bendK: 0.14, droop: 0.150, segPx: 26, trunkW: 0.068, wTaper: 0.72,
+    maxSegs: 660, childP3: 0.22,
+    snowHMin: 0.420, snowK: 1.10, snowMin: 0.0042, clump: 1.05, snowSign: 1, // ⚠️ snowSign=-1 仅供 T3 负样本
+  },
+  wind: { base: 0.026, gustAmp: 0.72, gustHz1: 1 / 17, gustHz2: 1 / 41, swayAmp: 0.0072, swayHz: 1 / 9, rows: 8 },
+  snow: { flakes: 540, fall: 0.560, streak: 0.42, rVar: 0.42 },   // streak = 近层拖尾长度 ÷ **雪粒直径**（⛔ 秒数）；rVar = 逐粒半径抖动幅度
+  // ⛔ 人已**不走动**（所有者 2026-10-14 裁决）⇒ 没有 pace/stepHz，脚印参数一并删除。
+  // dustSecs = 肩雪从零积满的秒数；shakeAt = 阵风信号超过它才开始抖落；shakeRate = 抖落速度倍率
+  // ⚠️ 三个数是配出来的：`gust` 是 17 s / 41 s 两个正弦的和，**约四成时间都在 0.6 以上**。
+  //    阈值取 0.55 + 速率 2.6 时抖落项 (sh²·rate) 全程压过累积项 (1/dustSecs) ⇒ 肩雪恒 0，
+  //    "雪落肩"根本看不见（t=40 实测 dust=0）。现取 0.72 / 1.4 ⇒ 平时积得住、大阵风才抖。
+  person: { dustSecs: 14, shakeAt: 0.72, shakeRate: 1.4 },
+  audio: { kWind: 0.80, kGust: 0.90, kSun: 0.60, smooth: 0.085 },
+  fx: { vignette: 0.34, grain: 0.055, cloudBands: 2, veils: 3, pines: 18, hazeRows: 1, skyTex: 0.030, glint: 56 },
+};
+/** 三档默认（切档时写入 P，滑杆随之同步） */
+const TIERS = {
+  // maxSegs 一律取「该 depth 的完整树不截断」⇒ 截断只可能来自用户拉低滑杆，⛔ 默认档自剪
+  LOW:  { 'tree.depth': 5, 'tree.maxSegs': 460,  'wind.rows': 4,  'snow.flakes': 380, 'fx.cloudBands': 1, 'fx.veils': 2, 'fx.grain': 0,    'fx.pines': 11, 'fx.vignette': 0.30, 'fx.glint': 34, 'snow.rVar': 0.34 },
+  MED:  { 'tree.depth': 7, 'tree.maxSegs': 1200, 'wind.rows': 8,  'snow.flakes': 820, 'fx.cloudBands': 2, 'fx.veils': 3, 'fx.grain': 0.055, 'fx.pines': 18, 'fx.vignette': 0.34, 'fx.glint': 56, 'snow.rVar': 0.42 },
+  HIGH: { 'tree.depth': 8, 'tree.maxSegs': 2800, 'wind.rows': 12, 'snow.flakes': 1260, 'fx.cloudBands': 2, 'fx.veils': 3, 'fx.grain': 0.075, 'fx.pines': 26, 'fx.vignette': 0.34, 'fx.glint': 78, 'snow.rVar': 0.46 },
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2 · 布局
+   ══════════════════════════════════════════════════════════════════════════ */
+let W = 0, H = 0, S = 1, ctx = null, cv = null;
+const L = {};
+function layout(w, h) {
+  W = w; H = h; S = H / 540;
+  L.hz = P.comp.horizon * H;
+  L.groundY0 = P.comp.treeBaseY * H;
+  L.treeX = P.comp.treeX * W;
+  L.treeBaseY = P.comp.treeBaseY * H;
+  L.treeTopY = P.comp.crownTop * H;
+  L.treeH = Math.max(20, L.treeBaseY - L.treeTopY);
+  L.personY = L.treeBaseY;               // ⭐ 与树同一条水平线（所有者裁决，⛔ 不是独立参数）
+  L.personX = P.comp.personX * W;      // ⛔ 固定站桩：只有一个 x，没有区间
+  L.personH = P.comp.personH * H;
+  L.sunX = P.comp.sunX * W;
+  L.sunY = P.comp.sunY * H;
+  L.sunR = P.comp.sunR * H;
+  L.pxPerFrac = W;
+}
+/** 雪原表面线（地平线以下的缓丘），x 像素 → y 像素 */
+function snowSurfaceY(x) {
+  const u = x / W;
+  return L.hz + H * (0.012 + 0.030 * fbm(u * 5.5, 3.7, 3, 0.5, 2) + 0.010 * Math.sin(u * 5.1));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3 · 大树生成（单位系：干长 1、基点 (0,0)、向上为 −y）
+       纯函数 ⇒ 自检可逐字段对账；Kotlin 侧同名同序即可 1:1 移植
+   ══════════════════════════════════════════════════════════════════════════ */
+/**
+ * @param opt {seed,depth,lenDecay,spreadDeg,jitter,bendK,droop,segPx,trunkW,wTaper,
+ *             maxSegs,childP3,snowHMin,snowSign}
+ * @return {segs, snow, clumps, bbox, ratio, truncated}
+ *   segs:  {x1,y1,x2,y2,w}          枝干剪影（单位系）
+ *   snow:  {x1,y1,x2,y2,sw,horiz}   枝上积雪（仅水平度 ≥ snowHMin 的子段）
+ *   clumps:{x,y,r,depth,tx,ty}      沿枝方向的雪脊（枝端 + 子枝根部；`tx/ty` = 该处枝条切向，⛔ 无方向团）
+ */
+function buildTree(opt) {
+  const rnd = mulberry32(opt.seed);
+  const segs = [], snow = [], clumps = [];
+  const segLenPx = opt.segLenPx;         // 单位系目标子段长（÷ 树高换算，见 treeOpt）
+  let truncated = false, maxRatio = 0;
+
+  function grow(x, y, ang, len, wid, depth) {
+    if (depth <= 0 || len < 1e-4) return;
+    if (segs.length >= opt.maxSegs) { truncated = true; return; }
+    // 弯曲：垂直方向偏移的控制点（确定性）
+    const bend = (rnd() * 2 - 1) * opt.bendK * len;
+    const x2 = x + Math.cos(ang) * len, y2 = y + Math.sin(ang) * len;
+    const nx = Math.cos(ang + Math.PI / 2), ny = Math.sin(ang + Math.PI / 2);
+    const cxp = (x + x2) / 2 + nx * bend, cyp = (y + y2) / 2 + ny * bend;
+    const n = Math.max(2, Math.min(6, Math.round(len / segLenPx)));
+    let px = x, py = y, ptx = 0, pty = 0;
+    for (let i = 1; i <= n; i++) {
+      const t = i / n, it = 1 - t;
+      const qx = it * it * x + 2 * it * t * cxp + t * t * x2;
+      const qy = it * it * y + 2 * it * t * cyp + t * t * y2;
+      const dtx = 2 * it * (cxp - x) + 2 * t * (x2 - cxp);
+      const dty = 2 * it * (cyp - y) + 2 * t * (y2 - cyp);
+      const dl = Math.hypot(dtx, dty) || 1;
+      const ux = dtx / dl, uy = dty / dl;
+      const w = wid * (1 - 0.45 * t);
+      segs.push({ x1: px, y1: py, x2: qx, y2: qy, w: w, depth: depth });
+      // 水平度 = |ux|（1 = 完全水平 ⇒ 承雪；0 = 竖直 ⇒ 不承雪）
+      const horiz = Math.abs(ux);
+      const face = opt.snowSign > 0 ? horiz : Math.abs(uy);
+      if (face >= opt.snowHMin) {
+        // 承雪厚度：水平枝 ⇒ 雪幔**比枝条本身还粗**（真雪的体积感），竖直枝 ⇒ 只剩一条薄痕。
+        // ⛔ 旧口径 sw = w*0.5*face 让雪条只有枝条的 1/4 宽 ⇒ 读成"枝上一根白线 / 拉链"
+        // ⚠️ 下限必须是**绝对值**而非枝条比例：sw ∝ w 时粗细枝的"雪/枝"比恒等 ⇒ 细枝永远埋不进雪，
+        //    上冠就长出一蓬露在雪外的黑铁丝（真机判读到的"电线感"）。
+        const sw = Math.max(opt.snowMin, w * opt.snowK * (0.35 + 0.85 * face));
+        // 埋没度：枝越细 ⇒ 雪越该**包住**它（偏移趋 0，雪脊压在枝上正中），粗枝才留"上侧承雪"的偏置
+        const bury = clamp((0.0090 - w) / 0.0060, 0, 1);
+        // 积雪画在枝段**上侧**：偏移方向恒为屏幕向上（−y），量值随水平度
+        snow.push({ x1: px, y1: py - sw * (0.62 - 0.45 * bury), x2: qx, y2: qy - sw * (0.62 - 0.45 * bury), sw: sw, horiz: horiz, face: face, depth: depth });
+      }
+      // ⭐ 团雪**必须带枝条切向**（所有者 2026-10-14 裁决：「分叉节点雪体现成一个大椭圆，不对，
+      //    应该按树枝的方向落雪，类似普通树枝一样」）⇒ 渲染期按 `tx/ty` 沿枝方向拉长成雪脊，
+      //    ⛔ 轴对齐的横椭圆（那读成"枝上挂了个白盘子"）。
+      if (i === n && rnd() < 0.55) clumps.push({ x: qx, y: qy - wid * 0.5, r: wid * (0.9 + rnd() * 0.8), depth: depth, tx: ux, ty: uy });
+      px = qx; py = qy; ptx = ux; pty = uy;
+    }
+    // ⛔ 旧口径在这里按**母枝宽**塞一坨 `r = wid·1.4` 的无方向团 ⇒ 分叉点上一个大白椭圆，
+    //    而且它盖住的是"节点"这个几何上最不该积成一团的地方（P28）。分叉处的体积改由
+    //    下面每个子枝**沿自己方向**的起始雪脊承担。
+    // ⚠️ 但**旧口径吃过的那一次 `rnd()` 抽取必须原样保留**：删掉雪 ≠ 可以删掉它的随机数 ——
+    //    少抽一次就把后面整条枝条序列往后推一位，那是**换了一棵树**（实测 LOW/MED 铺屏
+    //    +0.06/+0.09 全被树形变化污染，⛔ 无法把账归因给"改了雪"）。这是 P28 的第二条教训。
+    if (depth >= opt.depth - 1) rnd();
+    if (depth <= 1) return;
+    // 子枝：2 条必然 + 概率第 3 条；积雪重力 ⇒ 越靠下越下垂
+    const kids = rnd() < opt.childP3 ? 3 : 2;
+    const half = (opt.spreadDeg * D2R) / 2;
+    for (let k = 0; k < kids; k++) {
+      const f = kids === 1 ? 0.5 : k / (kids - 1);
+      const side = f - 0.5;                                  // −0.5 … +0.5
+      let a = ang + side * 2 * half + (rnd() * 2 - 1) * opt.jitter;
+      a += opt.droop * (0.6 + (1 - depth / opt.depth)) * (ptx >= 0 ? ptx : -ptx) * 0.5;
+      a = a + (Math.abs(side) < 0.01 ? 0 : 0) - opt.droop * Math.abs(side) * 0.9;
+      const kl = len * opt.lenDecay * (0.86 + rnd() * 0.3);
+      const kw = wid * opt.wTaper * (0.88 + rnd() * 0.24);
+      if (kl / len > maxRatio) maxRatio = kl / len;
+      // ⭐ 分叉处的体积 = **每条子枝沿自己方向**的一条起始雪脊（挂在子枝根部、沿子枝轴拉长），
+      //    ⛔ 在节点上放一坨无方向的圆团（P28：所有者判"分叉节点雪成一个大椭圆"）。
+      //    ⚠️ 用 `hash2` 而 ⛔ `rnd()`：团雪是**装饰**，不该占枝条 RNG 的序列——占一次就把整棵树往后推一位，
+      //    树形/冠幅/铺屏全变（实测一次 +0.07 屏，⛔ 那是"换了棵树"不是"改了雪"）。
+      const hc = hash2((px * 4177 + k * 613 + depth * 97) | 0, (py * 331) | 0);
+      const s0 = segs.length;
+      grow(px, py, a, kl, kw, depth - 1);
+      // ⭐ 长轴取子枝**实际画出来的第一段**的弦向，⛔ 解析发射角 `a`：枝条是贝塞尔弯曲的，
+      //    `a` 只是起点的切线方向，`bendK` 能让第一段与它差到 ±atan(2·bendK)≈31° ⇒
+      //    按 `a` 摆的雪脊读成"雪挂歪了"（T3 的脱枝判据实测抓到 269 条里 29 条）。
+      //    顺带：中心落在第一段中点上 ⇒ 雪脊与枝条**同段同长**，⛔ 悬在节点外。
+      if (hc < 0.62 && segs.length > s0) {
+        const f = segs[s0], fdx = f.x2 - f.x1, fdy = f.y2 - f.y1, fl = Math.hypot(fdx, fdy) || 1;
+        clumps.push({ x: f.x1 + fdx * 0.5, y: f.y1 + fdy * 0.5 - kw * 0.5,
+          r: kw * (0.75 + (hc / 0.62) * 0.5), depth: depth - 1, tx: fdx / fl, ty: fdy / fl });
+      }
+    }
+  }
+  grow(0, 0, -Math.PI / 2, 1, opt.trunkW, opt.depth);
+  let x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+  for (const s of segs) {
+    x0 = Math.min(x0, s.x1, s.x2); x1 = Math.max(x1, s.x1, s.x2);
+    y0 = Math.min(y0, s.y1, s.y2); y1 = Math.max(y1, s.y1, s.y2);
+  }
+  return { segs: segs, snow: snow, clumps: clumps, bbox: { x0: x0, x1: x1, y0: y0, y1: y1 }, maxRatio: maxRatio, truncated: truncated };
+}
+/** 当前 P.tree → 生成参数（fitTree / 自检共用一份口径，⛔ 两处各写一遍） */
+function treeOpt(over) {
+  const o = {};
+  for (const k in P.tree) o[k] = P.tree[k];
+  if (over) for (const k in over) o[k] = over[k];
+  o.segLenPx = o.segPx / Math.max(1, L.treeH || 540);   // 单位系子段长：目标像素长 ÷ 树高
+  return o;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4 · 烘焙层（一次性绘制 ⇒ ⛔ 不计入逐帧 ops；Kotlin 侧 = ImageBitmap / Bitmap）
+   ══════════════════════════════════════════════════════════════════════════ */
+const B = {};   // 烘焙位图仓库
+function mkC(w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
+/** 大树：剪影 + 上侧积雪描边 + 团雪 ⇒ 一张带 alpha 的位图 */
+function bakeTree() {
+  const t = buildTree(treeOpt());
+  const pad = Math.ceil(0.06 * L.treeH) + 8;
+  const uy = L.treeH / Math.max(1e-6, t.bbox.y1 - t.bbox.y0);   // 纵向：冠高精确落到 L.treeH
+  const sx = uy * P.comp.crownW;                                 // 横向：冠幅独立可调
+  const bw = Math.ceil((t.bbox.x1 - t.bbox.x0) * sx) + pad * 2;
+  const bh = Math.ceil((t.bbox.y1 - t.bbox.y0) * uy) + pad * 2;
+  const c = mkC(bw, bh), g = c.getContext('2d');
+  // 单位 → 位图像素（基点 x=0,y=0 即树干着地处）
+  const X = (x) => pad + (x - t.bbox.x0) * sx, Y = (y) => pad + (y - t.bbox.y0) * uy;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  // ① 枝干剪影（深灰褐）：**越细越淡**（大气透视 + 末梢本就埋在雪里）且越靠基部越深。
+  // ⚠️ 旧口径 `fade = 0.55 + depth*0.06` 把这条斜坡写反了 ⇒ depth=1 的末梢 rgb≈85，
+  //    比树干（rgb≈112）**还黑**，于是整棵树读成一团黑色铁丝（真机判读到的"塑料感"主因）。
+  const th = Math.max(1e-6, t.bbox.y1 - t.bbox.y0);
+  for (const s of t.segs) {
+    const wpx = Math.max(0.6, s.w * uy * 2);
+    const fade = clamp(0.55 + s.depth * 0.06, 0, 1);
+    const near = clamp(1 - Math.min(1, -s.y1 / (th * 0.55)), 0, 1);   // 基部 1 → 上冠 0
+    const k2 = 1 - 0.20 * near;
+    const thin = clamp((3.4 - s.depth) / 2.4, 0, 1);                  // 1 = 最细末梢
+    const lk = (v, w) => Math.round(lerp(v * k2, w, thin * 0.86));
+    g.strokeStyle = 'rgba(' + lk(74 * fade + 40, 214) + ',' + lk(70 * fade + 40, 219) +
+      ',' + lk(64 * fade + 42, 226) + ',' + clamp((0.90 + 0.08 * near) * (1 - 0.46 * thin), 0, 1).toFixed(3) + ')';
+    g.lineWidth = wpx;
+    g.beginPath(); g.moveTo(X(s.x1), Y(s.y1)); g.lineTo(X(s.x2), Y(s.y2)); g.stroke();
+  }
+  // ② 枝上积雪（生成期已把雪幔**上偏 + 加粗到枝条的 1.2 倍**，此处只叠体积）
+  //   先宽而淡的"雪团底"叠出体积，再压一条实心的雪脊 ⇒ 远看是一坨坨积雪，不是一根根白线
+  g.strokeStyle = 'rgba(246,249,253,0.26)';
+  for (const s of t.snow) {
+    const wpx = Math.max(1.0, s.sw * uy * 2);
+    g.lineWidth = wpx * 1.7;
+    g.beginPath(); g.moveTo(X(s.x1), Y(s.y1) - wpx * 0.30); g.lineTo(X(s.x2), Y(s.y2) - wpx * 0.30); g.stroke();
+  }
+  for (const s of t.snow) {
+    const wpx = Math.max(1.0, s.sw * uy * 2);
+    g.strokeStyle = 'rgba(252,253,255,' + (0.88 + 0.10 * s.face).toFixed(3) + ')';
+    g.lineWidth = wpx;
+    g.beginPath(); g.moveTo(X(s.x1), Y(s.y1)); g.lineTo(X(s.x2), Y(s.y2)); g.stroke();
+    // 雪的下缘一抹冷灰，让"雪条"有厚度而非白线
+    g.strokeStyle = 'rgba(196,205,216,0.34)';
+    g.lineWidth = Math.max(0.6, wpx * 0.30);
+    g.beginPath(); g.moveTo(X(s.x1), Y(s.y1) + wpx * 0.46); g.lineTo(X(s.x2), Y(s.y2) + wpx * 0.46); g.stroke();
+  }
+  // ③ 团雪 = **沿枝条方向的雪脊**（所有者 2026-10-14 裁决：「分叉节点雪体现的是一个大团，成椭圆了，
+  //    不对，应该还是按树枝的方向落雪，类似普通树枝一样」⇒ P28）。三团**沿枝轴**排开、每团长轴与枝轴同向，
+  //    ⛔ 轴对齐的横椭圆（读成"枝上挂了个白盘子"），也 ⛔ 在节点上放无方向大圆团。
+  //    破轮廓仍靠"错位多团 + 边缘小瘤"（P14 的棉花糖教训不变），只是**整套旋到枝向上**。全在烘焙期 ⇒ 逐帧成本不变。
+  for (const cl of t.clumps) {
+    const r = Math.max(0.8, cl.r * uy * P.tree.clump);
+    // 枝轴在**位图像素系**里的方向：x/y 缩放不同（`sx = uy·crownW`）⇒ ⛔ 直接用单位系角度 `atan2(ty, tx)`
+    const rot = Math.atan2(cl.ty * uy, cl.tx * sx);
+    const ex = Math.cos(rot), ey = Math.sin(rot), cx = X(cl.x), cy = Y(cl.y);
+    const j1 = hash2(cl.x * 977 | 0, cl.y * 613 | 0), j2 = hash2(cl.x * 331 | 0, (cl.y + 7) * 269 | 0);
+    // [沿枝偏移, 上抬量, 缩放]：沿**枝轴**排开（横向并排又变盘子）；长宽比 2.6:1 ⇒ 读得出"趴在上面的一条"
+    const lobes = [[0, 0.44, 1.0], [-0.62 - 0.5 * j1, 0.34 + 0.10 * j2, 0.72 + 0.16 * j2],
+                   [0.58 + 0.4 * j2, 0.32 + 0.14 * j1, 0.66 + 0.2 * j1]];
+    const blob = (a, up, rx, ry, fill) => {
+      g.fillStyle = fill;
+      g.beginPath(); g.ellipse(cx + a * r * ex, cy + a * r * ey - up * r, rx * r, ry * r, rot, 0, TAU); g.fill();
+    };
+    for (const L2 of lobes) blob(L2[0], L2[1], 1.30 * L2[2], 0.50 * L2[2], 'rgba(240,245,251,0.30)');
+    for (const L2 of lobes) blob(L2[0] * 0.86, L2[1] * 1.06, 0.98 * L2[2], 0.34 * L2[2], 'rgba(251,253,255,0.92)');
+    for (let i = 0; i < 3; i++) {                       // 边缘小瘤：沿枝轴不对称地鼓出来
+      const hj = hash2((cl.x * 131 + i * 7) | 0, (cl.y * 271 + i * 13) | 0);
+      blob((-0.9 + 1.8 * hj) * (0.8 + 0.5 * j1), 0.42 + 0.10 * hj,
+        (0.20 + 0.26 * j1) * (1 + hj), 0.13 + 0.15 * hj, 'rgba(251,253,255,0.92)');
+    }
+    // 冷灰下缘：一条**贴着枝轴**的短线（⛔ 轴对齐圆弧——旋转后弧会跑到侧面去）
+    g.strokeStyle = 'rgba(190,200,214,0.30)';
+    g.lineWidth = Math.max(0.6, r * 0.20);
+    g.beginPath();
+    g.moveTo(cx - ex * r * 1.02, cy - ey * r * 1.02 - r * 0.10);
+    g.lineTo(cx + ex * r * 1.02, cy + ey * r * 1.02 - r * 0.10);
+    g.stroke();
+  }
+  // ④ 基部**雪裙**：雪在树干四周堆成一圈，画在树位图自己的最上层 ⇒ 盖住树干下缘，
+  //    才读得出"树是从雪里长出来的"。地面层里那道雪檐在树**后面**，遮不住树干（⛔ 电线杆感）。
+  //    ⚠️ 全部控制在 pad（位图底边余量 ≈ 0.06 树高）以内，越界即被位图裁成平头。
+  const skR = Math.max(8, L.treeH * 0.085);
+  // ④a 树坑冷阴（**先**画）：树干把雪面压出一圈浅坑 + 接触投影。⛔ 纯白雪裙落在纯白雪原上
+  //    对比为零 = 电线杆感；⛔ 也⛔ 硬边深色多边形（早先的"根颈喇叭口"死在这里：读成一双黑靴子）。
+  //    它必须比雪裙宽出一圈，剩下的暗边才不会被白裙盖掉（先白后暗会把整圈糊成一摊水渍）。
+  for (let i = 0; i < 2; i++) {
+    const hj = hash2(i * 19 + 2, 5), hj2 = hash2(i + 7, 23);
+    const mx = X(0) + (hj - 0.5) * skR * 0.8, my = Y(0) - skR * (0.04 + 0.10 * hj2);
+    const rw = skR * (1.85 + 0.45 * hj2), rh = rw * 0.17;
+    g.save(); g.translate(mx, my); g.scale(1, rh / rw);
+    const rg = g.createRadialGradient(0, 0, rw * 0.12, 0, 0, rw);
+    rg.addColorStop(0, 'rgba(146,163,186,0.20)');
+    rg.addColorStop(0.62, 'rgba(154,170,192,0.11)');
+    rg.addColorStop(1, 'rgba(160,176,196,0)');
+    g.fillStyle = rg; g.beginPath(); g.arc(0, 0, rw, 0, TAU); g.fill(); g.restore();
+  }
+  // ④b 雪裙：压在冷阴之上、盖住树干下缘 ⇒ 树"从雪里长出来"。地面层里那道雪檐在树**后面**，遮不住树干。
+  //    ⚠️ 全部控制在 pad（位图底边余量 ≈ 0.06 树高）以内，越界即被位图裁成平头。
+  for (let i = 0; i < 4; i++) {
+    const hj = hash2(i * 37 + 5, 71), hj2 = hash2(i + 3, 13), hj3 = hash2(i, 97);
+    const mx = X(0) + (hj - 0.5) * skR * 1.6, my = Y(0) + skR * (0.02 + 0.14 * hj3);
+    const rw = skR * (0.85 + 0.60 * hj2), rh = rw * 0.30;
+    g.save(); g.translate(mx, my); g.scale(1, rh / rw);
+    const rg = g.createRadialGradient(0, 0, 0, 0, 0, rw);
+    rg.addColorStop(0, 'rgba(255,255,255,0.95)');
+    rg.addColorStop(0.55, 'rgba(250,252,255,0.55)');
+    rg.addColorStop(1, 'rgba(246,250,255,0)');
+    g.fillStyle = rg; g.beginPath(); g.arc(0, 0, rw, 0, TAU); g.fill(); g.restore();
+  }
+  B.tree = c;
+  B.treeMeta = {
+    uy: uy, w: bw, h: bh, pad: pad,
+    baseX: X(0), baseY: Y(0),                 // 树干基在位图内的位置
+    screenX0: L.treeX - X(0),                 // 位图左上角的屏幕坐标（基点对齐 L.treeX）
+    screenY0: L.treeBaseY - Y(0),
+  };
+  B.treeStats = { segs: t.segs.length, snow: t.snow.length, clumps: t.clumps.length, truncated: t.truncated, maxRatio: t.maxRatio };
+}
+
+/** 远景松林（一条带 alpha 的剪影带，站在雪原表面线上） */
+function bakePines() {
+  const n = P.fx.pines;
+  const w = Math.ceil(W * 1.04), h = Math.ceil(H * 0.20);
+  const c = mkC(w, h), g = c.getContext('2d');
+  const rnd = mulberry32(P.tree.seed ^ 0x5f3a);
+  g.lineCap = 'round';
+  for (let i = 0; i < n; i++) {
+    const u = (i + 0.15 + rnd() * 0.7) / n;
+    const x = u * w;
+    const hh = h * (0.34 + rnd() * 0.56) * (0.75 + 0.25 * Math.abs(u - 0.5) * 2);
+    const bwid = hh * (0.30 + rnd() * 0.10);
+    const base = h - 1;
+    const tone = Math.round(136 + rnd() * 14);   // 比中景更淡 ⇒ 大气透视把松林推远
+    g.fillStyle = 'rgba(' + (tone - 10) + ',' + tone + ',' + (tone + 12) + ',0.32)';
+    // 层叠塔形（针叶）：**每棵自己的层数 + 每层自己的抖宽 + 顺风不对称**
+    // ⛔ 固定 tiers=5 的对称锯齿三角塔 ⇒ 一眼看出是同一个形状复制粘贴的 clip-art。
+    //   真雪压枝：枝尖**下垂**、外缘**鼓成雪包** ⇒ 轮廓是 scallop 不是锯齿。
+    const tiers = 4 + Math.floor(rnd() * 4);
+    const lean = (rnd() - 0.5) * 0.16;
+    const jit = [];
+    for (let k = 0; k < tiers; k++) jit.push(0.82 + rnd() * 0.36);
+    const tierY = (k) => {
+      const f = k / tiers;
+      return [base - hh * (f + 1 / tiers) * 0.95 + hh * 0.030, base - hh * (f + 0.30) * 0.95,
+        bwid * (1 - f * 0.72) * jit[k]];
+    };
+    g.beginPath();
+    g.moveTo(x, base);
+    for (let k = 0; k < tiers; k++) {
+      const t2 = tierY(k), xl = x - t2[2] * (1 + lean);
+      g.quadraticCurveTo(xl - t2[2] * 0.16, t2[0] - hh * 0.055, xl, t2[0]);
+      g.lineTo(x - t2[2] * 0.45 * (1 + lean), t2[1]);
+    }
+    g.lineTo(x, base - hh);
+    for (let k = tiers - 1; k >= 0; k--) {
+      const t2 = tierY(k), xr = x + t2[2] * (1 - lean);
+      g.lineTo(x + t2[2] * 0.45 * (1 - lean), t2[1]);
+      g.quadraticCurveTo(xr + t2[2] * 0.16, t2[0] - hh * 0.055, xr, t2[0]);
+    }
+    g.closePath(); g.fill();
+    // 枝上积雪：塔形左上方几道白（弱到只读作"挂雪"，⛔ 抢戏成白条）
+    g.strokeStyle = 'rgba(246,249,253,0.34)';
+    g.lineWidth = Math.max(0.8, hh * 0.028);
+    for (let k = 0; k < 3; k++) {
+      const f = (k + 0.6) / tiers, y = base - hh * (f + 0.4) * 0.95, ww = bwid * (1 - f * 0.72) * jit[Math.min(tiers - 1, k)];
+      g.beginPath(); g.moveTo(x - ww * 0.9, y); g.lineTo(x - ww * 0.1, y - hh * 0.05); g.stroke();
+    }
+  }
+  // ⛔ ctx.filter 不可用（电视侧无对应能力）⇒ 用「自身三次错位叠印」做廉价柔化，
+  //   把卡通锯齿三角的硬边糊掉 = 远景 + 飞雪遮挡该有的样子（只在烘焙期跑，不计逐帧 ops）
+  const tmp = mkC(w, h), tg = tmp.getContext('2d');
+  tg.drawImage(c, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const blit = (dx, dy, a) => { g.globalAlpha = a; g.drawImage(tmp, dx, dy); };
+  blit(0, 0, 0.62); blit(-1.7 * S, 0.6 * S, 0.34); blit(1.7 * S, -0.6 * S, 0.34); blit(0, 1.7 * S, 0.26);
+  g.globalAlpha = 1;
+  // 根部化入雪雾：底部 26% 用 destination-out 渐隐（⛔ 让松树"站"在一条硬线上）
+  const fade = g.createLinearGradient(0, h * 0.74, 0, h);
+  fade.addColorStop(0, 'rgba(0,0,0,0)'); fade.addColorStop(1, 'rgba(0,0,0,0.92)');
+  g.globalCompositeOperation = 'destination-out';
+  g.fillStyle = fade; g.fillRect(0, h * 0.74, w, h * 0.26);
+  g.globalCompositeOperation = 'source-over';
+  B.pines = c;
+  B.pinesMeta = { w: w, h: h, x0: (W - w) / 2, y0: L.hz - h + Math.round(H * 0.012) };
+}
+
+/** 雪原（地平线以下整幅烘焙：渐变 + 缓丘 + 风蚀纹） */
+function bakeGround() {
+  const c = mkC(W, H), g = c.getContext('2d');
+  const top = L.hz - H * 0.02;
+  const gr = g.createLinearGradient(0, top, 0, H);
+  gr.addColorStop(0, '#e9edf1'); gr.addColorStop(0.35, '#f2f5f8'); gr.addColorStop(1, '#dfe5ec');
+  g.fillStyle = gr; g.fillRect(0, top, W, H - top);
+  // 缓丘：三道雪坡（上亮下影）
+  for (let k = 0; k < 3; k++) {
+    const yBase = L.hz + H * (0.05 + k * 0.10);
+    g.beginPath(); g.moveTo(0, H);
+    g.lineTo(0, yBase);
+    for (let x = 0; x <= W; x += Math.max(6, W / 220)) {
+      const y = yBase + H * 0.020 * fbm(x / W * (3 + k), 11.3 + k * 3.1, 3, 0.5, 2) - H * 0.010 * Math.sin(x / W * (2.1 + k));
+      g.lineTo(x, y);
+    }
+    g.lineTo(W, H); g.closePath();
+    g.fillStyle = k === 2 ? 'rgba(255,255,255,0.55)' : 'rgba(248,251,255,0.42)';
+    g.fill();
+    // ⛔ 坡缘描边：在纯白雪原上会读成一条横贯全屏的等高线（capture a0 的"横向条带"）
+  }
+  // 大尺度雪坡调子：阴天的雪原不是"一张白纸 + 几道划痕"，而是一层层**边界极软的宽调子**
+  //   （背阴面偏冷、迎光面偏亮）。两条规则把它读成"地"而不是"条纹"：
+  //   ① 上下缘都用 fbm 起伏 ⇒ ⛔ 水平直边（直边 = 斑马线）；
+  //   ② 越靠近画面底 ⇒ 同一段实际距离被透视拉得越长 ⇒ 条带必须越来越高、间距越来越宽。
+  for (let i = 0; i < 7; i++) {
+    const r1 = hash2(i, 137), r2 = hash2(i, 149);
+    const yc = L.hz + H * (0.05 + 0.62 * Math.pow((i + 0.35 + 0.4 * r1) / 7, 1.35));
+    const hh = H * (0.016 + 0.052 * (i / 7)) * (0.7 + 0.7 * r2);
+    const st = Math.max(8, W / 160);
+    g.beginPath();
+    for (let x = 0; x <= W + st; x += st) {
+      const y = yc - hh * (0.55 + 0.50 * fbm(x / W * 2.6 + i * 3.3, 7.7 + i, 2, 0.5, 2));
+      if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    for (let x = W + st; x >= -st; x -= st) {
+      g.lineTo(x, yc + hh * (0.55 + 0.50 * fbm(x / W * 2.6 + i * 5.1, 2.3 + i, 2, 0.5, 2)));
+    }
+    g.closePath();
+    const cool = r1 > 0.48;
+    g.fillStyle = cool ? 'rgba(172,188,208,' + (0.070 + 0.050 * r2).toFixed(3) + ')'
+      : 'rgba(255,255,255,' + (0.160 + 0.120 * r2).toFixed(3) + ')';
+    g.fill();
+  }
+  // 风蚀纹（顺风向的雪脊）：**暗槽先铺宽而淡的两层，再压一条亮脊** ⇒ 读得出"起伏"。
+  // ⚠️ 旧口径是白/暗两条**等宽等长**的平行直线 ⇒ 在真机上读成一地蓝色短划痕（⛔ 不是雪）。
+  g.lineCap = 'round';
+  for (let i = 0; i < 130; i++) {
+    const r1 = hash2(i, 3), r2 = hash2(i, 7), r3 = hash2(i, 29), r4 = hash2(i, 47);
+    const dep = Math.pow(r1, 1.35);                       // 深度（0=靠地平线 … 1=画面底）
+    const y = L.hz + H * (0.035 + 0.62 * dep);
+    const x = r2 * W, len = W * (0.030 + 0.100 * r3) * (0.45 + 1.25 * dep);
+    const ww = Math.max(0.7, (0.7 + 1.9 * r3) * S * (0.45 + 1.25 * dep));
+    const sag = len * (0.02 + 0.05 * r4) * (r1 > 0.5 ? 1 : -1);   // 顺风微弯（⛔ 直线=尺子画的）
+    const dy = -len * (0.008 + 0.022 * r3);                       // 顺风端微微抬起
+    const stroke = (oy, w2, rgb, a) => {
+      g.strokeStyle = 'rgba(' + rgb + ',' + a + ')'; g.lineWidth = w2;
+      g.beginPath(); g.moveTo(x, y + oy); g.quadraticCurveTo(x + len * 0.5, y + oy + sag, x + len, y + oy + dy); g.stroke();
+    };
+    stroke(ww * 1.35, ww * 2.2, '176,188,203', (0.05 + 0.05 * r2).toFixed(3));
+    stroke(ww * 0.80, ww * 1.0, '176,188,203', (0.06 + 0.06 * r3).toFixed(3));
+    stroke(-ww * 0.90, ww * 2.6, '255,255,255', (0.13 + 0.10 * r2).toFixed(3));   // 迎光的雪坡面
+    // ⚠️ 脊线**必须比地亮**（否则读成划痕），但亮度要压得住：旧口径 0.72+0.24 的短白线
+    //    在 3× 判读下就是一地"白色小棍/糖针"。真风蚀脊是**又长又缓的低对比亮带**。
+    stroke(0, ww * 1.5, '255,255,255', (0.30 + 0.16 * r3).toFixed(3));
+  }
+  // 近景雪丘：低对比"亮顶 + 前缘暗阴"的一对椭圆 ⇒ 雪原是有体积的堆，不是一张白纸
+  for (let i = 0; i < 16; i++) {
+    const r1 = hash2(i, 61), r2 = hash2(i, 83), r3 = hash2(i, 101);
+    const dep = 0.35 + 0.65 * r1;
+    const x = (r2 * 1.2 - 0.1) * W, y = L.hz + H * (0.16 + 0.80 * dep);
+    const rw = W * (0.035 + 0.075 * r3) * (0.4 + dep);
+    const rh = rw * (0.16 + 0.10 * r1);
+    // 亮顶：⛔ 实心椭圆 ⇒ 边缘是一条硬弧（3× 判读成"一道划痕"）。雪丘的亮面同样没有边界。
+    g.save(); g.translate(x, y - rh * 0.35); g.scale(1, rh / rw);
+    const hgd = g.createRadialGradient(0, 0, 0, 0, 0, rw);
+    hgd.addColorStop(0, 'rgba(255,255,255,' + (0.30 + 0.20 * r3).toFixed(3) + ')');
+    hgd.addColorStop(0.58, 'rgba(255,255,255,' + (0.15 + 0.10 * r3).toFixed(3) + ')');
+    hgd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = hgd; g.beginPath(); g.arc(0, 0, rw, 0, TAU); g.fill(); g.restore();
+    // 前缘暗阴：⛔ 描边圆弧 ⇒ 在近景读成一道"笑痕/划痕"（capture ground 3× 判读）。
+    // 雪丘的暗侧没有边界，用一团偏下的冷阴径向渐变压出来。
+    const sh = rw * 0.72;
+    g.save(); g.translate(x, y + rh * 0.55); g.scale(1, (rh * 0.55) / sh);
+    const sg = g.createRadialGradient(0, 0, 0, 0, 0, sh);
+    sg.addColorStop(0, 'rgba(168,184,205,' + (0.13 + 0.10 * r1).toFixed(3) + ')');
+    sg.addColorStop(1, 'rgba(168,184,205,0)');
+    g.fillStyle = sg; g.beginPath(); g.arc(0, 0, sh, 0, TAU); g.fill(); g.restore();
+  }
+  // 树根雪堆：被风推出来的雪檐（顺风侧拖出一条舌）+ 靠树侧的暗阴 ⇒ ⛔ 树"贴"在雪面上
+  // ⚠️ 旧口径是"实心椭圆 + 一条下缘描边"⇒ 读成一个扣在地上的白盘子 / 一道笑痕。
+  //    雪檐没有硬边界 ⇒ 用**压扁的径向渐变**铺出体积，只在顶端留两道小亮脊。
+  const bx = L.treeX, by = L.treeBaseY, drw = Math.max(12, L.treeH * 0.20);
+  const drh = drw * 0.17;
+  const mound = (mx, my, rw, rh, a) => {
+    g.save(); g.translate(mx, my); g.scale(1, rh / rw);
+    const rg = g.createRadialGradient(0, 0, 0, 0, 0, rw);
+    rg.addColorStop(0, 'rgba(255,255,255,' + a + ')');
+    rg.addColorStop(0.62, 'rgba(252,253,255,' + (a * 0.62).toFixed(3) + ')');
+    rg.addColorStop(1, 'rgba(248,251,255,0)');
+    g.fillStyle = rg; g.beginPath(); g.arc(0, 0, rw, 0, TAU); g.fill(); g.restore();
+  };
+  mound(bx - drw * 0.14, by - drh * 0.10, drw, drh, 0.62);
+  mound(bx + drw * 0.52, by + drh * 0.16, drw * 0.62, drh * 0.72, 0.40);   // 顺风拖出的舌
+  // ⛔ 檐底暗弧：一条描了边的圆弧在近景读成横在树前的一道"笑痕"（capture ground 3× 判读）。
+  //    雪檐的暗侧同样没有边界 ⇒ 改用一团偏下的冷阴渐变。
+  const dsh = drw * 0.86;
+  g.save(); g.translate(bx - drw * 0.06, by + drh * 0.62); g.scale(1, (drh * 0.55) / dsh);
+  const dsg = g.createRadialGradient(0, 0, 0, 0, 0, dsh);
+  dsg.addColorStop(0, 'rgba(178,192,210,0.16)');
+  dsg.addColorStop(1, 'rgba(178,192,210,0)');
+  g.fillStyle = dsg; g.beginPath(); g.arc(0, 0, dsh, 0, TAU); g.fill(); g.restore();
+  for (let i = 0; i < 4; i++) {                                            // 檐顶小瘤：破掉椭圆感
+    const r1 = hash2(i, 211), r2 = hash2(i, 223);
+    mound(bx + (r1 - 0.42) * drw * 1.7, by - drh * (0.30 + 0.55 * r2), drw * (0.14 + 0.12 * r2), drh * (0.5 + 0.5 * r1), 0.42);
+  }
+  // 雪原大尺度起伏：几团**极低对比**的冷阴 + 暖亮面 ⇒ 让平原读成"有坡的堆"，不是一张白纸
+  for (let i = 0; i < 9; i++) {
+    const r1 = hash2(i, 257), r2 = hash2(i, 263), r3 = hash2(i, 269);
+    const dep = 0.15 + 0.85 * r1;
+    const cx2 = (r2 * 1.3 - 0.15) * W, cy2 = L.hz + H * (0.06 + 0.66 * dep);
+    const rw = W * (0.10 + 0.16 * r3) * (0.5 + dep), rh = rw * (0.10 + 0.06 * r1);
+    const cool = r3 > 0.45;
+    g.save(); g.translate(cx2, cy2); g.scale(1, rh / rw);
+    const rg = g.createRadialGradient(0, 0, 0, 0, 0, rw);
+    rg.addColorStop(0, cool ? 'rgba(176,190,209,0.20)' : 'rgba(255,255,255,0.30)');
+    rg.addColorStop(1, cool ? 'rgba(176,190,209,0)' : 'rgba(255,255,255,0)');
+    g.fillStyle = rg; g.beginPath(); g.arc(0, 0, rw, 0, TAU); g.fill(); g.restore();
+  }
+  // 人**站定**在雪原上 ⇒ 脚下烘一圈被踩陷的雪窝（暗壁 + 亮心，⛔ 逐帧；烘焙期一次）
+  // 旧版这里是"行走线上偶尔一小堆被踩实的雪"（跟着脚印一起删掉了）
+  {
+    const hh = L.personH, px = L.personX + hh * 0.028;   // 窝心略偏面向侧：要同时罩住两脚**和杖尖**（杖尖在 +0.206 hh）
+    g.fillStyle = 'rgba(158,171,189,0.24)';
+    g.beginPath(); g.ellipse(px, L.personY + hh * 0.006, hh * 0.215, hh * 0.050, 0, 0, TAU); g.fill();
+    g.fillStyle = 'rgba(252,253,255,0.34)';
+    g.beginPath(); g.ellipse(px, L.personY - hh * 0.012, hh * 0.130, hh * 0.026, 0, 0, TAU); g.fill();
+  }
+  // 地平线裁线（⛔ 直边）：雪原图层是从 `L.hz − H*0.02` 起整幅 blit 的**矩形位图**，
+  // 所以真机上那条横贯全屏的"尺子线"是位图上缘，而不是任何一条画的线。
+  // 修法=烘焙期按雪面波浪线 `destination-out` 切掉直边 ⇒ 松林/雾带一直露到雪面，
+  // 边缘由雪自己决定；再沿切线补一排**向上溢出的碎雪堆**，把剩下的微波打断成参差。
+  const cutPad = H * 0.012;
+  const lineY = (mx) => snowSurfaceY(mx) - cutPad;
+  g.globalCompositeOperation = 'destination-out';
+  g.beginPath(); g.moveTo(0, -1);
+  const cStep = Math.max(6, W / 240);
+  for (let x = 0; x <= W + cStep; x += cStep) g.lineTo(x, lineY(x));
+  g.lineTo(W + cStep, -1); g.closePath(); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < 26; i++) {
+    const r1 = hash2(i, 311), r2 = hash2(i, 331), r3 = hash2(i, 349);
+    const mx = (i + 0.15 + 0.7 * r1) / 26 * W;
+    const rw = W * (0.012 + 0.030 * r3), rh = Math.max(3, rw * (0.20 + 0.16 * r2));
+    mound(mx, lineY(mx) + rh * 0.15, rw, rh, 0.30 + 0.34 * r1);
+  }
+  B.ground = c;
+}
+
+/** 天幕（阴天高调渐变 + **烘焙期**叠云质；⛔ 太阳不烘焙，因 treble 要实时调亮度）
+ *  真实感的关键：阴天不是完美平滑的渐变，有一层一层厚薄不均的絮状起伏 ⇒ 但这些斑块
+ *  全部烘进那一张位图，逐帧成本仍然只有 1 次 blit（⛔ 逐帧叠云 = 白送 ops）。 */
+function bakeSky() {
+  const c = mkC(W, H), g = c.getContext('2d');
+  const skyBot = L.hz + H * 0.06;
+  const gr = g.createLinearGradient(0, 0, 0, skyBot);
+  gr.addColorStop(0, '#b9c0c9'); gr.addColorStop(0.45, '#ccd3da'); gr.addColorStop(0.82, '#e6eaee'); gr.addColorStop(1, '#eef1f4');
+  g.fillStyle = gr; g.fillRect(0, 0, W, skyBot);
+  const tex = P.fx.skyTex;
+  if (tex > 0) {
+    const rnd = mulberry32(P.tree.seed ^ 0x2f9c);
+    g.globalCompositeOperation = 'source-over';
+    for (let i = 0; i < 46; i++) {
+      const x = ((i + rnd()) / 46) * W * 1.16 - W * 0.08;
+      const v = Math.pow(rnd(), 1.35);
+      const y = (0.04 + 0.92 * v) * skyBot;
+      const r = (0.05 + rnd() * 0.14) * W;
+      const pale = rnd() < 0.46;                          // 薄处偏亮、厚处偏冷灰
+      const col = pale ? '252,253,255' : '152,162,177';
+      const a = clamp(tex * (0.30 + rnd() * 0.95) * (1 - 0.40 * (y / skyBot)), 0, 0.32);
+      const rg = g.createRadialGradient(x, y, 0, x, y, r);
+      rg.addColorStop(0, 'rgba(' + col + ',' + a.toFixed(4) + ')');
+      rg.addColorStop(0.55, 'rgba(' + col + ',' + (a * 0.42).toFixed(4) + ')');
+      rg.addColorStop(1, 'rgba(' + col + ',0)');
+      g.fillStyle = rg; g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // 贴地平线的增亮带（远处雪面把天光反照回来 ⇒ "越靠地平线越亮"是雪天特有的读感）
+    const band = g.createLinearGradient(0, skyBot - H * 0.19, 0, skyBot);
+    band.addColorStop(0, 'rgba(248,250,253,0)');
+    band.addColorStop(1, 'rgba(248,250,253,' + clamp(0.20 + tex * 4, 0, 0.6).toFixed(3) + ')');
+    g.fillStyle = band; g.fillRect(0, skyBot - H * 0.19, W, H * 0.19);
+  }
+  B.sky = c;
+}
+
+/** 阴云层 / 吹雪雾带：可平铺 fbm 位图（横向无缝 ⇒ 用周期噪声） */
+function bakeBand(name, w, h, oct, alpha, ySeed, periodic) {
+  const c = mkC(w, h), g = c.getContext('2d');
+  const im = g.createImageData(w, h), d = im.data;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      let v;
+      if (periodic) {
+        const a = (i / w) * TAU;
+        v = fbm(Math.cos(a) * 2.2 + 9.1, Math.sin(a) * 2.2 + j / h * 3.0 + ySeed, oct, 0.55, 2);
+      } else {
+        v = fbm(i / w * 6 + 3.3, j / h * 3 + ySeed, oct, 0.55, 2);
+      }
+      const edge = smoothstep(0, 0.22, j / h) * (1 - smoothstep(0.72, 1, j / h));
+      const a = clamp((v - 0.42) * 1.9, 0, 1) * alpha * edge;
+      const k = (j * w + i) * 4;
+      d[k] = 255; d[k + 1] = 255; d[k + 2] = 255; d[k + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(im, 0, 0);
+  B[name] = c;
+}
+
+/** 全屏调色（暗角 + 颗粒合并为一张 ⇒ 逐帧只 1 次 blit） */
+function bakeGrade() {
+  const c = mkC(W, H), g = c.getContext('2d');
+  const im = g.createImageData(W, H), d = im.data;
+  const cx = W / 2, cy = H * 0.52, rr = Math.hypot(cx, cy * (H / W) * 0) || 1;
+  const diag = Math.hypot(W / 2, H / 2);
+  const grainOn = P.gradeOn && P.fx.grain > 0;
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const r = Math.hypot(i - cx, j - cy) / diag;
+      let a = P.gradeOn ? P.fx.vignette * smoothstep(0.42, 1.06, r) : 0;
+      if (grainOn) a += hash2(i, j) * P.fx.grain * 0.55;
+      const k = (j * W + i) * 4;
+      d[k] = 40; d[k + 1] = 46; d[k + 2] = 58;
+      d[k + 3] = Math.round(clamp(a, 0, 1) * 255);
+    }
+  }
+  g.putImageData(im, 0, 0);
+  B.grade = c;
+  void rr;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4b · 人物 = **完全静止的手工固定剪影**
+        （所有者 2026-10-14 两次裁决：「人画的太简单了…那就用固定的剪影」→「还是一个小人在走动，
+         应该不用走动，固定剪影啊」。⇒ 剪影 = 手工轮廓，且**站定不行走**；脚印按同轮裁决彻底删除。）
+        点表手写（不是正弦驱动）⇒ Kotlin 侧照抄同一张表即可逐点对账。
+        每段肢体画成**有厚度的锥形多边形**（大衣/雪裤的鼓胀轮廓），再用 round-join 描边融接，
+        烘完是一整块**实心无接缝**剪影（⚠️ 各部件 alpha 必须恒 1.00：0.90/0.96/0.97 混用会让
+        重叠处透出更深的色块，在真实尺度上读成"破布"——这是第一轮返工没解决观感的真因之一）。
+        逐帧唯一变化 = **肩上积雪**（drawPersonSnow 的第二张位图 + globalAlpha=PR.dust）。
+        归一化坐标系：x 以人物高度 hh 为单位（+x = 面向方向），y 0=帽顶 … 1=鞋底。
+   ══════════════════════════════════════════════════════════════════════════ */
+const PERSON = {
+  // ⭐ 所有者选定参考图（剪影素材站·正面直立、一手垂下扶杖）⇒ 本版**照图量比例**重画，⛔ 凭手感。
+  //    上一版"不好看"的真因（`poses_stand.png` 判读出来的，⛔ 猜）：
+  //    ① 蘑菇＝没有脖子 ② 袍子＝手臂被大衣整个吃掉 ③ 桶＝肩腰等宽 ④ 灯泡头＝帽檐比头宽 + 圆顶
+  //    ⑤ 雪片**悬在形体内部**（白椭圆四周都还有一圈黑 ⇒ 读成衣服上的白斑，不是积雪）
+  //    参考图逐线量出（占身高）：下巴 0.145 · 肩线 0.190 · 腰 0.420 · 衣摆 0.510（**是夹克不是长大衣**）
+  //    · 膝 0.755 · 踝 0.954 ⇒ 6.9 头身；肩宽 0.224、髋宽 0.208 ⇒ 肩略宽于髋（男性的读法）。
+  //    本版另加一根**拄进雪里的杖**：全身唯一的硬斜线，且从物理上解释"为什么站着不动"。
+  //    归一化：y 0 = 帽顶 … 1 = 鞋底；x 以 hh 为单位，+x = 面向方向（朝树）。
+  sh: 0.192, hip: 0.420, hemB: 0.510, chin: 0.145,
+  // 躯干中轴的半宽。**肩关节只给 0.070**：躯干多边形在关节处的端面恒**垂直于中轴**，而中轴在肩段几乎竖直
+  //   ⇒ 半宽 0.112 会在肩上留一条**水平平板**（上一版读成防弹衣/圣诞老人偶的真因）。
+  //   真正的斜肩由下面的 `yoke` 承担（它的中轴是**横着走**的，端面因此是竖切 ⇒ 上沿自然斜下来）。
+  coatW: [0.032, 0.070, 0.106, 0.090, 0.114],  // 颈→肩→胸→腰→摆（腰 0.090 = 解剖肩 0.117 的 0.77 ⇒ 读得出腰）
+  // 肩线（yoke）：一条从**领根**斜向**肩峰**的带，左右对称、⛔ 分两片（分片会在颈两侧各留一个台阶）
+  //   量自参考图：领根 0.184 → 肩峰 0.206，水平到 ±0.104 ⇒ 肩坡 ≈12°，解剖肩半宽 = 0.104 + 0.013 ≈ 0.118
+  yoke: [[-0.104, 0.206], [-0.055, 0.190], [0.000, 0.184], [0.055, 0.190], [0.104, 0.206]],
+  yokeW: [0.013, 0.015, 0.012, 0.015, 0.013],
+  legW: [0.048, 0.042, 0.032],                  // 髋→膝→踝（长裤，直筒略收）
+  armW: [0.030, 0.028, 0.022],                  // ⭐ 手臂**垂在大衣外侧**：肘部外沿 0.156 > 同高胸侧 0.116
+  boot: { toe: 0.055, heel: 0.030, h: 0.026, w: 0.040 },
+  caneW: [0.010, 0.007],                        // ⚠️ 真杖径 ≈0.011；细件另用 `ink(…, swMul 0.30)` 收描边，
+                                                 //    否则融接描边（0.022 hh）会把它加粗到 2.2 倍 ⇒ 读成一块木板
+  stand: { name: '站立拄杖（面向树）', lean: 0.004,
+    // 腿的上关节取在腰线（0.430 < 衣摆 0.510）⇒ 藏在夹克里面；⛔ 取在摆下方会在身侧留一个洞
+    R: [[0.042, 0.430], [0.058, 0.755], [0.066, 0.954]],
+    L: [[-0.042, 0.430], [-0.058, 0.755], [-0.064, 0.954]],
+    // 肩关节：x 取在**肩峰正下方**（解剖肩半宽 0.117 − 上臂半宽 0.030 = 0.087）⇒ 外轮廓从斜肩**一路顺到手臂**，
+    //   ⛔ 取 0.100 时手臂外沿 0.130 比肩峰还宽 ⇒ 肩端各出一个台阶，读成翅膀/肩章。
+    //   y 取在 sh + 半个臂宽 以下（0.236）⇒ 手臂的平头端面整条藏在肩线下面。
+    // ⭐ 近侧臂**斜下去扶杖**（⛔ 垂直贴在身侧）：垂直时手臂内沿整个嵌进大衣 ⇒ 上身读成一口钟，
+    //   "有胳膊"完全看不出来；斜到杖上后腕部内沿 0.136 > 同高衣摆外沿 0.116 ⇒ 身侧露出一道**楔形空隙**，
+    //   那正是剪影里读得出"手臂"的唯一线索（参考图也是这么画的）。
+    aR: [[0.087, 0.236], [0.128, 0.380], [0.158, 0.500]],
+    aL: [[-0.087, 0.236], [-0.122, 0.372], [-0.118, 0.492]],
+    // 杖：柄压在近侧手套底下，杖尖**与两靴底同一条线**，且整条落在右腿外侧（⛔ 与腿重叠 ⇒ 读成三条腿）
+    cane: [[0.168, 0.524], [0.206, 0.9985]],
+    scarf: -0.030 },
+};
+/**
+ * 一段肢体 = 锥形多边形（⛔ 不是描边线：线宽在 56 px 高度上会读成火柴）
+ * @param pts 关节点（归一化）@param ws 各关节半宽 @param k 宽度倍率（T11 负样本用 ≤0.3）
+ */
+let PK = null, PKON = true;          // T11 用：非 null 时把**实际消费的顶点**采集下来（⛔ 另写一份面积公式会漂移）
+function limbPath(g, pts, ws, cx, top, hh, sgn, k) {
+  const P2 = pts.map((p) => [cx + p[0] * hh * sgn, top + p[1] * hh]);
+  const n = P2.length, left = [], right = [];
+  for (let i = 0; i < n; i++) {
+    const a = P2[Math.max(0, i - 1)], b = P2[Math.min(n - 1, i + 1)];
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    const dl = Math.hypot(dx, dy) || 1;
+    dx /= dl; dy /= dl;
+    const w = ws[i] * hh * k;
+    left.push([P2[i][0] - dy * w, P2[i][1] + dx * w]);
+    right.push([P2[i][0] + dy * w, P2[i][1] - dx * w]);
+  }
+  g.beginPath();
+  g.moveTo(left[0][0], left[0][1]);
+  for (let i = 1; i < n; i++) g.lineTo(left[i][0], left[i][1]);
+  for (let i = n - 1; i >= 0; i--) g.lineTo(right[i][0], right[i][1]);
+  g.closePath();
+  if (PK && PKON) PK.push(left.concat(right.slice().reverse()));
+}
+/** 圆/椭圆部件（头、连指手套、溅雪）：与 limbPath 同一套采集口径（12 边近似，面积差 1.3%） */
+function pkDisk(g, x, y, rx, ry, rot) {
+  const q = [];
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * TAU + (rot || 0);
+    const c = Math.cos(a), s = Math.sin(a);
+    q.push([x + (c * rx) * Math.cos(rot || 0) - (s * ry) * Math.sin(rot || 0),
+            y + (c * rx) * Math.sin(rot || 0) + (s * ry) * Math.cos(rot || 0)]);
+  }
+  g.beginPath(); g.ellipse(x, y, rx, ry, rot || 0, 0, TAU);
+  if (PK && PKON) PK.push(q);
+}
+/** 实心 + round-join 同色描边 ⇒ 相邻块**融成一条连续轮廓**（⛔ 分别画会留缝）
+ *  k 同时缩放描边宽度：否则细肢体（T11 负样本）会被描边重新喂胖，判据咬不住
+ *  swMul 再单独缩描边（⛔ 只给"细件"用）：融合描边宽 hh·0.022 ⇒ 每侧外扩 0.011 hh，
+ *  而手杖的半宽只有 0.010 hh —— 不吃这一项的话杖会被描边加到 2 倍粗，56 px 上读成一块门板。 */
+function ink(g, hh, alpha, k, swMul) {
+  g.fillStyle = 'rgba(40,44,51,' + alpha + ')';
+  g.strokeStyle = 'rgba(40,44,51,' + alpha + ')';
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  const m = swMul === undefined ? 1 : swMul;
+  g.lineWidth = Math.max(0.6, hh * 0.022 * (k === undefined ? 1 : k) * m);
+  g.fill(); g.stroke();
+}
+/** 夹克中轴（归一化关节点表）：drawPersonPose 与 T11 的结构判据**共用** ⇒ ⛔ 两处各写一份会漂移
+ *  五段 = 颈(chin) → 肩(sh) → 胸(0.345) → 腰(hip) → 摆(hemB)；上一版只有四段且首段坐在肩线上 ⇒ 没有脖子 */
+function coatSpine(pose) {
+  const ln = pose.lean, ex = 0.010 + ln * 0.6;
+  return [[ex, PERSON.chin], [0.004 + ln, PERSON.sh], [0.012 + ln * 0.7, 0.345],
+          [0.006 + ln * 0.4, PERSON.hip], [0.002 + ln * 0.2, PERSON.hemB]];
+}
+/** 肩线上沿 = `PERSON.yoke` 各关节**法向上侧**的连线（与 limbPath 同一套法向公式现算，⛔ 手抄一份 y 值）
+ *  用途有两个：① T11 的"可见颈长 / 解剖肩宽"从这里读；② 积雪必须压在这条线上。
+ *  上一版把肩雪写死在 `sh − 0.046`，而 sh 后来改到 0.210 ⇒ 那正好是下颌前面 ⇒ 白围脖糊脸（P25）。
+ *  ⇒ 由本函数导出后，改 yoke / yokeW / sh 都**不可能**把雪飘到脸上。 */
+function shoulderTop(pose) {
+  const s = PERSON.yoke, ws = PERSON.yokeW, ln = pose ? pose.lean : 0, out = [];
+  for (let i = 0; i < s.length; i++) {
+    const a = s[Math.max(0, i - 1)], b = s[Math.min(s.length - 1, i + 1)], p = s[i];
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+    const w = ws[i];
+    const u = [p[0] - dy * w + ln, p[1] + dx * w], d = [p[0] + dy * w + ln, p[1] - dx * w];
+    out.push(u[1] <= d[1] ? u : d);
+  }
+  return out;
+}
+/** 解剖肩半宽（yoke 最外关节的 |x| + 半宽）：T11 的腰/肩比与绝对宽度下限都吃这个数
+ *  ⛔ 吃 coatW[1]——那只是躯干平板的半宽，肩真正的宽度在 yoke 上 */
+function shoulderHalf() {
+  const s = PERSON.yoke, ws = PERSON.yokeW;
+  return Math.max(...s.map((p, i) => Math.abs(p[0]) + ws[i]));
+}
+/** 烘**深色剪影本体**（供 bakePerson 与 T11 的面积测量共用，⛔ 两份几何会漂移）
+ *  ⚠️ 全部部件 alpha 恒 1.00：混用 0.90/0.96/0.97 时重叠处会叠出更深一档的色块，
+ *     56 px 真实尺度上读成"身上挂着破布"（第一轮返工的观感没变，根因就在这里）。
+ *  ⚠️ 浅色部分（接触暗影之外的肩雪/帽雪）**不在这里**——它们在 B.personSnow 那张位图上，
+ *     逐帧用 globalAlpha=PR.dust 叠，才能演出"雪一直落、越积越厚、阵风一抖又掉"。 */
+function drawPersonPose(g, hh, cx, top, sgn, pose, k) {
+  const ln = pose.lean, sh = PERSON.sh, cw = PERSON.coatW;
+  const ex = 0.010 + ln * 0.6;                 // 头颈中轴略朝面向侧 ⇒ 参考图是"低头望树"
+  // ① 接触暗影：**一整条**压在两脚与杖尖之下（⛔ 三个落点各画一片 ⇒ 中间露出没压住的灰边，
+  //    截图判读到的"脚下垫了块灰毯"就是这条），⛔ 浅色系不计入剪影体量
+  PKON = false;
+  g.fillStyle = 'rgba(150,162,178,0.26)';
+  pkDisk(g, cx + sgn * hh * (0.030 + ln), top + hh * 0.990, hh * 0.205, hh * 0.019, 0); g.fill();
+  PKON = true;
+  // ② 远侧肢体（先画 ⇒ 被身体压住；靠"略窄"分前后，⛔ 不再靠半透明 = P23）
+  limbPath(g, pose.L, PERSON.legW, cx, top, hh, sgn, k * 0.94); ink(g, hh, '1.00', k);
+  drawBoot(g, pose.L[2][0], pose.L[2][1], cx, top, hh, sgn, k * 0.94);
+  limbPath(g, pose.aL, PERSON.armW, cx, top, hh, sgn, k * 0.88); ink(g, hh, '1.00', k);
+  // 远侧手套：⛔ 不画的话那条胳膊的末端是一个**平头端面** ⇒ 读成截肢（剪影里手只靠"末端比腕粗"成立）
+  pkDisk(g, cx - sgn * 0.126 * hh, top + hh * 0.502, hh * 0.019, hh * 0.023, -0.2 * sgn); ink(g, hh, '1.00', k);
+  // ③ 夹克：颈→肩→胸→腰→摆**五**关节。上一版只有四段、且第一段就坐在肩线上 ⇒ 没有脖子（真因 ①）；
+  //    半宽 0.140→0.112→0.134 的"肩宽—腰收—摆放"三段差 ⇒ 不再是桶（真因 ③）
+  limbPath(g, coatSpine(pose), cw, cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+  // ③b 肩线（yoke）：中轴**横向**走 ⇒ 端面竖切 ⇒ 上沿自然斜下来（⛔ 靠躯干半宽做肩，那必然是一条平板）
+  limbPath(g, PERSON.yoke.map((p) => [p[0] + ln, p[1]]), PERSON.yokeW, cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+  // ④ 围巾：只留一条顺风飘向**身后**的短尾（⛔ 飘向前方读成"没风"；⛔ 不做长垂带、不做绕颈粗圈，
+  //    65 px 真实尺度上它们会糊进下颌与大衣 ⇒ 又变回"没有脖子 / 胳膊没了"）
+  limbPath(g, [[ex - 0.006, sh - 0.036], [pose.scarf * 1.6 + ln, sh - 0.010],
+                [pose.scarf * 2.9 + ln, sh + 0.040], [pose.scarf * 3.6 + ln, sh + 0.095]],
+    [0.026, 0.019, 0.013, 0.008], cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+  // ⑤ 头：**四块**圆盘叠出"颅 + 下颌 + 帽檐 + 帽顶"。⛔ 一整颗大椭圆 + 一顶更宽的帽 ⇒ 灯泡头
+  //    （上一版的真因 ④：颅 0.050 却给帽檐 0.056，上面再扣一颗圆顶 ⇒ 读成一颗灯泡戴帽子）。
+  //    本版檐 = 颅宽（0.050，针织帽的折边本来就与头等宽），帽顶收成 0.042 且**平顶**（ry 只有 0.020）
+  //    ⇒ 头是"上面略收的柱"，不是"下面窄上面鼓的球"。下颌 0.034 > 衣领 0.032 ⇒ 两侧各有一道读得出的颈窝。
+  pkDisk(g, cx + sgn * hh * ex, top + hh * 0.074, hh * 0.048, hh * 0.052, 0); ink(g, hh, '1.00', k);
+  pkDisk(g, cx + sgn * hh * (ex + 0.003), top + hh * 0.124, hh * 0.034, hh * 0.022, 0); ink(g, hh, '1.00', k);
+  pkDisk(g, cx + sgn * hh * ex, top + hh * 0.038, hh * 0.050, hh * 0.015, 0); ink(g, hh, '1.00', k);
+  pkDisk(g, cx + sgn * hh * ex, top + hh * 0.020, hh * 0.042, hh * 0.020, 0); ink(g, hh, '1.00', k);
+  // ⑥ 近侧肢体、连指手套、**手杖**（杖是全身唯一的硬斜线 ⇒ 也是"为什么站着不动"的物理交代）
+  limbPath(g, pose.R, PERSON.legW, cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+  drawBoot(g, pose.R[2][0], pose.R[2][1], cx, top, hh, sgn, k);
+  limbPath(g, pose.aR, PERSON.armW, cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+  pkDisk(g, cx + sgn * 0.164 * hh, top + hh * 0.520, hh * 0.026, hh * 0.030, 0.2 * sgn); ink(g, hh, '1.00', k);
+  limbPath(g, pose.cane, PERSON.caneW, cx, top, hh, sgn, k); ink(g, hh, '1.00', k, 0.30);
+}
+/** 靴底下沿（归一化 y）。⛔ T12 与 bakePerson 各写一份公式会漂移 ⇒ 两边都调本函数 */
+function soleFrac(ankleY) { const b = PERSON.boot; return ankleY + b.h * 0.55 + b.w * 0.78; }
+/** 雪靴：站立 ⇒ 靴底恒贴地（⛔ 不再有 lift；有 lift 就是滑步的另一种写法） */
+function drawBoot(g, ax, ay, cx, top, hh, sgn, k) {
+  const b = PERSON.boot, y = ay;
+  limbPath(g, [[ax - b.heel * 0.6, y + 0.004], [ax + b.toe * 0.55, y + 0.010], [ax + b.toe, y + b.h * 0.55]],
+    [b.w, b.w * 0.90, b.w * 0.78], cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+  limbPath(g, [[ax, y + b.h * 0.1], [ax + b.toe * 0.92, y + b.h * 0.78]], [b.w * 0.72, b.w * 0.55], cx, top, hh, sgn, k); ink(g, hh, '1.00', k);
+}
+/** 烘**浅色积雪层**（独立位图 B.personSnow，逐帧按 PR.dust 淡入）
+ *  ⭐ 本版真因 ⑤：上一版每一片雪都**整块落在深色形体内部** ⇒ 白椭圆四周还有一圈黑 ⇒ 读成"衣服上
+ *     贴了块白斑"。积雪只能落在**朝上的水平面**上 ⇒ 每片的中心都要压在轮廓线本身上
+ *     （一半露在轮廓外与天光相接，一半盖在黑形上 ⇒ 才读得出"堆在上面"）。
+ *  ⛔ 肩雪不许越过下颌线：上一版取 `sh − 0.046` 正好糊在脸前（P25）。内端止于领窝外侧、
+ *     并沿肩斜线**斜着走**（⛔ 水平白条 ⇒ 那才是"白领/企鹅"）。 */
+function drawPersonSnow(g, hh, cx, top, sgn, pose) {
+  const ex = 0.010 + pose.lean * 0.6;
+  g.fillStyle = 'rgba(248,251,255,0.82)';
+  pkDisk(g, cx + sgn * hh * ex, top + hh * 0.010, hh * 0.040, hh * 0.014, 0); g.fill();   // 帽顶：中心就压在帽顶上沿
+  // 肩雪 = **沿肩线上沿一条不断开的带**（⛔ 左右各一片：中间必露出大衣上缘 ⇒ 读成白领/企鹅，即本函数头注的真因 ①）
+  // 中心线压在肩线上沿上：上 halves 露在天光里、下 halves 盖在黑形上 ⇒ 才读得出"堆在上面"（真因 ⑤）。
+  // 领窝处**收成细线**（0.005）：那里是脖子，堆成粗条就把颈窝糊掉 ⇒ 又变回蘑菇。
+  const st = shoulderTop(pose);
+  limbPath(g, st.map((p) => [p[0], p[1] - 0.005]),
+    [0.011, 0.014, 0.005, 0.014, 0.011], cx, top, hh, sgn, 1); g.fill();
+  pkDisk(g, cx + sgn * 0.164 * hh, top + hh * 0.490, hh * 0.020, hh * 0.008, 0); g.fill();  // 手套背
+}
+function bakePerson() {
+  const hh = Math.max(22, Math.round(L.personH));
+  const ww = Math.round(hh * 0.78), top = 8;       // 上沿留 8 px：帽顶/肩雪的中心压在轮廓线上 ⇒ 必然露出轮廓外
+  const c = mkC(ww, hh + 16);
+  drawPersonPose(c.getContext('2d'), hh, ww / 2, top, 1, PERSON.stand, 1);
+  const s = mkC(ww, hh + 16);
+  drawPersonSnow(s.getContext('2d'), hh, ww / 2, top, 1, PERSON.stand);
+  B.person = c;
+  B.personSnow = s;
+  B.personSize = { w: ww, h: hh + 16, top: top, hh: hh, soleY: top + hh * soleFrac(PERSON.stand.R[2][1]) };
+}
+
+/**
+ * T11 用：**纯几何**量法（⛔ 依赖光栅化——验证沙箱里 arc/ellipse 是空实现，像素法必然读到 0）
+ * 采集 drawPersonPose 实际消费的顶点 ⇒ 多边形面积和 ÷ 包围盒面积（"体量"）+ 宽高占比。
+ * 重叠块会重复计数，但判据吃的是**同一张点表的相对量**：k 缩小 ⇒ 体量近似线性下降。
+ */
+function personSil(k) {
+  const hh = 160, ww = Math.round(hh * 0.78), cx0 = ww / 2, top0 = 3;
+  const c = mkC(ww, hh + 8), g = c.getContext('2d');
+  const savePK = PK; PK = [];
+  drawPersonPose(g, hh, cx0, top0, 1, PERSON.stand, k);
+  const polys = PK; PK = savePK;
+  let area = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const q of polys) {
+    let s = 0;
+    for (let i = 0, n = q.length; i < n; i++) {
+      const a = q[i], b = q[(i + 1) % n];
+      s += a[0] * b[1] - b[0] * a[1];
+      if (a[0] < x0) x0 = a[0]; if (a[0] > x1) x1 = a[0];
+      if (a[1] < y0) y0 = a[1]; if (a[1] > y1) y1 = a[1];
+    }
+    area += Math.abs(s) / 2;
+  }
+  const box = Math.max(1e-6, (x1 - x0) * (y1 - y0));
+  // 逐块包围盒（÷hh）：T11 用它判"剪影里有没有一根伸到身体外侧的长条"= **手杖在不在**
+  const bars = polys.map((q) => {
+    let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
+    for (const p of q) {
+      if (p[0] < a) a = p[0]; if (p[0] > b) b = p[0];
+      if (p[1] < c) c = p[1]; if (p[1] > d) d = p[1];
+    }
+    return { x0: (a - cx0) / hh, x1: (b - cx0) / hh, y0: (c - top0) / hh, y1: (d - top0) / hh, w: (b - a) / hh, h: (d - c) / hh };
+  });
+  return { mass: area / (hh * hh), ratio: area / box, wFrac: (x1 - x0) / hh, hFrac: (y1 - y0) / hh, polys: polys.length, bars };
+}
+
+function bakeAll() {
+  bakeSky(); bakeGround(); bakePines(); bakeTree(); bakePerson();
+  // 带位图**按屏宽烘焙**（横向无缝）⇒ 铺屏数与分辨率无关；Kotlin 侧用 ImageShader(Repeat) 折叠为 1 op
+  const bw = Math.max(256, Math.round(W));
+  bakeBand('cloud', bw, Math.max(64, Math.round(H * 0.34)), 4, 0.30, 2.7, true);
+  bakeBand('veilFar', bw, Math.max(48, Math.round(H * 0.16)), 3, 0.42, 8.1, true);
+  bakeBand('veilNear', bw, Math.max(48, Math.round(H * 0.22)), 3, 0.55, 4.3, true);
+  bakeGrade();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   5 · 雪粒子（5 层，flat 数组，⛔ 逐帧分配）
+       层数 = 尺寸档数：一次批量（一条 Path + 一次提交）内 lineWidth/fillStyle 恒定，
+       所以"大小不一"只能靠**分更多层**拿到（⛔ 逐粒提交 ⇒ 撞 TV 图元红线）
+       冷暖 = 大气透视：远层偏冷灰（对比低，退到景深里），近层偏暖白（吃满漫射天光）
+       land = 该层在雪原上的**落雪深度**（0=地平线 … 1=画面底边）；它同时决定绘制次序：
+       land 小于人物深度 (personY−hz)/(H−hz)≈0.71 的层画在人**后**，反之画在人**前**
+       ⛔ 全层共用一条消隐线（= 原版缺陷：下半屏没有雪，"漫天"读成了"上半屏下雪"）
+   ══════════════════════════════════════════════════════════════════════════ */
+const LAYERS = [
+  { f: 0.30, r: 1.05, a: 0.30, share: 0.28, rgb: '224,231,241', shape: 'dot', land: 0.06 },    // 极远
+  { f: 0.50, r: 1.60, a: 0.52, share: 0.27, rgb: '236,242,250', shape: 'dot', land: 0.17 },    // 远
+  { f: 0.76, r: 2.45, a: 0.78, share: 0.25, rgb: '247,250,254', shape: 'dot', land: 0.36 },    // 中（≈树基深度）
+  { f: 1.00, r: 3.10, a: 0.97, share: 0.165, rgb: '255,253,248', shape: 'streak', land: 0.92 },  // 近（带拖尾）
+  { f: 1.42, r: 11.0, a: 0.135, share: 0.035, rgb: '255,252,246', shape: 'bokeh', lens: true, land: 1.0 },  // 前景虚化（贴镜头）
+];
+const FL = { n: 0, count: [], x: null, y: null, vx: null, vy: null, ph: null, rz: null, layer: null, off: [] };
+function allocFlakes(total) {
+  const NL = LAYERS.length;
+  const bounds = [];
+  let acc = 0;
+  for (let i = 0; i < NL; i++) { const c = Math.max(8, Math.round(total * LAYERS[i].share)); bounds.push([acc, acc + c]); acc += c; }
+  // 余数补给**末层**（只动末层右端点 ⇒ N 恰等于 total 且各层区间首尾相接；动第 0 层会留一段永不动的前缀）
+  const fix = total - acc; bounds[NL - 1][1] += fix;
+  FL.off = bounds.map((b) => b[0]);
+  FL.count = bounds.map((b) => b[1] - b[0]);
+  const N = FL.off[NL - 1] + FL.count[NL - 1];
+  FL.n = N;
+  FL.x = new Float32Array(N); FL.y = new Float32Array(N);
+  FL.vx = new Float32Array(N); FL.vy = new Float32Array(N);
+  FL.ph = new Float32Array(N); FL.rz = new Float32Array(N); FL.layer = new Uint8Array(N);
+  const rnd = mulberry32(P.tree.seed ^ 0x1234);
+  for (let li = 0; li < NL; li++) {
+    for (let i = FL.off[li]; i < FL.off[li] + FL.count[li]; i++) {
+      FL.layer[i] = li;
+      FL.x[i] = -0.06 * W + rnd() * W * 1.12;
+      FL.y[i] = -0.05 * H + rnd() * H * 1.05;
+      FL.ph[i] = rnd() * TAU;
+      // 逐粒半径抖动：dot/bokeh 层用它拿到"同一层内大小不一"（streak 层宽度恒定 ⇒ 拖尾才直）
+      FL.rz[i] = 1 + (rnd() * 2 - 1) * P.snow.rVar * (LAYERS[li].shape === 'bokeh' ? 0.85 : 1);
+      FL.vx[i] = 0; FL.vy[i] = 0;
+    }
+  }
+  return N;
+}
+function stepFlakes(dt, t, windPx, fallPx) {
+  const rnd = mulberry32((P.tree.seed ^ 0x9e37) + ((t * 60) | 0));
+  for (let i = 0; i < FL.n; i++) {
+    const li = FL.layer[i], Lf = LAYERS[li];
+    const sway = Math.sin(t * 1.7 + FL.ph[i]) * 0.22 + Math.sin(t * 0.43 + FL.ph[i] * 2.1) * 0.12;
+    FL.vx[i] = windPx * Lf.f * (1 + sway);
+    FL.vy[i] = fallPx * Lf.f * (0.85 + 0.30 * Math.sin(FL.ph[i] + t * 1.3));
+    FL.x[i] += FL.vx[i] * dt;
+    FL.y[i] += FL.vy[i] * dt;
+    // 消隐边界 = 该层在**雪原上的落雪深度**：远层落到地平线附近即隐（被远景雪面接住），
+    // 近层要穿过画面底边 ⇒ ⛔ 全层共用同一条线（会让"漫天"只剩上半屏）
+    const gY = Math.min(H * 1.045, L.hz + (H - L.hz) * Lf.land + 0.5 * (snowSurfaceY(FL.x[i]) - L.hz) + Lf.r * S * 0.5);
+    if (FL.y[i] > gY) {
+      FL.y[i] = -0.05 * H - rnd() * 0.05 * H;
+      FL.x[i] = -0.06 * W + rnd() * W * 1.12;
+    }
+    if (FL.x[i] > W * 1.07) FL.x[i] -= W * 1.14;
+    else if (FL.x[i] < -W * 0.07) FL.x[i] += W * 1.14;
+  }
+}
+
+/* ── 雪原冰晶闪光（湿雪面反照的"粼粼"感）：一张固定点表 + 纯 t 的相位 ⇒ ⛔ 逐帧随机数
+      （随机闪烁 = 频闪，且在 Kotlin 侧不可复现）；闪烁由「是否入选 + 菱形长短」表达，
+       因为一次批量 fill 内 alpha 恒定 ── */
+const GL = { n: 0, x: null, y: null, u: null, ph: null };
+function allocGlints() {
+  const n = Math.max(0, Math.round(P.fx.glint));
+  GL.n = n;
+  GL.x = new Float32Array(n); GL.y = new Float32Array(n);
+  GL.u = new Float32Array(n); GL.ph = new Float32Array(n);
+  const rnd = mulberry32(P.tree.seed ^ 0x77a1);
+  for (let i = 0; i < n; i++) {
+    const u = 0.04 + 0.96 * Math.pow(rnd(), 0.62);      // 深度（0=贴近地平线 … 1=画面底），偏近 ⇒ 远处长不了晶粒
+    GL.u[i] = u;
+    GL.x[i] = (rnd() * 1.1 - 0.05) * W;
+    GL.y[i] = L.hz + (H - L.hz) * u + 0.35 * (snowSurfaceY(GL.x[i]) - L.hz);
+    GL.ph[i] = rnd() * TAU;
+  }
+  return n;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6 · 音频模拟（合成律动）+ 平滑（Kotlin 侧 = AudioFrame + AudioSmoother）
+   ══════════════════════════════════════════════════════════════════════════ */
+const A = { bass: 0, mid: 0, treble: 0, energy: 0, beat: false, pulse: 0 };
+const SM = { bass: 0, energy: 0, treble: 0 };
+function audioSim(t) {
+  if (!P.audioSim) { A.bass = A.mid = A.treble = A.energy = 0; A.beat = false; A.pulse = 0; return; }
+  A.bass = clamp(0.34 + 0.26 * Math.sin(TAU * t / 1.9) + 0.12 * Math.sin(TAU * t / 0.47), 0, 1);
+  A.mid = clamp(0.30 + 0.22 * Math.sin(TAU * t / 2.7 + 1.1), 0, 1);
+  A.treble = clamp(0.26 + 0.20 * Math.sin(TAU * t / 3.6 + 2.2) + 0.10 * Math.sin(TAU * t / 0.83), 0, 1);
+  A.energy = clamp(0.32 + 0.20 * Math.sin(TAU * t / 6.2 + 0.4), 0, 1);
+  A.beat = (t % 0.5) < 0.02;
+  A.pulse = A.beat ? 1 : Math.max(0, A.pulse - 0.08);
+}
+function smoothAudio(dt) {
+  const k = 1 - Math.exp(-P.audio.smooth * 60 * dt);
+  SM.bass = lerp(SM.bass, A.bass, k);
+  SM.energy = lerp(SM.energy, A.energy, k);
+  SM.treble = lerp(SM.treble, A.treble, k);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   7 · 世界状态（风 / 摆 / 日晕）—— 纯氛围克制：只吃律动通道
+   ══════════════════════════════════════════════════════════════════════════ */
+const W_ = { wind: 0, gust: 0, sway: 0, sunGain: 1, windPx: 0, fallPx: 0, kWind: 0, kGust: 0, kSun: 0, swayMul: 0.45 };
+function worldState(t, dt) {
+  // 时间基线（⛔ 音频）：阵风与摆相是"大雪一直在下"的常驻氛围
+  const gust = Math.sin(TAU * t * P.wind.gustHz1) * 0.62 + Math.sin(TAU * t * P.wind.gustHz2 + 1.3) * 0.38;
+  W_.gust = gust;
+  // 音频增益（Kotlin 侧 = AudioSmoother 后的 bass/mid/treble）：无声时三者恒 0、swayMul 恒 0.45
+  W_.kWind = P.audio.kWind * SM.bass;
+  W_.kGust = P.audio.kGust * SM.energy;
+  W_.kSun = P.audio.kSun * SM.treble;
+  W_.swayMul = 0.45 + 0.55 * SM.bass;
+  W_.wind = P.wind.base * (1 + W_.kWind) * (1 + P.wind.gustAmp * (0.5 + W_.kGust) * gust);
+  W_.windPx = W_.wind * W;
+  W_.fallPx = P.snow.fall * H * (1 + 0.35 * W_.kWind);
+  const swayPhase = Math.sin(TAU * t * P.wind.swayHz) * 0.7 + Math.sin(TAU * t * P.wind.swayHz * 2.7 + 0.8) * 0.3;
+  W_.sway = P.wind.swayAmp * W * W_.swayMul * swayPhase;
+  W_.sunGain = 1 + W_.kSun * 0.35;
+  void dt;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   8 · 人 = **固定站立的剪影**（所有者 2026-10-14 裁决：「应该不用走动，固定剪影啊」）
+       ⇒ 逐帧唯一变化的量是**肩上的积雪**；⛔ 位移、⛔ 步态相位、⛔ 脚印
+   ══════════════════════════════════════════════════════════════════════════ */
+const PR = { dust: 0 };
+function resetPerson() { PR.dust = 0; }
+/** 肩雪累积：无风时单调升到 1，阵风（gust 超 shakeAt）开始抖落 ⇒ 积—落循环，画面仍有时间维度。
+ *  ⛔ 这里出现任何 x/phase/pose 推进都是回归（T6 判的就是"人逐帧不许动"）。 */
+function stepPerson(dt) {
+  const sh = Math.max(0, (W_.gust - P.person.shakeAt) / Math.max(1e-6, 1 - P.person.shakeAt));
+  PR.dust = clamp(PR.dust + dt / P.person.dustSecs - sh * sh * dt * P.person.shakeRate, 0, 1);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   9 · 逐帧计量（ops / 铺屏）
+   ══════════════════════════════════════════════════════════════════════════ */
+let OPS = 0, FILL = 0, MESH_ROWS = 0, COLLAPSE = 0;
+let PROF = {};
+/**
+ * @param cat      类别（profile 用）
+ * @param screens  该组 op **合计**铺屏数（1 = 一屏）
+ * @param n        该组的图元条数
+ * @param collapse 其中"Kotlin 侧折叠掉"的条数（网格行 / 平铺第二张）⇒ kotlinOps = OPS − COLLAPSE
+ */
+function op(cat, screens, n, collapse) {
+  const k = n || 1;
+  OPS += k; FILL += screens; COLLAPSE += collapse || 0;
+  const p = PROF[cat] || (PROF[cat] = { ops: 0, fill: 0 });
+  p.ops += k; p.fill += screens;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10 · 渲染（图层序即生产代码 drawContent 的调用序）
+   ══════════════════════════════════════════════════════════════════════════ */
+function drawSkyLayer() {
+  ctx.drawImage(B.sky, 0, 0, W, H); op('天幕渐变', 1.0);
+}
+function drawSun() {
+  const a = clamp(P.comp.sunStrength * W_.sunGain, 0, 0.6);
+  // ⛔ 无硬边日盘：三段低对比 ⇒ "阴天里很模糊的太阳"
+  // 双层（内核 + 2.1× 外晕）：单层径向渐变在高调灰底上几乎不可见（capture v1 判读「太阳不见了」）
+  const halo = (rad, mul) => {
+    const g = ctx.createRadialGradient(L.sunX, L.sunY, 0, L.sunX, L.sunY, rad);
+    g.addColorStop(0, 'rgba(255,252,242,' + (a * mul).toFixed(4) + ')');
+    g.addColorStop(0.42, 'rgba(255,251,244,' + (a * mul * 0.55).toFixed(4) + ')');
+    g.addColorStop(1, 'rgba(255,251,244,0)');
+    ctx.fillStyle = g; ctx.fillRect(L.sunX - rad, L.sunY - rad, rad * 2, rad * 2);
+    op('模糊日晕', (rad * 2 * rad * 2) / (W * H));
+  };
+  halo(L.sunR * 2.1, 0.62);
+  halo(L.sunR, 1);
+}
+function drawClouds(t) {
+  const c = B.cloud, cw = c.width, ch = c.height;
+  for (let i = 0; i < P.fx.cloudBands; i++) {
+    const y = H * (0.02 + i * 0.16);
+    const off = ((t * W_.windPx * (0.35 + i * 0.25)) % cw + cw) % cw;
+    ctx.globalAlpha = 0.55 - i * 0.10;
+    ctx.drawImage(c, -off, y, cw, ch);
+    ctx.drawImage(c, cw - off, y, cw, ch);   // 平铺第二张补左移后的右缘
+    ctx.globalAlpha = 1;
+    // 可见铺屏只有 ch/H（第二张大部分在屏外）；Kotlin 侧 ImageShader(Repeat) ⇒ 1 op
+    op('阴云层', ch / H, 2, 1);
+  }
+}
+function drawPines() {
+  const m = B.pinesMeta;
+  ctx.drawImage(B.pines, m.x0, m.y0, m.w, m.h);
+  op('远景松林', (m.w * m.h) / (W * H));
+}
+function drawVeil(bmp, y, hFrac, alpha, t, speed, cat) {
+  const c = bmp, cw = c.width, ch = Math.max(8, Math.round(H * hFrac));
+  const off = ((t * W_.windPx * speed) % cw + cw) % cw;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(c, -off, y, cw, ch);
+  ctx.drawImage(c, cw - off, y, cw, ch);
+  ctx.globalAlpha = 1;
+  op(cat, ch / H, 2, 1);
+}
+function drawGround() {
+  const top = L.hz - H * 0.02;
+  ctx.drawImage(B.ground, 0, top, W, H - top, 0, top, W, H - top);
+  op('雪原', (H - top) / H);
+}
+/** 冰晶闪光：一条 Path 装下本帧"亮着"的晶粒（竖长菱形 = 冰晶各向反射的读感）⇒ 1 次 fill */
+function drawGlints(t) {
+  if (GL.n === 0) return;
+  let k = 0, area = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath();
+  for (let i = 0; i < GL.n; i++) {
+    const s0 = Math.sin(t * (0.9 + 2.1 * GL.u[i]) + GL.ph[i]);
+    const b = s0 > 0 ? Math.pow(s0, 16) : 0;          // 尖锐脉冲 ⇒ 任一瞬间只有少数几粒在闪
+    if (b < 0.30) continue;
+    const w = (0.7 + 2.9 * GL.u[i]) * S * (0.55 + 0.45 * b), h = w * 2.8;
+    const x = GL.x[i], y = GL.y[i];
+    ctx.moveTo(x, y - h); ctx.lineTo(x + w, y); ctx.lineTo(x, y + h); ctx.lineTo(x - w, y);
+    ctx.closePath();
+    k++; area += w * h * 2;
+  }
+  if (k) { ctx.fill(); op('冰晶闪光', area / (W * H), 1); }
+}
+/** 大树：烘焙位图按行错位 ⇒ 风摆。Kotlin 侧 = 1 次 drawBitmapMesh（行偏移即网格顶点 x 位移） */
+function meshTable(sway, rows, cols) {
+  const meta = B.treeMeta;
+  const yBot = ((rows - 0.5) * meta.h) / rows, yTop = (0.5 * meta.h) / rows;
+  const span = Math.max(1e-6, yBot - yTop);
+  const out = [];
+  for (let j = 0; j < rows; j++) {
+    const yc = ((j + 0.5) * meta.h) / rows;
+    const u = clamp((yBot - yc) / span, 0, 1);        // 底行（树干着地处）u=0 ⇒ 偏移恒 0
+    const off = sway * Math.pow(u, 1.6);
+    for (let i = 0; i < cols; i++) out.push(off);      // ⭐ 同行各列恒等 ⇒ 横向不可能撕裂
+  }
+  return out;
+}
+function drawTree() {
+  const meta = B.treeMeta, rows = P.wind.rows;
+  MESH_ROWS = rows;
+  const offs = meshTable(W_.sway, rows, 1);
+  const sh = meta.h / rows;
+  for (let j = 0; j < rows; j++) {
+    const sy = j * sh;
+    const sH = Math.min(sh + 0.6, meta.h - sy);        // 末行夹到位图底（⛔ 越界取样）
+    ctx.drawImage(B.tree, 0, sy, meta.w, sH, meta.screenX0 + offs[j], meta.screenY0 + sy, meta.w, sH);
+  }
+  op('大树(网格行)', (meta.w * meta.h) / (W * H), rows, rows - 1);
+}
+/**
+ * 一层雪 = 一条 Path + **一次**提交（⛔ 两份实现会漂移；T5 计数的就是这段）
+ * dot/bokeh ⇒ 填充变半径圆（逐粒大小不一）；streak ⇒ 等宽圆头短线（拖尾必须等宽才不歪）
+ * @return 该层实际覆盖的像素面积（供铺屏计量，⛔ 用 π·r̄² 近似会低估抖动后的真实量）
+ */
+function drawSnowLayerOn(g, li) {
+  const Lf = LAYERS[li];
+  const base = Lf.r * S;
+  const a = FL.off[li], b = a + FL.count[li];
+  let area = 0;
+  if (Lf.shape === 'streak') {
+    const r = base;
+    g.lineCap = 'round';
+    g.strokeStyle = 'rgba(' + Lf.rgb + ',' + Lf.a.toFixed(3) + ')';
+    g.lineWidth = r * 2;
+    g.beginPath();
+    // 拖尾长度 = streak × **直径**，沿速度方向（⛔ 用「速度 × 秒数」：会被拉成 10×30 药丸）
+    const k = P.snow.streak * r * 2;
+    for (let i = a; i < b; i++) {
+      const sp = Math.hypot(FL.vx[i], FL.vy[i]) || 1;
+      g.moveTo(FL.x[i], FL.y[i]);
+      g.lineTo(FL.x[i] - FL.vx[i] / sp * k + 0.01, FL.y[i] - FL.vy[i] / sp * k + 0.01);
+      area += r * r * 3.1416 + k * r * 1.6;
+    }
+    g.stroke();
+  } else {
+    g.fillStyle = 'rgba(' + Lf.rgb + ',' + Lf.a.toFixed(3) + ')';
+    g.beginPath();
+    for (let i = a; i < b; i++) {
+      const r = Math.max(0.35, base * FL.rz[i]);
+      g.moveTo(FL.x[i] + r, FL.y[i]);
+      g.arc(FL.x[i], FL.y[i], r, 0, TAU);
+      area += r * r * 3.1416;
+    }
+    g.fill();
+  }
+  return area;
+}
+function drawSnowLayer(li) {
+  const area = drawSnowLayerOn(ctx, li);                              // ⭐ 整层 1 次提交
+  op('雪粒 L' + li, area / (W * H));
+}
+/** 人物 blit 矩形：**只由布局决定**（⛔ 不吃时间、不吃 PR 位移）⇒ T6 判"零位移"就判这个
+ *  返回值必须与 t 无关；旧版这里是 `PR.x`（行走位置），是所有者两次反馈"还在走动"的直接来源。 */
+function personRect() {
+  const sz = B.personSize;
+  return { x: L.personX - sz.w / 2, y: L.personY - sz.soleY, w: sz.w, h: sz.h };
+}
+function drawPerson() {
+  const r = personRect();
+  ctx.drawImage(B.person, r.x, r.y, r.w, r.h);
+  op('人物', (r.w * r.h) / (W * H));
+  // 肩上积雪：同一张轮廓的**浅色层**，透明度 = PR.dust（0→1 单调积厚，阵风抖落）
+  // ⇒ 逐帧唯一会变化的人物外观（所有者裁决：完全静止 + 雪落肩）
+  if (PR.dust > 0.004) {
+    ctx.globalAlpha = PR.dust;
+    ctx.drawImage(B.personSnow, r.x, r.y, r.w, r.h);
+    ctx.globalAlpha = 1;
+    op('肩雪盖', (r.w * r.h) / (W * H));
+  }
+}
+function drawGrade() {
+  if (!P.gradeOn) return;
+  ctx.drawImage(B.grade, 0, 0, W, H);
+  op('调色(暗角+颗粒)', 1.0);
+}
+function renderFrame(t) {
+  OPS = 0; FILL = 0; MESH_ROWS = 0; COLLAPSE = 0; PROF = {};
+  drawSkyLayer();
+  drawSun();
+  drawClouds(t);
+  drawPines();
+  drawVeil(B.veilFar, L.hz - H * 0.075, 0.16, 0.55, t, 0.30, '远景雾带');
+  drawGround();
+  drawGlints(t);                // 雪面冰晶闪烁（1 次批量 fill，⛔ 逐帧随机数）
+  drawSnowLayer(0);             // 极远 / 远：落雪深度比树还远 ⇒ 画在树**后**
+  drawSnowLayer(1);
+  drawTree();
+  drawSnowLayer(2);             // 中层：land≈0.36 ≈ 树基深度 ⇒ 树前、人后
+  drawPerson();
+  const nv = P.fx.veils;
+  for (let i = 0; i < nv; i++) {
+    drawVeil(B.veilNear, L.hz + H * (0.02 + i * 0.11), 0.22, 0.34 - i * 0.05, t, 0.55 + i * 0.30, '贴地吹雪');
+  }
+  drawSnowLayer(3);             // 近层（带拖尾）：画在人物**前**
+  drawGrade();
+  drawSnowLayer(4);             // 前景虚化贴**镜头** ⇒ 必须画在调色之后（否则被暗角压掉）
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   11 · 自检 T1–T12（每条含真负样本；数字一律现场再生）
+   ══════════════════════════════════════════════════════════════════════════ */
+function fpOf(list) {                       // 指纹：⛔ 用 JSON.stringify 比对象引用
+  let h = 2166136261;
+  const mix = (v) => { h = Math.imul(h ^ (Math.round(v * 1e6) | 0), 16777619); };
+  for (const s of list) { mix(s.x1); mix(s.y1); mix(s.x2); mix(s.y2); mix(s.w !== undefined ? s.w : s.sw); }
+  return h >>> 0;
+}
+function selfTest() {
+  const out = [];
+  const o = treeOpt();
+
+  // T1 树拓扑逐位复现
+  const a = buildTree(o), b = buildTree(o), c = buildTree(treeOpt({ seed: (o.seed + 1) | 0 }));
+  const fa = fpOf(a.segs) * 31 + fpOf(a.snow), fb = fpOf(b.segs) * 31 + fpOf(b.snow), fc = fpOf(c.segs) * 31 + fpOf(c.snow);
+  out.push({ id: 'T1', name: '树拓扑同种子逐位复现', pass: fa === fb && fa !== fc,
+    val: 'segs=' + a.segs.length + ' snow=' + a.snow.length + ' fp=' + fa,
+    neg: 'seed+1 ⇒ fp=' + fc + (fa !== fc ? '（负样本有效）' : '（⚠️ 负样本失效：RNG 未吃种子）') });
+
+  // T2 枝长单调衰减（⛔ 子枝不得长于父枝 × lenDecay × 抖动上界）
+  const t2 = buildTree(treeOpt({ maxSegs: 4000 }));
+  const ratioCap = P.tree.lenDecay * 1.16 + 1e-9;   // 生成期 kl = len·lenDecay·(0.86…1.16)
+  const bad2 = buildTree(treeOpt({ lenDecay: 1.06, maxSegs: 400 }));
+  out.push({ id: 'T2', name: '枝长单调衰减 ≤ lenDecay×抖动上界', pass: t2.maxRatio <= ratioCap && bad2.maxRatio > ratioCap,
+    val: 'max child/parent=' + t2.maxRatio.toFixed(3) + ' ≤ ' + ratioCap.toFixed(3) + '（segs=' + t2.segs.length + '）',
+    neg: 'lenDecay=1.06 ⇒ ' + bad2.maxRatio.toFixed(3) + '（越界即被抓，判据非空转）' });
+
+  // T3 积雪方向性：凡被画到雪的子段，其水平度必须 ≥ 阈值；且整体平均必须明显偏水平
+  const good = buildTree(o);
+  let viol = 0, sumH = 0;
+  for (const s of good.snow) { if (s.horiz < P.tree.snowHMin - 1e-12) viol++; sumH += s.horiz; }
+  const meanH = good.snow.length ? sumH / good.snow.length : 0;
+  const flipped = buildTree(treeOpt({ snowSign: -1 }));   // 负样本：判据吃 |uy|（竖直度）而非 |ux|
+  let sumF = 0;
+  for (const s of flipped.snow) sumF += s.horiz;
+  const meanF = flipped.snow.length ? sumF / flipped.snow.length : 1;
+  // ⭐ D13 的方向契约：每条雪脊的长轴必须**贴着某条枝段的轴向**。判法⛔ 不查"有没有 tx/ty 字段"
+  //    （写个字段就骗过去了），而是**独立地从 segs 反解**：必须存在一条枝段，其弦向与雪脊长轴夹角 ≤ 22°
+  //    **且**雪脊中心到该弦的垂距 ≤ 自身半径 ⇒ 挂歪、挂空、轴对齐椭圆三种形状一起抓。
+  const ridgeUnattached = (c, angOverride) => {
+    const ca = angOverride === undefined ? Math.atan2(c.ty, c.tx) : angOverride;
+    for (const s of good.segs) {
+      const dx = s.x2 - s.x1, dy = s.y2 - s.y1, L = Math.hypot(dx, dy);
+      if (L < 1e-9) continue;
+      // 弦无正反 ⇒ 把夹角折到 (−90°, 90°]。⚠️ 只能"超过 90° 就减 180°"，
+      // ⛔ 不能写成 `mod π − π/2`：那会把**完全平行**（raw=0）折成 −90°，判据把自己的实现判红。
+      let da = (Math.atan2(dy, dx) - ca) % Math.PI;
+      if (da < 0) da += Math.PI;
+      if (da > Math.PI / 2) da -= Math.PI;
+      if (Math.abs(da) > 22 * D2R) continue;
+      const t = Math.max(0, Math.min(L, ((c.x - s.x1) * dx + (c.y - s.y1) * dy) / L));
+      if (Math.hypot(c.x - (s.x1 + dx / L * t), c.y - (s.y1 + dy / L * t)) <= Math.max(c.r, 0.004)) return false;
+    }
+    return true;
+  };
+  let ridgeBad = 0;
+  for (const c of good.clumps) if (ridgeUnattached(c)) ridgeBad++;
+  // 负样本：把全部雪脊的长轴**抹平成轴对齐**（= 所有者否掉的那个形状），必须有一大批挂不住
+  let flatBad = 0;
+  for (const c of good.clumps) if (ridgeUnattached(c, 0)) flatBad++;
+  const ridgeOK = ridgeBad === 0 && flatBad >= good.clumps.length * 0.5;
+  out.push({ id: 'T3', name: '积雪只落在近水平枝段 + 雪脊长轴沿枝方向（⛔ 轴对齐团）',
+    pass: viol === 0 && meanH >= 0.75 && meanF <= 0.70 && ridgeOK,
+    val: '违规 ' + viol + '/' + good.snow.length + ' 段，平均水平度 ' + meanH.toFixed(3) + '（阈值 ' + P.tree.snowHMin.toFixed(3) + '）'
+      + ' · 雪脊 ' + good.clumps.length + ' 条，脱枝 ' + ridgeBad + '（必须 0）',
+    neg: '判据改用竖直度 ⇒ 平均 ' + meanF.toFixed(3) + '（≤0.70 即"雪挂陡枝"）· 长轴抹平成轴对齐 ⇒ 脱枝 '
+      + flatBad + '/' + good.clumps.length + '（<50% 即本判据空转）' });
+
+  // T4 粒子守恒 + 不出界（重生条件写反 ⇒ 立刻漏空或堆积）
+  const n0 = FL.n;
+  for (let i = 0; i < 600; i++) stepFlakes(1 / 60, i / 60, 30, 60);
+  const inBox = () => { let c = 0; for (let i = 0; i < FL.n; i++) if (FL.x[i] < -0.085 * W || FL.x[i] > W * 1.085 || FL.y[i] < -0.13 * H || FL.y[i] > H * 1.085) c++; return c; };
+  const oob = inBox();
+  const saveX = FL.x[0];
+  FL.x[0] = W * 3;
+  const injected = inBox();
+  FL.x[0] = saveX;
+  out.push({ id: 'T4', name: '雪粒守恒且不出界', pass: FL.n === n0 && oob === 0 && injected === 1,
+    val: 'n=' + FL.n + '（600 帧后仍恒等于初值 ' + n0 + '）越界 ' + oob,
+    neg: '人为挪 1 粒到 (3W, y) ⇒ 检出 ' + injected + ' 粒（必须恰为 1）' });
+
+  // T5 合批：**每一层**雪粒 = 一次提交（stroke 与 fill 都算一次；Kotlin 侧 = 1 次 drawPoints 或 1 次 drawPath）
+  function countCommits(g, fn) {
+    let n = 0; const os = g.stroke, of = g.fill;
+    g.stroke = function () { n++; }; g.fill = function () { n++; };
+    try { fn(); } finally { g.stroke = os; g.fill = of; }
+    return n;
+  }
+  const off = mkC(64, 64), og = off.getContext('2d');
+  const perLayer = [];
+  for (let li = 0; li < LAYERS.length; li++) perLayer.push(countCommits(og, () => { drawSnowLayerOn(og, li); }));
+  const batched = perLayer.every((v) => v === 1);
+  const naive = countCommits(og, () => {
+    const a0 = FL.off[0], b0 = a0 + 16;
+    for (let i = a0; i < b0; i++) { og.beginPath(); og.arc(FL.x[i], FL.y[i], 1, 0, TAU); og.fill(); }
+  });
+  out.push({ id: 'T5', name: '每层雪粒合批为 1 次提交（共 ' + LAYERS.length + ' 层）', pass: batched && naive === 16,
+    val: '各层提交 ' + perLayer.join('/') + '（粒数 ' + FL.count.join('/') + '）',
+    neg: '逐粒画 16 粒 ⇒ ' + naive + ' 次（计数口径按**提交次数**计，不是按粒数）' });
+
+  // T6 人物**零位移**（所有者 2026-10-14 第二次反馈：「还是一个小人在走动，应该不用走动，固定剪影啊」）
+  //    判据 = 600 帧里 personRect() 的 x/y 一位不差 + PR 里⛔ 不许有任何位移/朝向/相位键。
+  const r0 = personRect();
+  resetPerson();
+  let driftBad = 0;
+  for (let i = 0; i < 600; i++) {
+    const t = i / 60;
+    audioSim(t); smoothAudio(1 / 60); worldState(t, 1 / 60); stepPerson(1 / 60);
+    const r = personRect();
+    if (Math.abs(r.x - r0.x) > 1e-9 || Math.abs(r.y - r0.y) > 1e-9) driftBad++;
+  }
+  const moveKeys = ['x', 'y', 'dir', 'pose', 'face', 'stepT', 'turnT'].filter((k) => k in PR);
+  let walkBad = 0;                               // 负样本：旧步态的 x 随 pace 推进 ⇒ 判据必须抓到
+  {
+    let x = r0.x;
+    for (let i = 1; i < 600; i++) { x = r0.x + i * 0.02; if (Math.abs(x - r0.x) > 1e-9) walkBad++; }
+  }
+  resetPerson();
+  out.push({ id: 'T6', name: '人物零位移（固定站桩，PR ⛔ 无位移状态）',
+    pass: driftBad === 0 && moveKeys.length === 0 && walkBad > 0 && r0.w > 0 && r0.h > 0,
+    val: '600 帧 blit 位移违例 ' + driftBad + ' · 位移类键 [' + moveKeys.join(',') + '] · 站点 x=' + r0.x.toFixed(2) + ' y=' + r0.y.toFixed(2),
+    neg: '按旧步态让 x 每帧 +0.02 ⇒ 违例 ' + walkBad + '/599（判据抓得住"还在走"）' });
+
+  // T7 肩雪：180 s 内始终有界、**既会长厚也会被阵风抖落**（⛔ 由步态或位移驱动）
+  resetPerson();
+  let dMin = 1, dMax = 0, dec = 0, prevU = 0, oobD = 0;
+  for (let i = 0; i < 60 * 180; i++) {
+    const t = i / 60;
+    audioSim(t); smoothAudio(1 / 60); worldState(t, 1 / 60); stepPerson(1 / 60);
+    if (!(PR.dust >= 0 && PR.dust <= 1) || !isFinite(PR.dust)) oobD++;
+    if (PR.dust < prevU - 1e-12) dec++;
+    prevU = PR.dust;
+    if (PR.dust < dMin) dMin = PR.dust;
+    if (PR.dust > dMax) dMax = PR.dust;
+  }
+  const noShakeDec = (function () {              // 负样本：抖落速率置 0（只增不减）⇒ 下降帧必然为 0
+    const at = P.person.shakeRate;
+    P.person.shakeRate = 0;
+    resetPerson();
+    let p = 0, b = 0;
+    for (let i = 0; i < 60 * 180; i++) {
+      const t = i / 60;
+      audioSim(t); smoothAudio(1 / 60); worldState(t, 1 / 60); stepPerson(1 / 60);
+      if (PR.dust < p - 1e-12) b++;
+      p = PR.dust;
+    }
+    P.person.shakeRate = at;
+    return b;
+  })();
+  const dEnd = PR.dust;
+  resetPerson();
+  out.push({ id: 'T7', name: '肩雪有界 + 阵风抖落（180 s）',
+    pass: oobD === 0 && dEnd >= 0 && dEnd <= 1 && dec > 0 && noShakeDec === 0 && dMax > dMin,
+    val: '越界 ' + oobD + ' · 区间 [' + dMin.toFixed(3) + ', ' + dMax.toFixed(3) + '] · 下降帧 ' + dec + '（阵风抖落生效）',
+    neg: '抖落速率置 0 ⇒ 下降帧 ' + noShakeDec + '（=0 ⇒ "只增不减"会被本判据抓到）' });
+  resetPerson();
+
+  // T8 静默 ⇒ 三个音频增益严格收敛到基线（⛔ 拿像素判：雪与风是常驻动画）
+  const saveSim = P.audioSim;
+  P.audioSim = false;
+  SM.bass = SM.energy = SM.treble = 0.9;
+  for (let i = 0; i < 900; i++) { audioSim(i / 60); smoothAudio(1 / 60); worldState(i / 60, 1 / 60); }
+  const dK = Math.max(Math.abs(W_.kWind), Math.abs(W_.kGust), Math.abs(W_.kSun)), dSway = Math.abs(W_.swayMul - 0.45);
+  P.audioSim = true;
+  for (let i = 0; i < 90; i++) { audioSim(i / 60); smoothAudio(1 / 60); worldState(i / 60, 1 / 60); }
+  const liveK = Math.max(Math.abs(W_.kWind), Math.abs(W_.kSun));
+  P.audioSim = saveSim;
+  out.push({ id: 'T8', name: '无声 ⇒ 音频增益收敛到静态基线', pass: dK < 1e-6 && dSway < 1e-6 && liveK > 0.02,
+    val: 'max|Δk|=' + dK.toExponential(1) + ' |ΔswayMul|=' + dSway.toExponential(1) + '（900 帧后）',
+    neg: '有音 90 帧 ⇒ max|Δk|=' + liveK.toFixed(4) + '（映射确实活着）' });
+
+  // T9 风摆网格：底行恒 0、沿高单调、同行各列恒等（Kotlin drawBitmapMesh 顶点表的必要条件）
+  const rows = P.wind.rows, cols = 4;
+  const tab = meshTable(10, rows, cols);
+  let mono9 = true, colSpread = 0;
+  for (let j = 0; j < rows; j++) for (let i = 1; i < cols; i++) colSpread = Math.max(colSpread, Math.abs(tab[j * cols + i] - tab[j * cols]));
+  for (let j = rows - 1; j > 0; j--) if (tab[j * cols] > tab[(j - 1) * cols] + 1e-9) mono9 = false;
+  const baseZero = Math.abs(tab[(rows - 1) * cols]) < 1e-9;
+  const torn = (function () {                        // 负样本：逐 (行,列) 独立填表（= 忘记"偏移只随行走"）
+    let m = 0;
+    for (let j = 0; j < rows; j++) {
+      for (let i = 1; i < cols; i++) {
+        const v = 10 * (0.5 + hash2(j * cols + i, 5));
+        m = Math.max(m, Math.abs(v - tab[j * cols]));
+      }
+    }
+    return m;
+  })();
+  out.push({ id: 'T9', name: '摆幅基部=0 且沿高单调 且同行各列恒等', pass: baseZero && mono9 && colSpread === 0 && torn > 0.5,
+    val: '底行=' + tab[(rows - 1) * cols].toFixed(3) + ' 顶行=' + tab[0].toFixed(3) + ' 行内列间差=' + colSpread + '（rows=' + rows + '）',
+    neg: '逐列独立填表 ⇒ 最大列间差 ' + torn.toFixed(2) + ' px（>0.5 即被抓住 ⇒ 判据有牙齿）' });
+
+  // T10 预算闸门（数字由 stats 现场再生；负样本 = 雪逐粒提交的量级）
+  const st = stats(60);
+  const CAP = { ops: 30, fillLow: 6.0, fillMed: 7.0, fillHigh: 7.6 };
+  const naiveOps = st.HIGH.kotlinOps + st.HIGH.flakes;
+  out.push({ id: 'T10', name: '三档图元/铺屏在 TV 安全线内',
+    pass: st.LOW.fill <= CAP.fillLow && st.MED.fill <= CAP.fillMed && st.HIGH.fill <= CAP.fillHigh && st.HIGH.kotlinOps <= CAP.ops,
+    val: 'LOW ' + st.LOW.kotlinOps + ' op / ' + st.LOW.fill.toFixed(2) + ' 屏 · MED ' + st.MED.kotlinOps + ' / ' + st.MED.fill.toFixed(2) + ' · HIGH ' + st.HIGH.kotlinOps + ' / ' + st.HIGH.fill.toFixed(2) + '（上限 ' + CAP.ops + ' op / ' + CAP.fillHigh + ' 屏）',
+    neg: '雪若逐粒提交 ⇒ HIGH ' + naiveOps.toFixed(0) + ' op（上限的 ' + (naiveOps / CAP.ops).toFixed(0) + '× ⇒ 合批是刚需不是优化）' });
+
+  // T11 人物 = **照参考图量出来的实心剪影**。⛔ 像素法（getImageData 数 alpha）在验证沙箱里恒为 0
+  //      （arc/ellipse 是空实现）⇒ 判据必须纯几何。
+  //      ⭐ 上一版被判"不好看"，四条真因各配一条**结构**判据（⛔ 把体量阈值调低让它过 ⇒ 那是放宽闸门）：
+  //      ① 蘑菇＝没有脖子 ② 袍子＝手臂被大衣整个吃掉 ③ 桶＝肩腰等宽 ④ 大头＋多余绒球
+  //      ⭐ 第三轮改的**记账**（所有者 2026-10-14：「人像剪影不好看」⇒ 照参考图重画，桶腰/粗臂全削掉）：
+  //      旧版"绝对体量 ≥ 0.25"这条**删除**，⛔ 不是调低——理由写在这里，不留糊涂账：
+  //        · 体量 ≡ 填框率 × 宽占比 × 高占比（personSil 的**恒等式**，不是新测量）。上一版 0.259 = 0.762×0.342×0.996，
+  //          其中 0.762 那份"填得满"正是**桶状躯干**贡献的——而桶腰本身就是被判掉的缺陷。
+  //        · 更糟的是 0.25 相对 0.259 只有 3.6% 余量 ⇒ 它从来不是推导出来的闸门，只是"贴着上一次渲染色"抄的数。
+  //        · 削掉桶腰 ⇒ 体量必然降到 0.231，而**这恰是改对了的证据**；照旧闸门就得把腰加回去（=重新引入缺陷）。
+  //      ⇒ 换成两条**有牙齿**的：宽占比（体量想靠"框窄"作弊就没处藏）＋ 部件绝对宽度下限（火柴人真正克星）。
+  //        后者读的是 PERSON 表本身：谁把腿/臂/肩削成火柴，⛔ 不必等面积变红，本条当场红。
+  const silA = personSil(1);
+  const stkA = personSil(0.26);
+  const silMass = silA.mass, silRatio = silA.ratio, silH = silA.hFrac, silW = silA.wFrac;
+  const stkMass = stkA.mass, stkRatio = stkA.ratio;
+  const cw = PERSON.coatW, spine = coatSpine(PERSON.stand);
+  /** 折线 (pts,ws) 在高度 y 处的**外沿** x（中心 + 半宽，线性插值） */
+  const edgeAt = (pts, ws, y) => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (y >= Math.min(a[1], b[1]) && y <= Math.max(a[1], b[1])) {
+        const f = (y - a[1]) / ((b[1] - a[1]) || 1);
+        return (a[0] + (b[0] - a[0]) * f) + (ws[i] + (ws[i + 1] - ws[i]) * f);
+      }
+    }
+    return -Infinity;
+  };
+  const elbowY = PERSON.stand.aR[1][1];
+  const armOut = edgeAt(PERSON.stand.aR, PERSON.armW, elbowY) - edgeAt(spine, cw, elbowY);
+  // ⭐ 颈长与肩宽都从 **yoke 上沿**读，⛔ 读 sh / coatW[1]：那两处只是躯干中轴的关节参数，
+  //    真正的"下巴到肩峰"由斜肩线决定（本版把肩做成斜的后，sh=0.192 已经不是肩峰高度了）。
+  const shHalf = shoulderHalf();
+  const neckLen = shoulderTop(PERSON.stand)[2][1] - PERSON.chin;
+  // 四条判据写成**函数**，正样本喂真表、负样本喂"把真因装回去"的扰动表 ⇒ ⛔ 判据空转
+  const waistOK = (waist, hem, shoulder) => waist <= shoulder * 0.85 && hem > waist;
+  const neckOK = (nlen, collar, shoulder) => nlen >= 0.018 && collar <= shoulder * 0.30;
+  const armOK = (o) => o >= 0.015;
+  const headOK = (chin) => chin <= 0.150;
+  const caneOK = (bars) => bars.some((b) => b.x1 >= 0.160 && b.h >= 0.40);   // 一根伸到身体右侧外侧的长条 ⇒ 只有杖满足
+  // 宽占比下限由**点表**推（⛔ 抄测量值）：面向侧到杖外沿 0.206+0.010=0.216，背侧到肩峰 −(0.104+0.013)=−0.117
+  //   ⇒ 声明轮廓宽 0.333，闸门取其 90% = **0.30**（"实际轮廓必须真的铺开点表声明的宽度"）
+  const widthOK = (w) => w >= 0.30;
+  // 部件**绝对**半宽下限（单位 hh，⛔ 不是比例）：解剖肩 / 大腿 / 上臂 / 靴 ⇒ 火柴人的真正克星
+  const anatomyOK = (sh, th, arm, boot) => sh >= 0.095 && th >= 0.038 && arm >= 0.022 && boot >= 0.028;
+  const hasCane = caneOK(silA.bars);
+  const negBarrel = !waistOK(shHalf, cw[4], shHalf);                 // 桶：腰 = 肩、摆不放出
+  const negMushroom = !neckOK(0.000, cw[0], shHalf);                 // 蘑菇：下巴直接坐在肩线上
+  const negArmless = !armOK(armOut - 0.060);                         // 袍子：手臂缩回大衣里
+  const negBigHead = !headOK(0.200);                                 // 卡通大头：5 头身
+  const negNoCane = !caneOK(silA.bars.filter((b) => !(b.x1 >= 0.160 && b.h >= 0.40)));
+  const negNarrow = !widthOK(silW - 0.10);                           // 框变窄（杖/围巾/手臂收进身体）
+  const negStick = !anatomyOK(shHalf * 0.26, PERSON.legW[0] * 0.26,
+    PERSON.armW[0] * 0.26, PERSON.boot.w * 0.26);                   // 火柴人：半宽表整体缩到 0.26×
+  out.push({ id: 'T11', name: '人物剪影：颈/腰/臂/头/杖/宽/解剖七条结构判据 + 细线双上限',
+    pass: silRatio >= 0.60 && silH >= 0.96 && stkMass <= silMass * 0.40 && stkRatio <= silRatio * 0.55
+      && waistOK(cw[3], cw[4], shHalf) && neckOK(neckLen, cw[0], shHalf) && armOK(armOut) && headOK(PERSON.chin) && hasCane
+      
+      && widthOK(silW) && anatomyOK(shHalf, PERSON.legW[0], PERSON.armW[0], PERSON.boot.w)
+      && negBarrel && negMushroom && negArmless && negBigHead && negNoCane && negNarrow && negStick,
+    val: '块数 ' + silA.polys + '（⛔ 不作判据，只记账）· 体量 ' + silMass.toFixed(3) + '（÷ hh²，只记账⛔不作判据）· 填框率 ' + silRatio.toFixed(3)
+      + ' · 宽占比 ' + silW.toFixed(3) + ' · 高占比 ' + silH.toFixed(3)
+      + ' · 颈长 ' + neckLen.toFixed(3) + '（领/肩宽比 ' + (cw[0] / shHalf).toFixed(2) + '）· 腰/肩 ' + (cw[3] / shHalf).toFixed(2)
+      + ' · 肘外溢 ' + armOut.toFixed(3) + ' · 头 ' + (1 / PERSON.chin).toFixed(1) + ' 头身 · 杖 ' + (hasCane ? '在' : '缺'),
+    neg: '肢体半宽 0.26× ⇒ 体量 ' + stkMass.toFixed(3) + '（' + (stkMass / silMass * 100).toFixed(0) + '%）· 填框率 '
+      + (stkRatio / silRatio * 100).toFixed(0) + '% · 解剖下限 ' + (shHalf * 0.26).toFixed(3) + '（肩）⇒ 三条都咬得住；'
+      + '桶/蘑菇/无臂/大头/无杖/窄框/火柴七种装法各自把本条判据翻掉' });
+
+  // T12 站姿：**两只脚 + 杖尖都踩在雪面上**、两踝真的分开，且**人脚线 == 树基线**
+  //      （所有者 2026-10-14 裁决「人要跟树在一个水平线上」⇒ personY 不再是参数，由 layout 直接取 treeBaseY；
+  //       留一个独立字段就是留一条会漂移的路，所以这里同时判"字段不存在"）
+  const BAND = [0.9950, 1.0045];
+  const soleR = soleFrac(PERSON.stand.R[2][1]), soleL = soleFrac(PERSON.stand.L[2][1]);
+  const inBand = (v) => v >= BAND[0] && v <= BAND[1];
+  const badSole = (inBand(soleR) ? 0 : 1) + (inBand(soleL) ? 0 : 1) + (inBand(PERSON.stand.cane[1][1]) ? 0 : 1);
+  const ankleGap = Math.abs(PERSON.stand.R[2][0] - PERSON.stand.L[2][0]);
+  const legGap = ankleGap - 2 * PERSON.legW[2];                        // 两裤腿之间的**净**缝（重叠了就读成一条裙子）
+  const sameLine = Math.abs(L.personY - L.treeBaseY) < 1e-9 && P.comp.personY === undefined;
+  const lifted = soleFrac(PERSON.stand.R[2][1] - 0.02);                // 负样本：一脚抬起 0.02 ⇒ 必出带
+  const floated = PERSON.stand.cane[1][1] - 0.05;                      // 负样本：杖尖悬在半空
+  const negLine = Math.abs((L.treeBaseY + 0.02 * H) - L.treeBaseY) < 1e-9;   // 负样本：把人挪回独立参数
+  out.push({ id: 'T12', name: '双脚+杖尖踩线 · 双腿分得开 · 人脚线与树基同线',
+    pass: badSole === 0 && ankleGap >= 0.10 && legGap >= 0.050 && sameLine
+      && lifted < BAND[0] && !inBand(floated) && !negLine,
+    val: '鞋底 ' + soleL.toFixed(4) + ' / ' + soleR.toFixed(4) + ' · 杖尖 ' + PERSON.stand.cane[1][1].toFixed(4)
+      + '（带 ' + BAND[0].toFixed(4) + '…' + BAND[1].toFixed(4) + '）· 踝距 ' + ankleGap.toFixed(3) + ' 净缝 ' + legGap.toFixed(3)
+      + ' · personY−treeBaseY=' + (L.personY - L.treeBaseY).toFixed(6) + ' px',
+    neg: '靴底上移 0.02 ⇒ ' + lifted.toFixed(4) + '（出带）· 杖尖上移 0.05 ⇒ ' + floated.toFixed(4)
+      + '（悬空）· 把 personY 挪回独立参数 ⇒ 同线判据即红' });
+
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   12 · 计量（⛔ 文档数字手抄：一律由本节再生）
+   ══════════════════════════════════════════════════════════════════════════ */
+function stats(n) {
+  const savedTier = P.tier, savedW = W, savedH = H;
+  const savedVals = {};
+  for (const key in P) if (typeof P[key] === 'object') for (const k2 in P[key]) savedVals[key + '.' + k2] = P[key][k2];
+  // 计量分辨率固定 960×540：所有铺屏量都按屏占比定义 ⇒ 与真实视口无关，且避免三档全尺寸烘焙的耗时
+  resizeTo(960, 540);
+  const out = {};
+  for (const tier of ['LOW', 'MED', 'HIGH']) {
+    applyTier(tier, true);
+    resizeTo(960, 540);
+    let so = 0, sf = 0, sk = 0; const prof = {};
+    for (let i = 0; i < n; i++) {
+      const t = i / 60;
+      audioSim(t); smoothAudio(1 / 60); worldState(t, 1 / 60);
+      stepFlakes(1 / 60, t, W_.windPx, W_.fallPx); stepPerson(1 / 60);
+      renderFrame(t);
+      so += OPS; sf += FILL; sk += OPS - COLLAPSE;
+      for (const k in PROF) {
+        const p = prof[k] || (prof[k] = { ops: 0, fill: 0 });
+        p.ops += PROF[k].ops; p.fill += PROF[k].fill;
+      }
+    }
+    for (const k in prof) { prof[k].ops /= n; prof[k].fill /= n; }
+    out[tier] = { ops: +(so / n).toFixed(1), fill: +(sf / n).toFixed(3), kotlinOps: +(sk / n).toFixed(1),
+      segs: B.treeStats.segs, snowSegs: B.treeStats.snow, clumps: B.treeStats.clumps,
+      flakes: FL.n, rows: P.wind.rows, prof: prof };
+  }
+  for (const path in savedVals) { const s = path.split('.'); P[s[0]][s[1]] = savedVals[path]; }
+  applyTier(savedTier, true);
+  resizeTo(savedW, savedH);
+  out.tier = savedTier;
+  out.measureSize = '960x540';
+  return out;
+}
+function profile(n) {
+  const st = stats(n);
+  const cats = {};
+  for (const t of ['LOW', 'MED', 'HIGH']) for (const k in st[t].prof) cats[k] = 1;
+  const out = {};
+  for (const t of ['LOW', 'MED', 'HIGH']) {
+    out[t] = {};
+    for (const k in cats) out[t][k] = st[t].prof[k] || { ops: 0, fill: 0 };
+  }
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13 · 档位 / UI
+   ══════════════════════════════════════════════════════════════════════════ */
+function setPath(path, v) { const s = path.split('.'); P[s[0]][s[1]] = v; }
+function applyTier(t, quiet) {
+  P.tier = t;
+  const tbl = TIERS[t];
+  for (const path in tbl) setPath(path, tbl[path]);
+  if (!quiet) syncSlidersFromP();
+}
+const SLIDERS = [
+  ['sHz', 'oHz', 1000, 'comp.horizon', 3, () => rebuildLayout()],
+  ['sTreeX', 'oTreeX', 1000, 'comp.treeX', 3, () => rebuildLayout()],
+  ['sTreeY', 'oTreeY', 1000, 'comp.treeBaseY', 3, () => rebuildLayout()],
+  ['sTop', 'oTop', 1000, 'comp.crownTop', 3, () => rebuildLayout()],
+  ['sCrown', 'oCrown', 100, 'comp.crownW', 2, () => bakeTree()],
+  ['sSunX', 'oSunX', 1000, 'comp.sunX', 3, () => layout(W, H)],
+  ['sSunY', 'oSunY', 1000, 'comp.sunY', 3, () => layout(W, H)],
+  ['sDepth', 'oDepth', 1, 'tree.depth', 0, () => bakeTree()],
+  ['sDecay', 'oDecay', 1000, 'tree.lenDecay', 3, () => bakeTree()],
+  ['sSpread', 'oSpread', 10, 'tree.spreadDeg', 1, () => bakeTree()],
+  ['sDroop', 'oDroop', 1000, 'tree.droop', 3, () => bakeTree()],
+  ['sMaxSeg', 'oMaxSeg', 1, 'tree.maxSegs', 0, () => bakeTree()],
+  ['sHMin', 'oHMin', 1000, 'tree.snowHMin', 3, () => bakeTree()],
+  ['sSnowK', 'oSnowK', 100, 'tree.snowK', 2, () => bakeTree()],
+  ['sClump', 'oClump', 100, 'tree.clump', 2, () => bakeTree()],
+  ['sFlakes', 'oFlakes', 1, 'snow.flakes', 0, () => allocFlakes(P.snow.flakes)],
+  ['sFall', 'oFall', 1000, 'snow.fall', 3, null],
+  ['sWind', 'oWind', 1000, 'wind.base', 3, null],
+  ['sGust', 'oGust', 100, 'wind.gustAmp', 2, null],
+  ['sSway', 'oSway', 10000, 'wind.swayAmp', 4, null],
+  ['sRvar', 'oRvar', 100, 'snow.rVar', 2, () => allocFlakes(P.snow.flakes)],
+  ['sStreak', 'oStreak', 100, 'snow.streak', 2, null],
+  ['sSkyTex', 'oSkyTex', 1000, 'fx.skyTex', 3, () => bakeSky()],
+  ['sGlint', 'oGlint', 1, 'fx.glint', 0, () => allocGlints()],
+  ['sDust', 'oDust', 10, 'person.dustSecs', 1, null],
+  ['sShake', 'oShake', 100, 'person.shakeAt', 2, null],
+  ['sShakeR', 'oShakeR', 10, 'person.shakeRate', 2, null],
+  ['sKB', 'oKB', 100, 'audio.kWind', 2, null],
+  ['sKE', 'oKE', 100, 'audio.kGust', 2, null],
+  ['sKT', 'oKT', 100, 'audio.kSun', 2, null],
+];
+function el(id) { return document.getElementById(id); }
+function syncSlidersFromP() {
+  for (const s of SLIDERS) {
+    const seg = s[3].split('.'), v = P[seg[0]][seg[1]];
+    const inp = el(s[0]); if (!inp) continue;
+    inp.value = String(Math.round(v * s[2]));
+    el(s[1]).textContent = Number(v).toFixed(s[4]);
+  }
+}
+function bindUI() {
+  for (const s of SLIDERS) {
+    const inp = el(s[0]);
+    inp.addEventListener('input', () => {
+      setPath(s[3], inp.value / s[2]);
+      el(s[1]).textContent = Number(inp.value / s[2]).toFixed(s[4]);
+      if (s[5]) s[5]();
+    });
+  }
+  el('sTier').addEventListener('change', () => applyTier(el('sTier').value, false));
+  el('bPause').addEventListener('click', (e) => { P.paused = !P.paused; e.currentTarget.classList.toggle('on', P.paused); });
+  el('bAudio').addEventListener('click', (e) => { P.audioSim = !P.audioSim; e.currentTarget.classList.toggle('on', P.audioSim); });
+  el('bGrade').addEventListener('click', (e) => { P.gradeOn = !P.gradeOn; e.currentTarget.classList.toggle('on', P.gradeOn); bakeGrade(); });
+  el('bRecheck').addEventListener('click', renderTests);
+}
+function rebuildLayout() { layout(W, H); bakeAll(); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14 · 主循环
+   ══════════════════════════════════════════════════════════════════════════ */
+let clockT = 0, lastTs = 0, fpsEMA = 60, msEMA = 16;
+function stepAll(dt) {
+  clockT += dt;
+  audioSim(clockT); smoothAudio(dt); worldState(clockT, dt);
+  stepFlakes(dt, clockT, W_.windPx, W_.fallPx);
+  stepPerson(dt);
+}
+function renderTests() {
+  const rs = selfTest();
+  el('hTest').innerHTML = rs.map((r) =>
+    '<div class="' + (r.pass ? 'ok' : 'bad') + '">' + (r.pass ? '✔' : '✘') + ' ' + r.id + ' ' + r.name + '<br/>&nbsp;&nbsp;' + r.val + '</div>').join('');
+  window.__E47_lastTests = rs;
+}
+function hud() {
+  el('hFps').textContent = fpsEMA.toFixed(1);
+  el('hMs').textContent = msEMA.toFixed(1);
+  el('hOp').textContent = OPS + ' (Kotlin 侧≈' + (OPS - COLLAPSE) + ')';
+  el('hFill').textContent = FILL.toFixed(2);
+  el('hFlake').textContent = FL.n;
+  el('hDust').textContent = (PR.dust * 100).toFixed(0) + '%';
+  el('hSeg').textContent = B.treeStats ? B.treeStats.segs + '/' + B.treeStats.snow : '—';
+  el('hWind').textContent = W_.wind.toFixed(4);
+  el('hSway').textContent = W_.sway.toFixed(2);
+  el('hSun').textContent = W_.sunGain.toFixed(3);
+}
+function frame(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000 || 1 / 60); lastTs = ts;
+  if (!P.paused) { stepAll(dt); renderFrame(clockT); }
+  fpsEMA = lerp(fpsEMA, 1 / Math.max(dt, 1e-4), 0.05);
+  msEMA = lerp(msEMA, dt * 1000, 0.05);
+  hud();
+  requestAnimationFrame(frame);
+}
+function seek(t) {
+  clockT = 0; resetPerson(); allocFlakes(P.snow.flakes);
+  const n = Math.round(t * 60);
+  for (let i = 0; i < n; i++) stepAll(1 / 60);
+  renderFrame(clockT);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   15 · 启动
+   ══════════════════════════════════════════════════════════════════════════ */
+function boot() {
+  cv = document.getElementById('cv');
+  ctx = cv.getContext('2d');
+  applyTier(P.tier, true);
+  resizeTo(cv.width, cv.height);
+  bindUI(); syncSlidersFromP(); renderTests();
+  window.addEventListener('resize', () => resizeTo(cv.width, cv.height));
+  requestAnimationFrame((ts) => { lastTs = ts; frame(ts); });
+  el('gate').addEventListener('click', () => {
+    el('gate').classList.add('hide'); el('panel').classList.add('ready'); el('hud').classList.add('ready');
+  });
+}
+function resizeTo(w, h) {
+  layout(w, h); bakeAll(); allocFlakes(P.snow.flakes); allocGlints(); resetPerson();
+}
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.getElementById('cv')) boot();
+
+/* 供 harness / 单测对账的导出 */
+window.__E47 = {
+  P: P, TIERS: TIERS, LAYERS: LAYERS, L: L,
+  buildTree: buildTree, treeOpt: treeOpt, mulberry32: mulberry32, fbm: fbm, hash2: hash2,
+  meshTable: function (sway, rows, cols) {
+    if (!B.treeMeta) bakeTree();
+    return meshTable(sway, rows, cols === undefined ? 1 : cols);
+  },
+  selfTest: selfTest, stats: stats, profile: profile, seek: seek,
+  /** 判读联系人表：把**站姿**剪影按 drawPersonPose / drawPersonSnow **原函数**放大重画到
+   *  中性雪原底色上（⛔ 拿烘焙帧放大——那是 hh≈130 的位图，判读会把采样糊当成"画得不好"），
+   *  一行三格 = 本体 / 本体+半肩雪 / 本体+满肩雪 ⇒ 逐帧唯一变化的量必须一眼可见。 */
+  poseSheet: function (variant, hh) {
+    const H2 = Math.round(hh || 420);
+    const cols = [{ dust: 0, tag: '本体（无肩雪）' }, { dust: 0.5, tag: '肩雪 50%' }, { dust: 1, tag: '肩雪 100%' }];
+    const pad = 24, cw = Math.round(H2 * 0.78) + pad * 2, ch = H2 + 8 + pad * 2 + 26;
+    const c = mkC(cw * cols.length, ch), g = c.getContext('2d');
+    for (let i = 0; i < cols.length; i++) {
+      const ox = i * cw;
+      const gr = g.createLinearGradient(0, 0, 0, ch);
+      gr.addColorStop(0, '#aab6cb'); gr.addColorStop(1, '#e6ecf5');
+      g.fillStyle = gr; g.fillRect(ox + 2, 2, cw - 4, ch - 4);
+      const soleY = pad + 3 + H2 * 0.998;
+      g.fillStyle = 'rgba(255,255,255,0.72)'; g.fillRect(ox + 2, soleY, cw - 4, ch - soleY - 2);
+      g.strokeStyle = 'rgba(96,116,148,0.85)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(ox + 2, soleY); g.lineTo(ox + cw - 2, soleY); g.stroke();
+      drawPersonPose(g, H2, ox + cw / 2, pad, 1, PERSON.stand, 1);
+      if (cols[i].dust > 0) { g.globalAlpha = cols[i].dust; drawPersonSnow(g, H2, ox + cw / 2, pad, 1, PERSON.stand); g.globalAlpha = 1; }
+      g.fillStyle = '#2b3648'; g.font = '15px sans-serif';
+      g.fillText(cols[i].tag, ox + 10, ch - 10);
+    }
+    void variant;
+    return c.toDataURL('image/png');
+  },
+  /** 判读用**等比放大裁块**：把当前画布的一块区域按 scale 倍最近邻放大 ⇒ 看到的就是真机 1:1 像素，
+   *  只是搬大（⛔ 用平滑放大，那会把烘焙的锯齿糊成"画得软"）。 */
+  crop: function (x, y, w, h, scale) {
+    const s = scale || 3, c = mkC(Math.round(w * s), Math.round(h * s)), g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(cv, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  },
+  applyTier: applyTier, resizeTo: function (w, h) { resizeTo(w, h); },
+  layout: layout, bakeAll: bakeAll, personRect: personRect,
+  flakes: FL, person: PR, world: W_,
+  scene: function () { return { ops: OPS, fill: FILL, meshRows: MESH_ROWS, flakes: FL.n, dust: PR.dust, segs: B.treeStats ? B.treeStats.segs : 0, wind: W_.wind, sway: W_.sway, sun: W_.sunGain, t: clockT }; },
+  step: function (dt) { stepAll(dt); renderFrame(clockT); },
+  /** 纯物理推进（⛔ 不渲染）：供截图驱动取「阵风峰值 / 最大摆幅 / 肩雪半积 / 肩雪积满 / 首次抖落」时刻。
+   *  ⛔ 在驱动脚本里写死秒数——风/摆的周期由本表的 gustHz1/2、swayHz 合成，改了就得重算。
+   *  ⛔ 不再扫描"折返"（人已站定，没有 dir 概念）。 */
+  beatScan: function (sec) {
+    clockT = 0; resetPerson();
+    const dt = 1 / 30, n = Math.round(sec * 30);
+    let tW = 0, wMax = -1e9, tS = 0, sMax = -1;
+    let tFull = -1, tShake = -1, tHalf = -1, dMax = 0;
+    for (let i = 0; i < n; i++) {
+      clockT += dt;
+      audioSim(clockT); smoothAudio(dt); worldState(clockT, dt); stepPerson(dt);
+      if (W_.wind > wMax) { wMax = W_.wind; tW = clockT; }
+      if (Math.abs(W_.sway) > sMax) { sMax = Math.abs(W_.sway); tS = clockT; }
+      if (tFull < 0 && PR.dust >= 0.999) tFull = clockT;
+      if (tHalf < 0 && PR.dust >= 0.5) tHalf = clockT;
+      // ⚠️ 「抖落」判的是**看得见的一层雪掉了**：⛔ 用"首次下降"——肩雪在 t≈1.9 s 就
+      //    被小风抖过一次（那时 dust 只有 0.14），取到的帧和 a0 空肩几乎一样。
+      dMax = Math.max(dMax, PR.dust);
+      if (tShake < 0 && dMax - PR.dust >= 0.15) tShake = clockT;
+    }
+    return { tWind: +tW.toFixed(2), tSway: +tS.toFixed(2), tFull: +tFull.toFixed(2),
+      tHalf: +tHalf.toFixed(2),
+      tShake: +tShake.toFixed(2), dust: +PR.dust.toFixed(3),
+      windMax: +wMax.toFixed(4), swayMaxPx: +sMax.toFixed(2), sec: sec };
+  },
+};
+window.__E47_capture = (w, h, t) => {
+  cv.width = w; cv.height = h;
+  resizeTo(w, h);
+  seek(t === undefined ? 12 : t);
+  return cv.toDataURL('image/png');
+};
+</script>
+</body>
+</html>

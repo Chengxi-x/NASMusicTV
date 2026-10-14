@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>浮光 · ORBITAL — E45 效果原型（方案验证）</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #02040a; color: #e9f0f6;
+    font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 "Noto Sans SC", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* ── 启动遮罩 ──────────────────────────────────────────────── */
+  #gate {
+    position: fixed; inset: 0; z-index: 40; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: radial-gradient(120% 90% at 50% 55%, rgba(6,12,24,.25), rgba(2,4,10,.92));
+    transition: opacity .7s ease;
+  }
+  #gate.hide { opacity: 0; pointer-events: none; }
+  #gate h1 { font-weight: 300; font-size: 30px; letter-spacing: .35em; margin: 0; text-indent: .35em; }
+  #gate p { font-size: 12px; letter-spacing: .18em; color: rgba(233,240,246,.5); margin: 0; }
+  #gate .err { color: #ff9d8a; font-size: 12px; max-width: 70%; text-align: center; line-height: 1.7; }
+
+  /* ── 控制面板（惯例同 E44 原型）────────────────────────────── */
+  .panel {
+    position: fixed; left: 18px; bottom: 18px; z-index: 20; width: 414px;
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 10px 12px 9px; border-radius: 14px;
+    background: rgba(8, 14, 22, .46);
+    border: 1px solid rgba(233, 240, 246, .12);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, .38);
+    backdrop-filter: blur(15px) saturate(1.2); -webkit-backdrop-filter: blur(15px) saturate(1.2);
+    opacity: 0; transform: translateY(10px);
+    transition: opacity .8s ease, transform .8s cubic-bezier(.2,.8,.25,1);
+    pointer-events: none;
+    max-height: calc(100vh - 40px); overflow-y: auto;
+  }
+  .panel.ready { opacity: 1; transform: none; pointer-events: auto; }
+  .row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    appearance: none; border: 1px solid transparent; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; font-size: 11.5px; letter-spacing: .02em;
+    color: rgba(233, 240, 246, .66);
+    background: rgba(255, 255, 255, .045);
+    padding: 5px 9px; border-radius: 8px;
+    transition: background .22s ease, color .22s ease, border-color .22s ease;
+    white-space: nowrap;
+  }
+  .btn:hover { background: rgba(255, 255, 255, .10); color: rgba(233, 240, 246, .92); }
+  .btn.on { background: rgba(150, 200, 255, .16); color: #dff0ff; border-color: rgba(150, 200, 255, .32); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(233, 240, 246, .28); }
+  .btn.on .dot { background: #8ec5ff; box-shadow: 0 0 8px rgba(142, 197, 255, .8); }
+  .sep { width: 1px; height: 16px; background: rgba(233,240,246,.12); margin: 0 3px; }
+  .grp { font-size: 9.5px; letter-spacing: .22em; color: rgba(233,240,246,.34); margin-top: 3px; }
+  .sld { display: flex; align-items: center; gap: 6px; font-size: 10px; color: rgba(233,240,246,.5); }
+  .sld label { min-width: 68px; letter-spacing: .04em; }
+  .sld input[type=range] { flex: 1; accent-color: #7fb4e8; height: 14px; }
+  .sld output { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: #cfe4f8; }
+
+  /* ── HUD ───────────────────────────────────────────────────── */
+  #hud {
+    position: fixed; right: 18px; top: 16px; z-index: 20; width: 300px;
+    padding: 9px 11px; border-radius: 12px;
+    background: rgba(8, 14, 22, .42);
+    border: 1px solid rgba(233, 240, 246, .1);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 10.5px; line-height: 1.75; letter-spacing: .03em;
+    color: rgba(233,240,246,.62);
+    opacity: 0; transition: opacity .8s ease; pointer-events: none;
+  }
+  #hud.ready { opacity: 1; }
+  #hud b { color: #cfe4f8; font-weight: 500; font-variant-numeric: tabular-nums; }
+  #hud .ok { color: #8fe3a8; } #hud .bad { color: #ff9d8a; }
+  #hud .t { font-size: 9px; letter-spacing: .22em; color: rgba(233,240,246,.32); }
+
+  @media (max-width: 900px) {
+    .panel { width: calc(100% - 24px); left: 12px; bottom: 12px; }
+    #hud { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="gate">
+  <h1>浮 光</h1>
+  <p>E45 · ORBITAL — 太空视角地球 · 方案验证原型</p>
+  <p>点击任意处开始</p>
+  <div class="err" id="loadErr"></div>
+</div>
+
+<div class="panel" id="panel">
+  <div class="row">
+    <button class="btn" id="bPause"><span class="dot"></span>暂停</button>
+    <button class="btn on" id="bAudio"><span class="dot"></span>模拟音频驱动</button>
+    <span class="sep"></span>
+    <button class="btn" id="bRecheck">重跑自检</button>
+  </div>
+
+  <div class="grp">地球 · 几何</div>
+  <div class="sld"><label>弧顶高度</label><input type="range" id="sHz" min="180" max="600" value="420" /><output id="oHz">0.42</output></div>
+  <div class="sld"><label>弧半径(×H)</label><input type="range" id="sR" min="120" max="350" value="210" /><output id="oR">2.10</output></div>
+  <div class="sld"><label>下视点纬度</label><input type="range" id="sPhi" min="0" max="200" value="100" /><output id="oPhi">10°</output></div>
+  <div class="sld"><label>轴倾斜 °</label><input type="range" id="sTilt" min="0" max="600" value="230" /><output id="oTilt">23°</output></div>
+  <div class="sld"><label>自转 °/s</label><input type="range" id="sRot" min="5" max="500" value="100" /><output id="oRot">1.00</output></div>
+  <div class="sld"><label>迎面漂移 ±°</label><input type="range" id="sDrift" min="0" max="100" value="40" /><output id="oDrift">4.0</output></div>
+  <div class="sld"><label>漂移周期 s</label><input type="range" id="sPer" min="20" max="120" value="45" /><output id="oPer">45</output></div>
+  <div class="sld"><label>网格 列×行</label><input type="range" id="sGx" min="16" max="96" value="64" /><output id="oGx">64×32</output></div>
+
+  <div class="grp">云层（程序生成）</div>
+  <div class="sld"><label>云不透明度</label><input type="range" id="sCOp" min="0" max="95" value="45" /><output id="oCOp">0.45</output></div>
+  <div class="sld"><label>云差速系数</label><input type="range" id="sCDf" min="80" max="140" value="112" /><output id="oCDf">1.12</output></div>
+
+  <div class="grp">太阳（自绘 · 藏于弧缘后 · 角度固定）</div>
+  <div class="sld"><label>方位角 °</label><input type="range" id="sAz" min="0" max="3600" value="3580" /><output id="oAz">358.0</output></div>
+  <div class="sld"><label>抬升(×R)</label><input type="range" id="sLift" min="-30" max="90" value="-2" /><output id="oLift">-0.02</output></div>
+  <div class="sld"><label>日核大小</label><input type="range" id="sSun" min="20" max="160" value="62" /><output id="oSun">0.062</output></div>
+  <div class="sld"><label>光晕强度</label><input type="range" id="sGlow" min="0" max="150" value="90" /><output id="oGlow">0.90</output></div>
+
+  <div class="grp">月亮 · 星空</div>
+  <div class="sld"><label>月亮大小</label><input type="range" id="sMoon" min="0" max="160" value="88" /><output id="oMoon">0.088</output></div>
+  <div class="sld"><label>月亮方位 x%</label><input type="range" id="sMoonX" min="500" max="950" value="880" /><output id="oMoonX">88</output></div>
+  <div class="sld"><label>星空密度</label><input type="range" id="sStar" min="0" max="200" value="100" /><output id="oStar">1.00</output></div>
+</div>
+
+<div id="hud">
+  <div class="t">运行读数</div>
+  <div>fps <b id="hFps">--</b> · 帧时 <b id="hMs">--</b> ms · 格 <b id="hTri">--</b> · 图元 <b id="hOp">--</b></div>
+  <div>bass <b id="hBass">--</b> · energy <b id="hEne">--</b> · treble <b id="hTre">--</b>（模拟）</div>
+  <div class="t" style="margin-top:6px">几何自检</div>
+  <div id="hTest">运行中…</div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+ * E45「浮光」ORBITAL — 方案验证原型
+ *
+ * 目的：在浏览器里验证「纯 Canvas 2D + 球面网格（Kotlin 侧对应 drawBitmapMesh）」
+ * 通道能否做出参考图的观感。⛔ 本页面刻意不用 WebGL —— 电视端 WebView/WebGL
+ * 已被真机判死（e41-tv-blackscreen-fix-plan.md §2.2），原型必须证明 2D 通道可行。
+ *
+ * 与 Kotlin 端的对应关系（几何数学 1:1，可照抄单测断言）：
+ *   geoFromScreen / screenFromGeo —— 正射投影 ↔ 经纬度（投影数学）
+ *   wrap01                        —— 纹理 u 经度回绕
+ *   网格顶点屏幕位置一次算好不动，每帧只更新纹理坐标 —— 正是 drawBitmapMesh
+ *     「positions 静态 / textures 动态」的用法；浏览器端用逐格
+ *     clip + setTransform 模拟同一仿射语义（每格 1 次，与 mesh 单元一致）。
+ *
+ * 贴图（file:// 相对路径直引 assets 原件，逐字节同一来源）：
+ *   ../app/src/main/assets/globe/earth_lit.jpg  NASA Blue Marble 白昼地表
+ *   ../app/src/main/assets/globe/moon.jpg       E44 明月同款月盘
+ * 云层：earth_glow.jpg 实为「模糊+陆地掩膜」辉光层、不是云（globe.js L232），
+ *   故云为程序化等距柱状噪声带，一次烘焙、随网格差速滚动。
+ * ========================================================================== */
+
+const PI = Math.PI, TAU = PI * 2, D2R = PI / 180;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+
+/* ── 参数（滑杆写这里；Kotlin 移植时同名进 P）──────────────────────────── */
+const P = {
+  horizonFrac: 0.42,   // 弧顶在屏幕高度的比例
+  rFrac: 2.10,         // 球半径 = rFrac × 屏高
+  phi0Deg: 10,         // 下视点纬度（决定弧的倾斜与可见气候带；>20° 会让极点进入画面，见 D4）
+  tiltDeg: 23,         // 自转轴在画面内的滚转角（0=极点在正上；所有者裁决：极点不应在上方，应倾斜旋转，见 D9）
+  rotDegS: 1.00,       // 自转角速度 °/s（经度滚动）
+  driftAmpDeg: 4.0,    // 纬度迎面漂移幅度 ±°
+  driftPeriodS: 45,    // 漂移周期（正弦巡航，见方案文档 D4）
+  gx: 64, gy: 32,      // 网格列×行（滚转后包络变宽，40×20 会露出逐格仿射棱面，见 §八 P6）
+  cloudOpacity: 0.45, cloudDiff: 1.12,
+  sunAzDeg: 358,       // 太阳方位：0=弧顶正上，顺时针
+  sunLiftFrac: -0.02,  // 太阳中心距弧缘 = lift × R；**负值 = 藏在地球背后**，只露一线日缘（D8）
+  sunR: 0.062,         // 日核半径 × 屏高
+  sunGlow: 0.90,
+  moonR: 0.088, moonXFrac: 0.88,
+  starDensity: 1.0,
+  audioSim: true, paused: false
+};
+
+/* ── 投影数学（纯函数，导出给 harness / 单测对账）─────────────────────── */
+// 屏幕坐标以球心为原点、y 向下。psi = 自转轴在画面内的滚转角（未滚转系 → 屏幕系）。
+// 返回 {lat, lon, cosc}；cosc<=0 在球盘外。
+function geoFromScreen(dx, dy, R, phi0, psi) {
+  const cp = Math.cos(psi || 0), sp = Math.sin(psi || 0);
+  const ux = dx * cp + dy * sp, uy = -dx * sp + dy * cp;   // 反旋回未滚转系（= R(−ψ)，与 createGrid 正向互逆）
+  const X = ux / R, Y = -uy / R;                      // Y = 屏幕上方向
+  const rho2 = X * X + Y * Y;
+  const cosc = Math.sqrt(Math.max(0, 1 - rho2));
+  const s0 = Math.sin(phi0), c0 = Math.cos(phi0);
+  // 相机基（λ0=0）：e3=(c0,0,s0) 朝相机, e1=(0,1,0) 东, e2=(-s0,0,c0) 屏幕上
+  // p = X·e1 + Y·e2 + cosc·e3（地理系 X=本初子午线∩赤道, Y=东90°, Z=北极）
+  const pX = -Y * s0 + cosc * c0;
+  const pY = X;
+  const pZ = Y * c0 + cosc * s0;
+  const lat = Math.asin(clamp(pZ, -1, 1));
+  const lon = Math.atan2(pY, pX);
+  return { lat, lon, cosc: cosc };
+}
+// 正向：经纬度 → 屏幕（球心原点，y 向下，含 psi 滚转），背面返回 null
+function screenFromGeo(lat, lon, R, phi0, psi) {
+  const c = Math.cos(lat);
+  const pX = c * Math.cos(lon), pY = c * Math.sin(lon), pZ = Math.sin(lat);
+  const s0 = Math.sin(phi0), c0 = Math.cos(phi0);
+  const e1x = 0, e1y = 1, e1z = 0;                     // 东
+  const e2x = -s0, e2y = 0, e2z = c0;                  // 屏幕上(北倾向)
+  const e3x = c0, e3y = 0, e3z = s0;                   // 朝相机
+  const dot = pX * e3x + pY * e3y + pZ * e3z;
+  if (dot <= 0) return null;
+  const x = (pX * e1x + pY * e1y + pZ * e1z) * R;
+  const y = -(pX * e2x + pY * e2y + pZ * e2z) * R;
+  const cp = Math.cos(psi || 0), sp = Math.sin(psi || 0);
+  return { x: x * cp - y * sp, y: x * sp + y * cp, depth: dot };
+}
+const wrap01 = u => u - Math.floor(u);
+// 纹理坐标：u = 经度(含自转 rot)，**不逐点回绕**（回绕会在 180° 经线处翻转三角形）。
+// 每格在渲染端做 unwrap（相对首顶点 ±1 修正）；u 允许溢出 [0,1] 少许——
+// Kotlin 侧 drawBitmapMesh 的 CLAMP 语义恰好取到接缝相邻列（等距柱状贴图左右边缘
+// 是同一条经线），误差亚像素。原型端用 3× 横向平铺画布实现同样的连续性。
+// v = 纬度(含迎面漂移 drift)，内容向屏底流动 = 观察者前进。
+function texUV(lat, lon, rotRad, driftRad) {
+  const u = (lon + rotRad) / TAU + 0.5;
+  const latS = clamp(lat + driftRad, -PI / 2 + 0.02, PI / 2 - 0.02);
+  const v = (PI / 2 - latS) / PI;
+  return { u, v };
+}
+// 把一组 u 相对 u0 解缠绕到同一周期
+function unwrapU(u, u0) { return u + Math.round(u0 - u); }
+
+/* ── 程序化云层：等距柱状 fbm 噪声带，一次烘焙 ────────────────────────── */
+function makeCloudTex(w, h) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  const hash = (i, j) => { const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return s - Math.floor(s); };
+  const vnoise = (x, y, per) => {
+    const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+    const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+    const a = hash(((ix % per) + per) % per, iy), b = hash((((ix + 1) % per) + per) % per, iy);
+    const c = hash(((ix % per) + per) % per, iy + 1), d = hash((((ix + 1) % per) + per) % per, iy + 1);
+    return lerp(lerp(a, b, ux), lerp(c, d, ux), uy);
+  };
+  const fbm = (x, y, per0, oct) => {
+    let s = 0, amp = 0.5, per = per0;
+    for (let o = 0; o < oct; o++) { s += amp * vnoise(x * per, y * per * 0.5, per); x += 0.37; y += 0.11; amp *= 0.5; per *= 2; }
+    return s;
+  };
+  for (let j = 0; j < h; j++) {
+    const lat = (0.5 - j / h) * PI;                    // +北 → −南
+    const latN = j / h;
+    // 气候带偏置：赤道辐合带 + 中纬度风暴路径
+    const band = 0.10 * Math.exp(-Math.pow((latN - 0.52) / 0.10, 2))
+               + 0.07 * Math.exp(-Math.pow((latN - 0.28) / 0.13, 2))
+               + 0.07 * Math.exp(-Math.pow((latN - 0.74) / 0.13, 2));
+    for (let i = 0; i < w; i++) {
+      const lonN = i / w;
+      const w1 = fbm(lonN * 2.2, latN * 1.1, 4, 3), w2 = fbm(lonN * 2.2 + 5.2, latN * 1.1 + 1.7, 4, 3);
+      const n = fbm(lonN * 3 + 0.55 * (w1 - 0.5), latN * 2.2 + 0.5 * (w2 - 0.5), 8, 5);
+      const a = smoothstep(0.56, 0.80, n + band) * 255;
+      const k = (j * w + i) * 4;
+      img.data[k] = 255; img.data[k + 1] = 255; img.data[k + 2] = 255; img.data[k + 3] = a;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+
+/* ── 星空烘焙 ─────────────────────────────────────────────────────────── */
+function makeStarLayer(w, h, density) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  let seed = 20261010;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const n = Math.round(w * h / 1400 * density);
+  for (let i = 0; i < n; i++) {
+    const x = rnd() * w, y = rnd() * h, r = 0.35 + rnd() * rnd() * 1.35;
+    ctx.globalAlpha = 0.15 + rnd() * 0.75;
+    ctx.fillStyle = rnd() < 0.12 ? '#cfe0ff' : '#ffffff';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  }
+  // 银河流苏：一条斜向弱渐变
+  ctx.globalAlpha = 1;
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, 'rgba(120,140,190,0)'); g.addColorStop(0.42, 'rgba(120,140,190,0.05)');
+  g.addColorStop(0.55, 'rgba(140,150,200,0.07)'); g.addColorStop(0.72, 'rgba(120,140,190,0.02)');
+  g.addColorStop(1, 'rgba(120,140,190,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  return cv;
+}
+
+/* ── 逐格仿射贴纹理（模拟 drawBitmapMesh 单元仿射）─────────────────────
+ * 每格沿对角线拆 2 个三角形、各自独立仿射：共享顶点的 uv 完全一致 ⇒ 格内
+ * 格间内容连续（ 不可整格用一个仿射——四边形非平行四边形时第四角错位，
+ * 相邻格在共享边上采样不同，实测会露出网格状亮线）。 */
+function drawTri(ctx, img, s0, s1, s2, t0, t1, t2, pad) {
+  const d1x = t1.u - t0.u, d1y = t1.v - t0.v, d2x = t2.u - t0.u, d2y = t2.v - t0.v;
+  const det = d1x * d2y - d2x * d1y;
+  if (Math.abs(det) < 1e-9) return false;
+  const g1x = s1.x - s0.x, g1y = s1.y - s0.y, g2x = s2.x - s0.x, g2y = s2.y - s0.y;
+  const a = (g1x * d2y - g2x * d1y) / det, c = (d1x * g2x - d2x * g1x) / det;
+  const b = (g1y * d2y - g2y * d1y) / det, d = (d1x * g2y - d2x * g1y) / det;
+  const e = s0.x - a * t0.u - c * t0.v, f = s0.y - b * t0.u - d * t0.v;
+  // 外扩 pad px 遮 AA 缝（仅不透明层可用：半透明层重叠会加深成亮线）
+  let q0 = s0, q1 = s1, q2 = s2;
+  if (pad > 0) {
+    const mx = (s0.x + s1.x + s2.x) / 3, my = (s0.y + s1.y + s2.y) / 3;
+    const ex = p => { const vx = p.x - mx, vy = p.y - my, L = Math.hypot(vx, vy) || 1; const k = pad / L; return { x: p.x + vx * k, y: p.y + vy * k }; };
+    q0 = ex(s0); q1 = ex(s1); q2 = ex(s2);
+  }
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y); ctx.lineTo(q2.x, q2.y); ctx.closePath();
+  ctx.clip();
+  ctx.setTransform(a, b, c, d, e, f);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+  return true;
+}
+function drawCell(ctx, img, s, t, pad) {
+  const n = (drawTri(ctx, img, s[0], s[1], s[2], t[0], t[1], t[2], pad) ? 1 : 0)
+          + (drawTri(ctx, img, s[0], s[2], s[3], t[0], t[2], t[3], pad) ? 1 : 0);
+  return n === 2;
+}
+
+/* ── 网格构建（顶点屏幕位置静态；每帧只重算纹理坐标）────────────────── */
+let GRID = null;
+function createGrid(w, h) {
+  const R = P.rFrac * h;
+  const cx = w / 2, cy = P.horizonFrac * h + R;   // 球心（屏幕下方）
+  const phi0 = P.phi0Deg * D2R;
+  const gx = P.gx, gy = P.gy;
+  // 顶边 = 恒定纬线圈 latMax（投影为平行于弧缘的曲线），把极点彻底排除在网格外。
+  // 解 t·c0 + s0·√(k−t²) = S（k=1−q, q=(dx/R)², S=sin latMax）小根：
+  //   t = S·c0 − s0·√(k − S²)；无解列（靠屏缘）顶到弧缘本身。
+  const S = Math.sin(80 * D2R), s0 = Math.sin(phi0), c0 = Math.cos(phi0);
+  const topAt = dx => {
+    const k = 1 - (dx * dx) / (R * R);
+    if (k <= 0) return 0;
+    const disc = k - S * S;
+    const t = disc > 0 ? S * c0 - s0 * Math.sqrt(disc) : Math.sqrt(k);
+    return Math.min(t, Math.sqrt(k));
+  };
+  // 滚转 ψ：网格在「未滚转系」里构建，最后整体旋到屏幕系。
+  // 屏幕四角**反旋 −ψ**（与 geoFromScreen 同一变换）进未滚转系取包络，
+  // 保证倾斜后 mesh 恰好铺满屏幕（符号弄反会盖成反向倾斜的矩形 ⇒ 底缘露出斜楔）。
+  const psi = P.tiltDeg * D2R, cp = Math.cos(psi), sp = Math.sin(psi);
+  let uxMax = 0, uyBot = 0;
+  for (const [px, py] of [[-w / 2, h - cy], [w / 2, h - cy], [-w / 2, -cy], [w / 2, -cy], [0, h - cy], [0, -cy]]) {
+    uxMax = Math.max(uxMax, Math.abs(px * cp + py * sp));
+    uyBot = Math.max(uyBot, -px * sp + py * cp);
+  }
+  const Xhalf = Math.min(R * 0.999, uxMax + 8);
+  const yBot = Math.min(cy + R, uyBot + 12);          // 未滚转系下的下边界（相对球心）
+  const verts = [];
+  for (let j = 0; j <= gy; j++) {
+    const t = Math.pow(j / gy, 1.55);              // 靠弧缘加密
+    const row = [];
+    for (let i = 0; i <= gx; i++) {
+      const dx = lerp(-Xhalf, Xhalf, i / gx);
+      const dyTop = -R * topAt(dx);
+      const dy = lerp(dyTop, yBot, t);
+      const rho = Math.hypot(dx, dy);
+      const k = rho > R * 0.999 ? (R * 0.999) / rho : 1;
+      const g = geoFromScreen(dx * k, dy * k, R, phi0, 0);
+      row.push({ sx: cx + (dx * k * cp - dy * k * sp), sy: cy + (dx * k * sp + dy * k * cp), lat: g.lat, lon: g.lon });
+    }
+    verts.push(row);
+  }
+  // 极冠：80/83.5/87/89.5° 四条完整纬圈 + 极点。网格顶行在靠缘列被钳到弧缘，
+  // 单扇形（顶行→极点）在滚转后会拉出横跨全盘的长三角 ⇒ 逐格仿射棱面（P6）；
+  // 同心圈把极区拆成短单元，且把 80° 圈与弧缘之间的暗环一并补上。
+  // 圈带在贴弧缘处投影自叠（前侧带与远侧带压进同一条窄缝）⇒ 掠缘单元按深度剔除（P7）。
+  const capLats = [80, 83.5, 87, 89.5], capRings = [];
+  for (const la of capLats) {
+    const ring = [];
+    for (let lon = -180; lon <= 180; lon += 5) {
+      const g = screenFromGeo(la * D2R, lon * D2R, R, phi0, 0);
+      ring.push(g ? { sx: cx + g.x * cp - g.y * sp, sy: cy + g.x * sp + g.y * cp, lat: la * D2R, lon: lon * D2R, depth: g.depth } : null);
+    }
+    capRings.push(ring);
+  }
+  const pole = { sx: cx + R * c0 * sp, sy: cy - R * c0 * cp, lat: PI / 2, depth: Math.sin(phi0) };
+  return { verts, capRings, pole, R, cx, cy, phi0, psi, gx, gy };
+}
+function buildGrid(w, h) { GRID = createGrid(w, h); }
+
+/* ── 主画布 ───────────────────────────────────────────────────────────── */
+const cv = document.getElementById('stage'), ctx = cv.getContext('2d');
+let W = 0, H = 0, cloudTex = null, starTex = null, earth3 = null, cloud3 = null;
+const IMG = {};
+// 3× 横向平铺：让解缠绕后略微溢出 [0,1] 的 u 仍取到地理连续像素
+// （等价 Kotlin 侧 CLAMP 语义——等距柱状贴图左右边缘是同一条经线）
+function tile3(src, w, h) {
+  const c = document.createElement('canvas'); c.width = w * 3; c.height = h;
+  const x = c.getContext('2d');
+  x.drawImage(src, 0, 0); x.drawImage(src, w, 0); x.drawImage(src, w * 2, 0);
+  return c;
+}
+function resize() {
+  if (window.innerWidth < 2 || window.innerHeight < 2) return;   // 隐藏标签 0×0 防御
+  W = cv.width = window.innerWidth * devicePixelRatio;
+  H = cv.height = window.innerHeight * devicePixelRatio;
+  cv.style.width = window.innerWidth + 'px'; cv.style.height = window.innerHeight + 'px';
+  buildGrid(W, H);
+  starTex = makeStarLayer(W, H, P.starDensity);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resize(); });
+
+/* ── 模拟音频（克制氛围型的三路调制源）────────────────────────────────── */
+const sim = { bass: 0, energy: 0, treble: 0 };
+function updateSim(t) {
+  if (!P.audioSim) { sim.bass = sim.energy = sim.treble = 0; return; }
+  sim.bass = Math.pow(0.5 + 0.5 * Math.sin(t * TAU * 0.45), 3);
+  sim.energy = 0.35 + 0.3 * Math.sin(t * TAU * 0.13 + 1.2) + 0.2 * Math.sin(t * TAU * 0.31);
+  sim.treble = 0.3 + 0.35 * Math.pow(0.5 + 0.5 * Math.sin(t * TAU * 0.8 + 2), 2);
+}
+
+/* ── 渲染 ─────────────────────────────────────────────────────────────── */
+let rotRad = 0, clockT = 0, lastTs = 0, fpsEMA = 60, msEMA = 16, opCount = 0, triCount = 0;
+function render(dt) {
+  const R = GRID.R, cx = GRID.cx, cy = GRID.cy, phi0 = GRID.phi0;
+  const drift = P.driftAmpDeg * D2R * Math.sin(clockT * TAU / P.driftPeriodS);
+  rotRad += P.rotDegS * D2R * dt * (1 + 0.20 * (sim.energy - 0.5) * 2);   // energy ±20%
+  const cloudRot = rotRad * P.cloudDiff;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#02040a'; ctx.fillRect(0, 0, W, H);
+  opCount = 1; triCount = 0;
+
+  // 星空（1 图元）
+  ctx.drawImage(starTex, 0, 0); opCount++;
+
+  // 太阳背层：先画日，地球随后盖上去 ⇒ 日核只露一线于弧缘（D8）
+  drawSunBack(sunPos(R, cx, cy));
+
+  // 底色海盘（垫在网格下，遮住单元间隙；Kotlin 侧 mesh 共享顶点可省）
+  const sea = ctx.createLinearGradient(0, GRID.cy - GRID.R, 0, H);
+  sea.addColorStop(0, 'rgba(12,24,42,0.95)');
+  sea.addColorStop(0.18, 'rgba(20,44,72,1)');
+  sea.addColorStop(1, 'rgba(8,20,38,1)');
+  ctx.fillStyle = sea;
+  ctx.beginPath(); ctx.arc(GRID.cx, GRID.cy, GRID.R * 0.999, PI, TAU); ctx.closePath(); ctx.fill();
+  opCount += 1;
+
+  // 地表网格（Kotlin: 1 次 drawBitmapMesh）
+  const { verts, gx, gy } = GRID;
+  const tex = earth3, TW = IMG.earth.naturalWidth, TH = IMG.earth.naturalHeight;
+  const uvAt = (v, rot) => texUV(v.lat, v.lon, rot, drift);
+  const toPx = (u, v, w, h) => ({ u: (u + 0.5) * w, v: v * h });
+  for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) {
+    const a = verts[j][i], b = verts[j][i + 1], c = verts[j + 1][i + 1], d = verts[j + 1][i];
+    const ua = uvAt(a, rotRad), ub = uvAt(b, rotRad), uc = uvAt(c, rotRad), ud = uvAt(d, rotRad);
+    ub.u = unwrapU(ub.u, ua.u); uc.u = unwrapU(uc.u, ua.u); ud.u = unwrapU(ud.u, ua.u);
+    const s = [{ x: a.sx, y: a.sy }, { x: b.sx, y: b.sy }, { x: c.sx, y: c.sy }, { x: d.sx, y: d.sy }];
+    const t = [toPx(ua.u, ua.v, TW, TH), toPx(ub.u, ub.v, TW, TH), toPx(uc.u, uc.v, TW, TH), toPx(ud.u, ud.v, TW, TH)];
+    if (drawCell(ctx, tex, s, t, 1.2)) triCount++;
+  }
+  // 极冠：同心纬圈补全 80°→极点（Kotlin 侧并入同一 mesh 的顶排环带）
+  triCount += drawPolarCap(tex, rotRad, drift, 1.2, TW, TH);
+  opCount += 1; // 逻辑图元：mesh=1（浏览器实发 gx·gy 次）
+
+  // 云层网格（Kotlin: 第 2 次 drawBitmapMesh，半透明）
+  if (P.cloudOpacity > 0.005) {
+    const CT = IMG.cloudW, CH = cloudTex.height;
+    ctx.globalAlpha = P.cloudOpacity;
+    for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) {
+      const a = verts[j][i], b = verts[j][i + 1], c = verts[j + 1][i + 1], d = verts[j + 1][i];
+      const ua = uvAt(a, cloudRot), ub = uvAt(b, cloudRot), uc = uvAt(c, cloudRot), ud = uvAt(d, cloudRot);
+      ub.u = unwrapU(ub.u, ua.u); uc.u = unwrapU(uc.u, ua.u); ud.u = unwrapU(ud.u, ua.u);
+      const s = [{ x: a.sx, y: a.sy }, { x: b.sx, y: b.sy }, { x: c.sx, y: c.sy }, { x: d.sx, y: d.sy }];
+      const t = [toPx(ua.u, ua.v, CT, CH), toPx(ub.u, ub.v, CT, CH), toPx(uc.u, uc.v, CT, CH), toPx(ud.u, ud.v, CT, CH)];
+      if (drawCell(ctx, cloud3, s, t, 0)) triCount++;
+    }
+    // 云层不补极冠：半透明窄缝单元逐格叠绘会积成白色辐条（P7），极区少云反而自然
+    ctx.globalAlpha = 1;
+    opCount += 1;
+  }
+
+  // 大气边缘光（1 图元，treble 微亮）
+  ctx.globalCompositeOperation = 'screen';
+  const atm = ctx.createRadialGradient(cx, cy, R * 0.965, cx, cy, R * 1.075);
+  const aGlow = 0.5 + 0.25 * sim.treble;
+  atm.addColorStop(0, 'rgba(90,150,255,0)');
+  atm.addColorStop(0.34, 'rgba(110,170,255,' + (0.34 * aGlow).toFixed(3) + ')');
+  atm.addColorStop(0.55, 'rgba(140,190,255,' + (0.5 * aGlow).toFixed(3) + ')');
+  atm.addColorStop(1, 'rgba(90,150,255,0)');
+  ctx.fillStyle = atm; ctx.fillRect(0, 0, W, H); opCount++;
+
+  // 太阳前层：镜头伪影（streak/光斑链）不被场景遮挡 + 弧缘散射暖冠
+  drawSunFront(sunPos(R, cx, cy));
+
+  // 月亮
+  drawMoon();
+
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// 极冠渲染：环间画四边形、最内环→极点画三角；uv 沿经度单调 ⇒ 逐点解缠绕即可。
+// 单元短小（≤5° 经差），仿射近似误差远小于单一大扇形（§八 P6）。
+// 掠缘剔除：四角最小深度 < 0.12 的单元落在投影自叠窄缝里，逐格仿射会拉出白色辐条（P7）。
+function drawPolarCap(img, rot, driftRad, pad, tw, th) {
+  const { capRings, pole } = GRID;
+  const to = (u, v) => ({ u: (u + 0.5) * tw, v: v * th });
+  const pt = p => ({ x: p.sx, y: p.sy });
+  const uv = p => texUV(p.lat, p.lon, rot, driftRad);
+  const DEEP = 0.12;
+  let n = 0;
+  for (let k = 0; k < capRings.length; k++) {
+    const rowA = capRings[k], rowB = k + 1 < capRings.length ? capRings[k + 1] : null;
+    for (let i = 0; i + 1 < rowA.length; i++) {
+      const a = rowA[i], b = rowA[i + 1];
+      if (!a || !b || Math.min(a.depth, b.depth, pole.depth) < DEEP) continue;
+      const ua = uv(a), ub = uv(b); ub.u = unwrapU(ub.u, ua.u);
+      if (!rowB) {
+        const vP = uv({ lat: PI / 2, lon: 0 }).v;
+        if (drawTri(ctx, img, pt(a), pt(b), pt(pole), to(ua.u, ua.v), to(ub.u, ub.v), to((ua.u + ub.u) / 2, vP), pad)) n++;
+      } else {
+        const c = rowB[i + 1], d = rowB[i];
+        if (!c || !d || Math.min(c.depth, d.depth) < DEEP) continue;
+        const uc = uv(c), ud = uv(d); uc.u = unwrapU(uc.u, ua.u); ud.u = unwrapU(ud.u, ua.u);
+        if (drawCell(ctx, img, [pt(a), pt(b), pt(c), pt(d)],
+            [to(ua.u, ua.v), to(ub.u, ub.v), to(uc.u, uc.v), to(ud.u, ud.v)], pad)) n++;
+      }
+    }
+  }
+  return n;
+}
+
+function sunPos(R, cx, cy) {
+  const az = P.sunAzDeg * D2R;
+  const dist = R * (1 + P.sunLiftFrac);
+  const sx = cx + dist * Math.sin(az), sy = cy - dist * Math.cos(az);
+  const r0 = P.sunR * H * (1 + 0.15 * sim.bass);        // bass ±15% 光晕呼吸
+  return { sx, sy, r0, glow: P.sunGlow };
+}
+// 背层：在地球盘之前绘制（D8，所有者裁决「不能直接出现太阳，应被地球挡住露一点」）——
+// 日核/内冕/射线被地盘遮挡，lift<0 时只在弧缘上方露出一线日缘。
+function drawSunBack(p) {
+  const { sx, sy, r0, glow } = p;
+  ctx.globalCompositeOperation = 'lighter';
+  let g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r0 * 10);
+  g.addColorStop(0, 'rgba(255,244,214,' + (0.5 * glow).toFixed(3) + ')');
+  g.addColorStop(0.25, 'rgba(255,220,150,' + (0.16 * glow).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,200,120,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); opCount++;
+  g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r0 * 3);
+  g.addColorStop(0, 'rgba(255,250,235,' + (0.85 * glow).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,235,190,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy, r0 * 3, 0, TAU); ctx.fill(); opCount++;
+  // 日核
+  ctx.fillStyle = 'rgba(255,253,246,0.96)';
+  ctx.beginPath(); ctx.arc(sx, sy, r0, 0, TAU); ctx.fill(); opCount++;
+  // 光芒射线（8 根，随 bass 微伸；下半被地球吃掉）
+  ctx.strokeStyle = 'rgba(255,240,210,' + (0.16 * glow).toFixed(3) + ')';
+  ctx.lineWidth = r0 * 0.05;
+  ctx.beginPath();
+  for (let k = 0; k < 8; k++) {
+    const th = k * TAU / 8 + 0.2;
+    const L = r0 * (3.2 + 1.4 * sim.bass + (k % 2) * 0.9);
+    ctx.moveTo(sx + Math.cos(th) * r0 * 1.15, sy + Math.sin(th) * r0 * 1.15);
+    ctx.lineTo(sx + Math.cos(th) * L, sy + Math.sin(th) * L);
+  }
+  ctx.stroke(); opCount++;
+  ctx.globalCompositeOperation = 'source-over';
+}
+// 前层：地球之后 —— 镜头伪影不被场景遮挡（streak / 光斑链），加弧缘散射暖冠。
+function drawSunFront(p) {
+  const { sx, sy, r0, glow } = p;
+  ctx.globalCompositeOperation = 'lighter';
+  // 露出日缘上方的散射暖冠（贴弧缘的一团，模拟大气散射）
+  let g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r0 * 4.5);
+  g.addColorStop(0, 'rgba(255,238,200,' + (0.30 * glow).toFixed(3) + ')');
+  g.addColorStop(0.5, 'rgba(255,220,160,' + (0.12 * glow).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,210,150,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); opCount++;
+  // 变形横向长条光斑（anamorphic streak）
+  ctx.save(); ctx.translate(sx, sy);
+  const st = ctx.createLinearGradient(-r0 * 9, 0, r0 * 9, 0);
+  st.addColorStop(0, 'rgba(160,200,255,0)'); st.addColorStop(0.5, 'rgba(210,230,255,' + (0.4 * glow).toFixed(3) + ')');
+  st.addColorStop(1, 'rgba(160,200,255,0)');
+  ctx.fillStyle = st; ctx.fillRect(-r0 * 9, -r0 * 0.16, r0 * 18, r0 * 0.32);
+  ctx.restore(); opCount++;
+  // 镜头光斑链：沿 日→屏心 直线
+  const flares = [[0.32, 0.5, '150,190,255'], [0.62, 0.28, '255,210,150'], [1.18, 0.42, '170,220,210']];
+  for (const [t, fr, col] of flares) {
+    const fx = lerp(sx, W / 2, t), fy = lerp(sy, H / 2, t), rr = r0 * fr * 1.6;
+    const fg = ctx.createRadialGradient(fx, fy, 0, fx, fy, rr);
+    fg.addColorStop(0, 'rgba(' + col + ',' + (0.10 * glow).toFixed(3) + ')');
+    fg.addColorStop(0.75, 'rgba(' + col + ',' + (0.05 * glow).toFixed(3) + ')');
+    fg.addColorStop(1, 'rgba(' + col + ',0)');
+    ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(fx, fy, rr, 0, TAU); ctx.fill(); opCount++;
+  }
+}
+
+function drawMoon() {
+  if (P.moonR < 0.004) return;
+  const r = P.moonR * H;
+  const mx = P.moonXFrac * W, my = H * 0.24;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.save();
+  ctx.beginPath(); ctx.arc(mx, my, r, 0, TAU); ctx.clip();
+  ctx.drawImage(IMG.moon, mx - r, my - r, r * 2, r * 2);
+  // 明暗界：左下渐暗（与固定太阳方位一致）
+  const sh = ctx.createLinearGradient(mx - r, my + r, mx + r, my - r);
+  sh.addColorStop(0, 'rgba(2,4,10,0.55)'); sh.addColorStop(0.55, 'rgba(2,4,10,0.12)'); sh.addColorStop(1, 'rgba(2,4,10,0)');
+  ctx.fillStyle = sh; ctx.fillRect(mx - r, my - r, r * 2, r * 2);
+  ctx.restore(); opCount += 2;
+  ctx.globalCompositeOperation = 'lighter';
+  const halo = ctx.createRadialGradient(mx, my, r * 0.9, mx, my, r * 1.6);
+  halo.addColorStop(0, 'rgba(220,225,235,0.10)'); halo.addColorStop(1, 'rgba(220,225,235,0)');
+  ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(mx, my, r * 1.6, 0, TAU); ctx.fill(); opCount++;
+}
+
+/* ── 几何自检（数字只由本函数再生，⛔ 不许手抄进文档）────────────────── */
+function selfTest() {
+  const out = [];
+  const R = 1000, phi0 = 24 * D2R, psi = 23 * D2R;   // psi≠0：滚转数学一并被往返覆盖
+  // T1 投影往返：随机正面点 geo→screen→geo 误差 < 1e-9 rad
+  let worst = 0;
+  for (let i = 0; i < 500; i++) {
+    const lat = (Math.random() * 2 - 1) * 80 * D2R, lon = (Math.random() * 2 - 1) * 80 * D2R;
+    const s = screenFromGeo(lat, lon, R, phi0, psi);
+    if (!s) continue;
+    const g = geoFromScreen(s.x, s.y, R, phi0, psi);
+    worst = Math.max(worst, Math.abs(g.lat - lat), Math.abs(g.lon - lon));
+  }
+  out.push({ name: 'T1 投影往返误差', pass: worst < 1e-9 && worst > 0, detail: worst.toExponential(1) + ' rad' });
+  // T2 弧缘圆：取 3 个 0.999R 处点，cosc 理论值 sqrt(1−0.999²)=0.0447
+  const edge = [geoFromScreen(0, -R * 0.999, R, phi0, psi), geoFromScreen(R * 0.999, 0, R, phi0, psi),
+                geoFromScreen(R * 0.707 * 0.999, -R * 0.707 * 0.999, R, phi0, psi)];
+  const edgeOk = edge.every(g => g.cosc > 0.03 && g.cosc < 0.06 && isFinite(g.lat) && isFinite(g.lon));
+  out.push({ name: 'T2 弧缘 cosc≈0.0447', pass: edgeOk, detail: edge.map(g => g.cosc.toFixed(3)).join(' ') });
+  // T3 网格有效性（视口无关：固定 1600×900 合成网格）
+  //   ① 全部顶点 cosc>0 且有限；② 极点排除：max|lat| < 90°；
+  //   ③ 解缠绕后相邻 u 差 < 1/4 圈（回绕不翻转；80° 顶行合法几何跨度实测 0.120；
+  //      负自检：若逐顶点 wrap01，跨缝对会跳 ≈0.99 —— 断言其 ≥0.85，守卫有判别力）
+  const tg = createGrid(1600, 900);
+  let gridOk = true, uJump = 0, uJumpRaw = 0, maxLat = 0;
+  const rot = 2.5, dr = 0.05;   // 选转角使 u=0/1 缝（lon=π−rot）落在盘内 ±90° 视野，负自检才有意义
+  for (let j = 0; j < tg.verts.length; j++) {
+    const row = tg.verts[j];
+    for (let i = 0; i < row.length; i++) {
+      const g = geoFromScreen(row[i].sx - tg.cx, row[i].sy - tg.cy, tg.R, tg.phi0, tg.psi);
+      if (!(g.cosc > 0 && isFinite(g.lat) && isFinite(g.lon))) { gridOk = false; }
+      maxLat = Math.max(maxLat, Math.abs(row[i].lat));
+      if (i > 0) {
+        const u0 = texUV(row[i - 1].lat, row[i - 1].lon, rot, dr).u;
+        const u1 = unwrapU(texUV(row[i].lat, row[i].lon, rot, dr).u, u0);
+        uJump = Math.max(uJump, Math.abs(u1 - u0));
+        // 负自检：若按「逐顶点 wrap01」的错误做法，跨缝顶点对会跳 ≈1（Kotlin 侧 CLAMP 同理）
+        const w0 = u0 - Math.floor(u0), w1 = u1 - Math.floor(u1);
+        uJumpRaw = Math.max(uJumpRaw, Math.abs(w1 - w0));
+      }
+    }
+  }
+  const poleOk = maxLat < 81 * D2R;   // 顶边即 80° 纬线圈，越界说明极点排除失效
+  const contOk = isFinite(uJump) && uJump < 0.25 && uJumpRaw >= 0.85;
+  out.push({ name: 'T3 网格 cosc>0 ∧ 极点排除(lat≤80°) ∧ u 连续+负自检', pass: gridOk && poleOk && contOk, detail: 'maxLat=' + (maxLat / D2R).toFixed(1) + '° Δu=' + uJump.toFixed(3) + ' Δu(未解缠)=' + uJumpRaw.toFixed(3) });
+  // T4 云噪声确定性：同尺寸两次烘焙 → 抽样像素全等
+  const a = makeCloudTex(64, 32), b = makeCloudTex(64, 32);
+  const pa = a.getContext('2d').getImageData(0, 0, 64, 32).data;
+  const pb = b.getContext('2d').getImageData(0, 0, 64, 32).data;
+  let same = true; for (let i = 0; i < pa.length; i += 97) if (pa[i] !== pb[i]) { same = false; break; }
+  out.push({ name: 'T4 云层噪声确定性', pass: same, detail: same ? 'hash 一致' : '不一致!' });
+  // T5 反向自检（负样本）：球盘外点必须 cosc=0 —— 若判成>0 说明自检失效
+  const outside = geoFromScreen(R * 1.3, 0, R, phi0, psi);
+  out.push({ name: 'T5 负样本 盘外 cosc=0', pass: outside.cosc === 0, detail: outside.cosc.toFixed(3) });
+  return out;
+}
+
+/* ── HUD / 循环 ───────────────────────────────────────────────────────── */
+const el = id => document.getElementById(id);
+function loop(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000 || 0.016); lastTs = ts;
+  if (!P.paused && GRID) { clockT += dt; updateSim(clockT); render(dt); }
+  fpsEMA = lerp(fpsEMA, 1 / Math.max(dt, 1e-4), 0.05);
+  msEMA = lerp(msEMA, dt * 1000, 0.05);
+  el('hFps').textContent = fpsEMA.toFixed(1);
+  el('hMs').textContent = msEMA.toFixed(1);
+  el('hTri').textContent = triCount;
+  el('hOp').textContent = opCount + ' (Kotlin 侧≈' + (opCount - triCount + 2) + ')';
+  el('hBass').textContent = sim.bass.toFixed(2);
+  el('hEne').textContent = sim.energy.toFixed(2);
+  el('hTre').textContent = sim.treble.toFixed(2);
+  requestAnimationFrame(loop);
+}
+function renderTests() {
+  const rs = selfTest();
+  el('hTest').innerHTML = rs.map(r =>
+    '<div class="' + (r.pass ? 'ok' : 'bad') + '">' + (r.pass ? '✔' : '✘') + ' ' + r.name + ' · ' + r.detail + '</div>').join('');
+}
+
+/* ── 滑杆绑定 ─────────────────────────────────────────────────────────── */
+function bind(id, outId, scale, key, fmt, after) {
+  const s = el(id), o = el(outId);
+  const apply = () => {
+    P[key] = s.value / scale;
+    o.textContent = fmt ? fmt(P[key]) : String(P[key]);
+    if (after) after();
+  };
+  s.addEventListener('input', apply); apply();
+}
+bind('sHz', 'oHz', 1000, 'horizonFrac', v => v.toFixed(2), rebuild);
+bind('sR', 'oR', 100, 'rFrac', v => v.toFixed(2), rebuild);
+bind('sPhi', 'oPhi', 10, 'phi0Deg', v => v.toFixed(0) + '°', rebuild);
+bind('sTilt', 'oTilt', 10, 'tiltDeg', v => v.toFixed(0) + '°', rebuild);
+bind('sRot', 'oRot', 100, 'rotDegS', v => v.toFixed(2));
+bind('sDrift', 'oDrift', 10, 'driftAmpDeg', v => v.toFixed(1));
+bind('sPer', 'oPer', 1, 'driftPeriodS', v => v.toFixed(0));
+bind('sGx', 'oGx', 1, 'gx', () => P.gx + '×' + P.gy, () => { P.gy = Math.round(P.gx / 2); rebuild(); el('oGx').textContent = P.gx + '×' + P.gy; });
+bind('sCOp', 'oCOp', 100, 'cloudOpacity', v => v.toFixed(2));
+bind('sCDf', 'oCDf', 100, 'cloudDiff', v => v.toFixed(2));
+bind('sAz', 'oAz', 10, 'sunAzDeg', v => v.toFixed(1));
+bind('sLift', 'oLift', 100, 'sunLiftFrac', v => v.toFixed(2));
+bind('sSun', 'oSun', 1000, 'sunR', v => v.toFixed(3));
+bind('sGlow', 'oGlow', 100, 'sunGlow', v => v.toFixed(2));
+bind('sMoon', 'oMoon', 1000, 'moonR', v => v.toFixed(3));
+bind('sMoonX', 'oMoonX', 1000, 'moonXFrac', v => (v * 100).toFixed(0));
+bind('sStar', 'oStar', 100, 'starDensity', v => v.toFixed(2), () => { starTex = makeStarLayer(W, H, P.starDensity); });
+function rebuild() { if (W) buildGrid(W, H); }
+
+el('bPause').addEventListener('click', e => { P.paused = !P.paused; e.currentTarget.classList.toggle('on', P.paused); });
+el('bAudio').addEventListener('click', e => { P.audioSim = !P.audioSim; e.currentTarget.classList.toggle('on', P.audioSim); });
+el('bRecheck').addEventListener('click', renderTests);
+
+/* ── 启动 ─────────────────────────────────────────────────────────────── */
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error('贴图加载失败: ' + src));
+    im.src = src;
+  });
+}
+const BASE = '../app/src/main/assets/globe/';
+Promise.all([loadImg(BASE + 'earth_lit.jpg'), loadImg(BASE + 'moon.jpg')])
+  .then(([earth, moon]) => {
+    IMG.earth = earth; IMG.moon = moon;
+    cloudTex = makeCloudTex(1024, 512);
+    earth3 = tile3(earth, earth.naturalWidth, earth.naturalHeight);
+    cloud3 = tile3(cloudTex, 1024, 512);
+    IMG.cloudW = 1024;
+    window.addEventListener('resize', resize);
+    resize(); renderTests();
+    requestAnimationFrame(ts => { lastTs = ts; loop(ts); });
+    el('gate').addEventListener('click', () => {
+      el('gate').classList.add('hide');
+      el('panel').classList.add('ready');
+      el('hud').classList.add('ready');
+    });
+  })
+  .catch(err => { el('loadErr').textContent = err.message + '（请确认从仓库 docs/ 目录以 file:// 打开本文件）'; });
+
+// 供 harness / 单测对账的导出
+window.__E45 = { P, geoFromScreen, screenFromGeo, texUV, unwrapU, wrap01, selfTest, stats: () => ({ triCount, opCount, fps: fpsEMA }) };
+// 离屏捕获：隐藏标签 rAF 停摆时强制渲染一帧并回读 PNG（file:// 贴图会污染画布，
+// 届时 toDataURL 抛 SecurityError —— 属预期，改在可见窗口截图即可）
+window.__E45_capture = (w, h) => {
+  W = cv.width = w; H = cv.height = h;
+  buildGrid(w, h); starTex = makeStarLayer(w, h, P.starDensity);
+  render(0.016);
+  return cv.toDataURL('image/png');
+};
+</script>
+</body>
+</html>

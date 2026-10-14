@@ -1,0 +1,2061 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>大漠 · LONE SMOKE — E48 效果原型（方案验证）</title>
+<!--
+  E48「大漠 · 大漠孤烟直」纯 Canvas 2D 方案验证原型。
+  ⛔ 硬约束（继承 E45/E46/E47）：不得使用 WebView + three.js；不得使用 ctx.filter / shadowBlur /
+     CSS blur（电视 Compose Canvas 无对应能力）⇒ 一切"柔"一律用径向渐变或**烘焙期自身错位叠印**。
+  ⭐ 烟的路线（所有者 2026-10-14 交办「你要选取一个最像直烟上升的效果」+「担心用圆环或圆来画烟
+     会不真实」）⇒ ⛔ 软圆盘 / 径向渐变球：烟丝 = 烘焙期由 ~22 颗软圆盘沿一条 fbm 摆动竖直曲线
+     串成的**各向异性烟丝位图**（6 变体 × 中性/暖边两套），逐帧按「旋转 + 非等比缩放」叠印成柱。
+  ⭐ **三轮裁决（2026-10-14）后的场景取舍**：烽燧、长河/水面**删除**
+     （「下面不要烽火台，不好看」「不要水面了，区分不开」）⇒ 烟改由**沙脊线之后**升起，遮挡仍走
+     图层顺序。日盘 ⛔「简单的大圆球」⇒ 按参考图 1 的**实测径向剖面**重做（黄白心 → 橙边 →
+     贴身柔光 → 天幕散光，散光那一层烘进 sky 位图，逐帧 0 成本）。沙丘 ⛔「三道线」⇒ 改为
+     5–9 层**深度排序的重叠脊**。色调 ⛔「太深」⇒ 暗部占比从 23.2% 压到 ≤6%（天顶带按参考图
+     实测 L 抬到 ≥0.13，暗角 0.34 → 0.10），亮度阶梯由
+     docs/archive/verification/scripts/e48_ref_palette.py --gate 判绿，⛔ 肉眼裁决。
+  ⭐ **第四轮否决（2026-10-14 深夜）三处返工**（所有者看 21:36 判读帧后：「驼峰太大了，不协调」
+      「烟柱中间还是柱状的，比较明显」「太阳的光晕、散光等等，都没有了」）：
+      ① 驼峰 —— **体型尺寸**（caravan.lenK，水平）与**峰在体型里的比例**（caravan.humpK，垂直）拆成
+        两个独立量。旧实现两者被 h 绑死，而 h 必须大才够腿的像素（P22）⇒ 峰被 h 绑架、越修越不协调。
+        解剖验算（长/高 1.29、峰/体深 0.61）在 bakeOneCamel 注释块；腿像素与两者无关 ⇒ P22 余量不动。
+      ② 烟柱 —— bakeWisp 加**沿丝身的低频浓度团块**（2~3 段随机宽度/强度；⛔ 正弦=周期的 ⇒ 读成竹节
+        不是涡）。团块住在**位图**里 ⇒ 逐帧 0 成本、⛔ 不碰 puffR/粒子位置 ⇒ T4/T5 几何量不受影响；
+        ⛔ 继续加 alpha（只会更"奶"）。
+      ③ 太阳光晕 —— 真因不是单纯砍了日晕：烘焙散射半径当时停在**画幅相对** W*scatter，H2 把盘放大
+        （0.112H→0.150H）后它只比盘缘多铺 ~46 px ⇒ 散射是被日盘**撑小**的。⇒ 半径改为**跟盘走**
+        （rad = max(L.sunR*1.95, W*scatter)）+ 新增**大范围低强度天幕散射**（0.62W、alpha≤.30、
+        贴地平线收，同样烘进 sky ⇒ 铺屏 0 / ops 0，唯一白拿的预算）。
+        ⛔ ⛔ 不许回到"日晕跟日盘半径等比放大" —— 那是 P26 的根因，再放大日盘会二次顶爆 4.21。
+  ⛔ 逐帧图元合批：贴地浮沙 = 横向无缝带平铺（Kotlin 侧 ImageShader(Repeat) ⇒ 1 op）；
+     驼队 = 每峰 1 次 blit（腿由所在脊线那一层**后画**遮住，⛔ 不画"无腿"）。
+  数值口径（图元数 / 铺屏数）只能由 docs/archive/verification/scripts/e48_smoke_harness.js 再生。
+-->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #170d10; color: #f4ece6;
+    font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #cv { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: #6a3a2e; }
+
+  #gate {
+    position: fixed; inset: 0; z-index: 40; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: rgba(20, 12, 14, .55); transition: opacity .7s ease;
+  }
+  #gate.hide { opacity: 0; pointer-events: none; }
+  #gate h1 { font-weight: 300; font-size: 30px; letter-spacing: .35em; margin: 0; text-indent: .35em; }
+  #gate p { font-size: 12px; letter-spacing: .18em; color: rgba(244,236,230,.55); margin: 0; }
+
+  .panel {
+    position: fixed; left: 16px; bottom: 16px; z-index: 20; width: 400px;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 12px 9px; border-radius: 14px;
+    background: rgba(20, 12, 14, .5); border: 1px solid rgba(244,236,230,.14);
+    box-shadow: 0 10px 34px rgba(0,0,0,.4);
+    backdrop-filter: blur(15px) saturate(1.15); -webkit-backdrop-filter: blur(15px) saturate(1.15);
+    opacity: 0; transform: translateY(10px); transition: opacity .8s ease, transform .8s ease;
+    pointer-events: none; max-height: calc(100vh - 34px); overflow-y: auto;
+  }
+  .panel.ready { opacity: 1; transform: none; pointer-events: auto; }
+  .row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    appearance: none; border: 1px solid transparent; cursor: pointer; font: inherit; font-size: 11.5px;
+    color: rgba(244,236,230,.66); background: rgba(255,255,255,.05); padding: 5px 9px; border-radius: 8px;
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .btn:hover { background: rgba(255,255,255,.11); color: #f4ece6; }
+  .btn.on { background: rgba(232, 168, 108, .18); color: #fbeee0; border-color: rgba(232,168,108,.34); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(244,236,230,.28); }
+  .btn.on .dot { background: #f0b878; }
+  .sep { width: 1px; height: 16px; background: rgba(244,236,230,.14); margin: 0 3px; }
+  .grp { font-size: 9.5px; letter-spacing: .2em; color: rgba(244,236,230,.34); margin-top: 3px; }
+  .sld { display: flex; align-items: center; gap: 6px; font-size: 10px; color: rgba(244,236,230,.5); }
+  .sld label { min-width: 78px; letter-spacing: .04em; }
+  .sld input[type=range] { flex: 1; accent-color: #e8a86c; height: 14px; }
+  .sld output { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; color: #fbeee0; }
+  .sld select { background: rgba(255,255,255,.07); color: #fbeee0; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; font: inherit; font-size: 10px; padding: 2px 4px; }
+
+  #hud {
+    position: fixed; right: 16px; top: 14px; z-index: 20; width: 330px;
+    padding: 9px 11px; border-radius: 12px;
+    background: rgba(20, 12, 14, .46); border: 1px solid rgba(244,236,230,.12);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 10.5px; line-height: 1.7; letter-spacing: .03em; color: rgba(244,236,230,.62);
+    opacity: 0; transition: opacity .8s ease; pointer-events: none;
+  }
+  #hud.ready { opacity: 1; }
+  #hud b { color: #fbeee0; font-weight: 500; font-variant-numeric: tabular-nums; }
+  #hud .ok { color: #9fe0a8; } #hud .bad { color: #ff9d8a; }
+  #hud .t { font-size: 9px; letter-spacing: .2em; color: rgba(244,236,230,.32); }
+  @media (max-width: 900px) { .panel { width: calc(100% - 24px); left: 12px; } #hud { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="cv" width="1600" height="900"></canvas>
+
+<div id="gate">
+  <h1>大 漠</h1>
+  <p>E48 · LONE SMOKE — 大漠孤烟直 · 落日 · 多层沙丘 · 驼队</p>
+  <p>点击任意处开始</p>
+</div>
+
+<div class="panel" id="panel">
+  <div class="row">
+    <button class="btn" id="bPause"><span class="dot"></span>暂停</button>
+    <button class="btn on" id="bAudio"><span class="dot"></span>模拟音频</button>
+    <button class="btn on" id="bGrade"><span class="dot"></span>调色层</button>
+    <span class="sep"></span>
+    <button class="btn" id="bRecheck">重跑自检</button>
+    <div class="sld" style="flex:1"><label>档位</label>
+      <select id="sTier"><option value="LOW">LOW</option><option value="MED" selected>MED</option><option value="HIGH">HIGH</option></select>
+    </div>
+  </div>
+
+  <div class="grp">构图锚点</div>
+  <div class="sld"><label>落日 ×W</label><input type="range" id="sSunX" min="150" max="600" value="372" /><output id="oSunX">0.372</output></div>
+  <div class="sld"><label>落日 ×H</label><input type="range" id="sSunY" min="240" max="440" value="348" /><output id="oSunY">0.348</output></div>
+  <div class="sld"><label>日盘半径 ×H</label><input type="range" id="sSunR" min="60" max="220" value="140" /><output id="oSunR">0.140</output></div>
+  <div class="sld"><label>最远脊 ×H</label><input type="range" id="sDT" min="300" max="520" value="412" /><output id="oDT">0.412</output></div>
+  <div class="sld"><label>最近脊 ×H</label><input type="range" id="sDB" min="700" max="1000" value="960" /><output id="oDB">0.960</output></div>
+  <div class="sld"><label>烟柱 ×W</label><input type="range" id="sBcX" min="100" max="900" value="615" /><output id="oBcX">0.615</output></div>
+  <div class="sld"><label>烟源层深度</label><input type="range" id="sSrc" min="0" max="1000" value="720" /><output id="oSrc">0.720</output></div>
+  <div class="sld"><label>烟顶 ×H</label><input type="range" id="sST" min="20" max="300" value="90" /><output id="oST">0.090</output></div>
+
+  <div class="grp">沙丘（多层重叠脊）</div>
+  <div class="sld"><label>烘焙层数</label><input type="range" id="sDN" min="3" max="12" value="7" /><output id="oDN">7</output></div>
+  <div class="sld"><label>每层脊线数</label><input type="range" id="sSub" min="1" max="4" value="2" /><output id="oSub">2</output></div>
+  <div class="sld"><label>重叠系数</label><input type="range" id="sAmp" min="40" max="220" value="105" /><output id="oAmp">1.05</output></div>
+  <div class="sld"><label>远密近疏指数</label><input type="range" id="sStack" min="100" max="220" value="135" /><output id="oStack">1.35</output></div>
+  <div class="sld"><label>层间距</label><input type="range" id="sGap" min="60" max="150" value="100" /><output id="oGap">1.00</output></div>
+  <div class="sld"><label>阳坡强度</label><input type="range" id="sLit" min="20" max="220" value="100" /><output id="oLit">1.00</output></div>
+  <div class="sld"><label>阴坡强度</label><input type="range" id="sShade" min="20" max="220" value="100" /><output id="oShade">1.00</output></div>
+  <div class="sld"><label>风成波纹道数</label><input type="range" id="sRip" min="0" max="40" value="11" /><output id="oRip">11</output></div>
+  <div class="sld"><label>远脊暖雾</label><input type="range" id="sHaze" min="0" max="120" value="30" /><output id="oHaze">0.30</output></div>
+
+  <div class="grp">孤烟（烟丝链，⛔ 软圆盘）</div>
+  <div class="sld"><label>烟丝粒数</label><input type="range" id="sPuff" min="8" max="40" value="20" /><output id="oPuff">20</output></div>
+  <div class="sld"><label>摆动幅度 ×W</label><input type="range" id="sAmp2" min="0" max="400" value="82" /><output id="oAmp2">0.0082</output></div>
+  <div class="sld"><label>行波滞后 rad/柱高</label><input type="range" id="sLag" min="0" max="300" value="80" /><output id="oLag">0.80</output></div>
+  <div class="sld"><label>上升速度 ×H/s</label><input type="range" id="sRise" min="100" max="1400" value="550" /><output id="oRise">0.550</output></div>
+  <div class="sld"><label>根半径 ×H</label><input type="range" id="sR0" min="60" max="400" value="150" /><output id="oR0">0.0150</output></div>
+  <div class="sld"><label>顶扩散 ×根</label><input type="range" id="sGrow" min="0" max="260" value="50" /><output id="oGrow">0.50</output></div>
+  <div class="sld"><label>纵stretch ×宽</label><input type="range" id="sElong" min="100" max="360" value="255" /><output id="oElong">2.55</output></div>
+  <div class="sld"><label>浓度 alphaK</label><input type="range" id="sAlpha" min="40" max="900" value="200" /><output id="oAlpha">2.00</output></div>
+  <div class="sld"><label>暖边偏移 ×半径</label><input type="range" id="sRimOff" min="0" max="160" value="95" /><output id="oRimOff">0.95</output></div>
+  <div class="sld"><label>暖边高度上限 u</label><input type="range" id="sRimMax" min="10" max="100" value="62" /><output id="oRimMax">0.62</output></div>
+  <div class="sld"><label>芯丝条数</label><input type="range" id="sStrand" min="0" max="4" value="2" /><output id="oStrand">2</output></div>
+
+  <div class="grp">驼队（偶发横穿 · 腿被脊线遮）</div>
+  <div class="sld"><label>行进 ×W/s</label><input type="range" id="sPace" min="40" max="600" value="190" /><output id="oPace">0.0190</output></div>
+  <div class="sld"><label>峰高 ×H</label><input type="range" id="sCamH" min="100" max="600" value="300" /><output id="oCamH">0.0300</output></div>
+  <div class="sld"><label>驼峰数</label><input type="range" id="sCamN" min="2" max="12" value="6" /><output id="oCamN">6</output></div>
+  <div class="sld"><label>前后腿遮没 ×峰高</label><input type="range" id="sOccl" min="100" max="700" value="520" /><output id="oOccl">0.520</output></div>
+  <div class="sld"><label>驼队层深度</label><input type="range" id="sCar" min="0" max="1000" value="550" /><output id="oCar">0.550</output></div>
+
+  <div class="grp">落日（三轮返工重心）</div>
+  <div class="sld"><label>贴身柔光 ×R</label><input type="range" id="sH0" min="110" max="220" value="132" /><output id="oH0">1.320</output></div>
+  <div class="sld"><label>内日晕 ×R</label><input type="range" id="sH1" min="140" max="280" value="185" /><output id="oH1">1.850</output></div>
+  <div class="sld"><label>外日晕 ×R</label><input type="range" id="sH2" min="200" max="460" value="255" /><output id="oH2">2.550</output></div>
+  <div class="sld"><label>天幕散光 ×W</label><input type="range" id="sSc" min="60" max="400" value="120" /><output id="oSc">0.120</output></div>
+  <div class="sld"><label>散光强度</label><input type="range" id="sBloom" min="0" max="200" value="100" /><output id="oBloom">1.000</output></div>
+
+  <div class="grp">浮沙 / 调色</div>
+  <div class="sld"><label>基风速 ×W/s</label><input type="range" id="sWind" min="0" max="80" value="12" /><output id="oWind">0.012</output></div>
+  <div class="sld"><label>暗角</label><input type="range" id="sVig" min="0" max="60" value="10" /><output id="oVig">0.10</output></div>
+  <div class="sld"><label>颗粒</label><input type="range" id="sGrain" min="0" max="150" value="55" /><output id="oGrain">0.055</output></div>
+
+  <div class="grp">音频映射（纯氛围克制）</div>
+  <div class="sld"><label>bass→上升/余烬</label><input type="range" id="sKR" min="0" max="200" value="90" /><output id="oKR">0.90</output></div>
+  <div class="sld"><label>energy→摆动</label><input type="range" id="sKS" min="0" max="200" value="85" /><output id="oKS">0.85</output></div>
+  <div class="sld"><label>treble→落日</label><input type="range" id="sKT" min="0" max="200" value="60" /><output id="oKT">0.60</output></div>
+  <div class="sld"><label>mid→浮沙</label><input type="range" id="sKM" min="0" max="200" value="110" /><output id="oKM">1.10</output></div>
+</div>
+
+<div id="hud">
+  <div class="t">E48 大漠 · 计量</div>
+  <div>fps <b id="hFps">—</b> · 帧时 <b id="hMs">—</b> ms</div>
+  <div>图元 <b id="hOp">—</b> · 铺屏 <b id="hFill">—</b> 屏</div>
+  <div>烟丝 <b id="hPuff">—</b> · 圈数 <b id="hLap">—</b> · 驼队 <b id="hWave">—</b></div>
+  <div>沙丘 <b id="hDunes">—</b> 道脊 / <b id="hDunesG">—</b> 张画布 · 烟起自第 <b id="hSrc">—</b> 画布 · 驼行第 <b id="hCar">—</b> 画布</div>
+  <div>摆 <b id="hSway">—</b> px · 余烬 <b id="hEmber">—</b> · 落日 <b id="hSun">—</b></div>
+  <div>脊切日盘 <b id="hCut">—</b> % 直径</div>
+  <div class="t" style="margin-top:6px">自检</div>
+  <div id="hTest">—</div>
+</div>
+
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════════════
+   0 · 数学工具（全部确定性；⛔ 任何逐帧随机）
+   ══════════════════════════════════════════════════════════════════════════ */
+const TAU = Math.PI * 2, D2R = Math.PI / 180;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+/** `#rrggbb` → [r,g,b]（调色坡道插值用；⛔ 逐帧调用，只在烘焙期与 layout 里） */
+function hex2rgb(h) {
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+/** 两个 `#rrggbb` 之间线性插值 ⇒ `#rrggbb` */
+function mixHex(h1, h2, t) {
+  const a = hex2rgb(h1), b = hex2rgb(h2);
+  const p = (i) => Math.round(lerp(a[i], b[i], t)).toString(16).padStart(2, '0');
+  return '#' + p(0) + p(1) + p(2);
+}
+/** 两个 `'r,g,b'` 字符串之间线性插值 ⇒ 同形态字符串（阳/阴坡色带用） */
+function mixRgb(c1, c2, t) {
+  const a = c1.split(','), b = c2.split(',');
+  return Math.round(lerp(+a[0], +b[0], t)) + ',' + Math.round(lerp(+a[1], +b[1], t)) + ',' + Math.round(lerp(+a[2], +b[2], t));
+}
+
+/** 确定性 PRNG（Kotlin 侧对应 VisualizerRandom） */
+function mulberry32(a) {
+  a |= 0;
+  return function () {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hash2(i, j) {
+  let h = (Math.imul(i | 0, 374761393) + Math.imul(j | 0, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  return lerp(lerp(hash2(xi, yi), hash2(xi + 1, yi), u), lerp(hash2(xi, yi + 1), hash2(xi + 1, yi + 1), u), v);
+}
+function fbm(x, y, oct, gain, lac) {
+  let s = 0, a = 0.5, f = 1, n = 0;
+  for (let i = 0; i < oct; i++) { n += a; s += a * vnoise(x * f, y * f); a *= gain; f *= (lac || 2); }
+  return s / n;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1 · 参数表（唯一默认值口径；方案文档附录由本表再生）
+   ══════════════════════════════════════════════════════════════════════════ */
+const P = {
+  tier: 'MED', paused: false, audioSim: true, gradeOn: true,
+
+  comp: {
+    // ⭐ 日盘三要素 = 参考图 1 的**实测**（bbox 半高法定位：盘心 0.391W/0.358H，R=0.112H）
+    // ⭐ H2：R 0.112→0.150、盘心 0.358→0.340。真机判读：R=0.112H 时日盘只有 158 px 宽，
+    //    峰值 L 245 是烟柱（136）的 **1.7 倍** ⇒ 一幅叫「大漠孤烟直」的画，眼睛先落在日盘上，
+    //    而且它一点也不「大漠」。放大后 D=216 px（16.9%W），切日比例 **25.8%**（T12 窗口 8–45%，
+    //    余量很大 —— 放大反而让切日比例**变小**：切深是绝对像素除以更大的直径）。
+    sunX: 0.391, sunY: 0.340, sunR: 0.150,
+    duneTop: 0.412,      // 最远一层沙脊的基准 y ×H（日盘下缘由**这一层**切掉 ⇒ T12 判）
+    duneBot: 0.960,      // 最近一层的基准 y ×H
+    smokeX: 0.615,       // 烟柱所在的 ×W（三轮裁决：⛔ 烽燧 ⇒ 烟由沙脊线之后升起）
+    smokeSrc: 0.72,      // 烟源所在层的深度分数（0=最远…1=最近 ⇒ 取 0.72 落在倒数第二层）
+    smokeTop: 0.055,     // 烟柱顶端 ×H（B1：0.090→0.055，把柱加长 ~26 px。T5 的柱切线倾角是
+                         //   `atan(dx/du ÷ smokeH)`，smokeH 变短 ⇒ 同样摆幅下倾角变大；
+                         //   B1b 把基点抬了 1.25·r0H 之后最坏倾角 5.72° 距 6° 闸门只剩 4.7% 余量，
+                         //   顶端抬到 0.055H 后回到 ~5.4%（余量 10%）。顺带：烟柱够到画面上沿，
+                         //   「直上」的读感也更完整。柱顶仍在画内（720p 下约 y=37）。
+    carLayer: 0.55,      // 驼队脚线所在层的深度分数
+  },
+  dune: { seed: 20261014, n: 7, sub: 2, stack: 1.35, ovl: 1.05, gapK: 1.00,
+          litK: 1.00, shadeK: 1.00, ripples: 11 },
+  // ⭐ 预算取舍（H2 + 预算闸门）：日盘半径与日晕半径是**同一个预算里的两个杠杆**，不能各长各的。
+  //    铺屏 = `πR²·Σk²/(W·H)`（日晕三层）与 `2πR²/(W·H)`（日盘，基色 + 竖向坡各填一遍）。
+  //    H2 把 R 0.112H→0.150H（×1.793）时若日晕半径**跟着等比放大**，日晕 0.259→0.464、
+  //    日盘 0.044→0.080 ⇒ HIGH 档 3.87→4.13 屏，距 4.21 红线只剩 0.08 屏（1.9%）。
+  //    ⇒ 日晕改成**按绝对像素收窄**（k 1.32/1.85/2.55 → 1.13/1.38/1.72，R=108 时绝对半径
+  //    122/149/186，与放大前的 107/150/207 同量级）：日晕 0.464 → **0.244**，省回 **0.220 屏**。
+  //    物理上也对：日盘变大，**辉光应该相对收紧**，而不是跟着一起涨。
+  //    ⛔ HIGH 铺屏上限 4.21 是 E44 的**真机已验收值**，⛔ 不为任何改动放宽。
+  sun: { halo0: 1.13, halo1: 1.38, halo2: 1.72, scatter: 0.120, bloom: 1.00 },
+  smoke: {
+    seed: 20261014, puffs: 20, r0: 0.0150, grow: 0.50, elong: 2.85,
+    amp: 0.0082, swayHz1: 1 / 19, swayHz2: 1 / 7.3, swayLag1: 0.80, swayLag2: 1.45, phJit: 0.20,
+    rise: 0.0550, alphaK: 1.45,   // B1：2.00→1.45（峰值浓度 0.187→0.145）。⛔ T7 **不判**峰值浓度
+                                    //     （它判的是峰的位置 pk=峰的 u），所以这一项是纯观感取值：
+                                    //     峰不动的话平台段会变成一根 18.7% 不透明的等宽柱，更"奶"。
+    haloMul: 1.35, haloA: 0.30, haloRise: 0.62, jitK: 1.00,
+    rimOff: 0.95, rimMax: 0.62, rimA: 0.62, variants: 6, strands: 2,
+  },
+  // ⭐ B2：`occl` 0.520→0.345、`h` 0.0300→0.0380。
+  //    真机判读：原参数下**一帧腿都露不出来** —— 驼队精灵高 1.04h，腿区占 `[0.603h, 1.04h]`，
+  //    遮挡线切在 `1.04h − off·h`，而原 off（jit=0.5）=0.421 ⇒ 切在 0.619h < 0.603h 之上一点，
+  //    **可见腿像素 = h·(0.385 − off) = 21.6·(−0.036) = 负 ⇒ 恒等于 0**。
+  //    腿像素的真正自变量是这个**乘积**，不是 T9 的"露出比"：露出比只管"别整只浮在沙上"。
+  //    现取 off∈[0.179, 0.380] ⇒ 可见腿 = h·[0.005, 0.206] = **1.6 ~ 7.1 px**（典型 4.3 px）。
+  //    ⛔ T9 区间 `[0.40,0.85]` **未动**：新参数实测露出比 [0.641, 0.831]，两端都有余量，
+  //    负样本（occl→0.10 ⇒ 0.942）照旧咬得住。
+  // ⭐⭐ 第三轮否决①：`lenK` / `humpK` 把**体型尺寸**与**峰在体型里的比例**拆成两个独立量。
+  //    `h` 只管"腿的像素"（P22：可见腿 = `h·(0.385−off)`），**不再兼管峰的大小**。
+  //    实测基线（h=27.4 px）：长/高 **0.94**（解剖 1.25~1.35）、峰/体深 **1.08**（解剖 0.55~0.62）。
+  //    `lenK` 1.20 ⇒ 长/高 1.29；`humpK` 0.70 ⇒ 峰/体深 0.61。推导见 `bakeOneCamel` 的注释块。
+  //    ⛔ T9 露出比与区间**都未动**（几何量 occl/h 没碰 ⇒ 仍 [0.683, 0.825]）。
+  caravan: { seed: 20261014, pace: 0.0190, h: 0.0380, gap: 0.028, camels: 6,
+             idle0: 40, idle1: 80, occl: 0.345, bobHz: 1 / 3.4, lenK: 1.20, humpK: 0.70 },
+  wind: { base: 0.012, gustAmp: 0.55, gustHz1: 1 / 17, gustHz2: 1 / 41 },
+  // ⭐ M1：`grain` 0.055→0.030。实测沙面 p5–p95 只有 **45 L、IQR 20 L**，而颗粒本身的高通 std
+  //    是 **5.2 L（竖）/ 9.3 L（横）** —— 噪声占了局部对比的 1/4 ~ 1/2，"发奶"有一半是它。
+  fx: { haloLayers: 3, veils: 2, haze: 0.30, vignette: 0.10, grain: 0.030, skyTex: 0.022 },
+  audio: { kRise: 0.90, kSway: 0.85, kSun: 0.60, kSand: 1.10, kHaze: 0.50, smooth: 0.085 },
+};
+/** 三档默认（切档时写入 P，滑杆随之同步）
+ *  ⚠️ 三层裁决 ②「要有很多沙丘重叠，⛔ 三道线」的两根杠杆分得很清楚：
+ *     · `dune.n`   = **烘焙画布数** = 逐帧 `drawImage` 数 + 铺屏 ⇒ 真正的预算杠杆（LOW 5 / MED 7 / HIGH 9）
+ *     · `dune.sub` = 每张画布内**叠几道脊** ⇒ 只加烘焙耗时，**0 逐帧成本、0 铺屏增量**
+ *     脊线总数 = n × sub（HIGH 18 道）。铺屏公式是 `Σ高度 = 总跨度 + Σ(层边界那道脊的起伏)`，
+ *     与 sub **无关** —— 这就是"加脊不加价"的依据，⛔ 靠提 n 来加起伏（那会直接顶穿 4.21 红线）。 */
+const TIERS = {
+  LOW:  { 'smoke.puffs': 14, 'smoke.strands': 0, 'caravan.camels': 4, 'dune.ripples': 6,
+          'dune.n': 5, 'dune.sub': 2,
+          'fx.grain': 0, 'fx.veils': 1, 'fx.haloLayers': 1, 'smoke.jitK': 0.85 },
+  MED:  { 'smoke.puffs': 20, 'smoke.strands': 2, 'caravan.camels': 6, 'dune.ripples': 11,
+          'dune.n': 7, 'dune.sub': 2,
+          'fx.grain': 0.030, 'fx.veils': 2, 'fx.haloLayers': 2, 'smoke.jitK': 1.00 },
+  HIGH: { 'smoke.puffs': 26, 'smoke.strands': 2, 'caravan.camels': 7, 'dune.ripples': 16,
+          'dune.n': 9, 'dune.sub': 2,
+          'fx.grain': 0.042, 'fx.veils': 2, 'fx.haloLayers': 3, 'smoke.jitK': 1.15 },
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2 · 布局 + N 层重叠沙脊（解析函数 ⇒ 烘焙、遮挡、自检共用同一口径）
+       三轮裁决 ②「要有很多沙丘重叠，而不是三道线」⇒ 脊线表由 (seed, n, gapK) **生成**，
+       ⛔ 手写四条。层数/间距是滑杆可调量，T14 判「每一层都必须在某处露出来」。
+   ══════════════════════════════════════════════════════════════════════════ */
+let W = 0, H = 0, S = 1, ctx = null, cv = null;
+const L = {};
+/** 深度分数 t → 该层的调子（锚点全部取**参考图 1 的实测主色**，见 e48_ref_palette.py）
+ *  ⭐ 二轮实测对账（ref 竖向 6 带：天顶 L .179 → 沙带 L .080/.083/.099）：
+ *     参考图的沙丘**本体是暗棕**（#6d4b34 占 21.8%、#644833 占 12.3%、#5d3f2c 占 9.8%，L 全在 .06–.115），
+ *     亮的 #c57a4e（L .263）只占 **8.7%** ⇒ 它是**脊线上的一条高光刃**，⛔ 当整层的中间调。
+ *     上一版把 #c57a4e 铺成远层主体 ⇒ 沙带实测 L .230/.168/.117，比参考图**亮 2–3 倍**，
+ *     于是"层与层之间没有明暗差"＝读平、读成"一匹布"，这正是裁决 ②「起伏太少」的另一半成因。
+ *  ⚠️ 阴坡 ⛔ 紫色（旧表 `138,78,96` 那种蓝紫底）—— 参考图的暗部是**暖棕**，紫色是"太深"的元凶之一。 */
+const TONE_FAR = { top: '#c98052', mid: '#855538', bot: '#704a33', lit: '255,196,128', shade: '92,58,40', haze: '255,186,120' };
+const TONE_NEAR = { top: '#a96a41', mid: '#67452f', bot: '#5c3e2a', lit: '255,166,92', shade: '52,34,24', haze: '255,170,100' };
+const DUNES = [];
+/** 脊线表：`n` 张画布 × 每张 `sub` 道脊 ⇒ 共 R 道脊，`d.g` 是它所属的**画布**索引。
+ *  ⭐ 为什么必须分组成画布（三轮裁决 ② 的正解）：逐帧成本 = 画布数 + 画布总高度，
+ *    而**同一张画布内**多叠几道脊既不增加 blit，也不增加总高度（脊与脊的互相遮挡发生在位图内部）。
+ *  ⛔ 各脊同频 = 读成"一条脊的复制" ⇒ f1/f2/相位逐脊独立。 */
+function buildDunes() {
+  DUNES.length = 0;
+  const n = Math.max(3, Math.round(P.dune.n));
+  const sub = Math.max(1, Math.round(P.dune.sub));
+  const R = n * sub, seed = P.dune.seed | 0;
+  for (let i = 0; i < R; i++) {
+    const t = R === 1 ? 1 : i / (R - 1);                      // 0 = 最远 … 1 = 最近
+    const d = {
+      i: i, t: t, g: Math.floor(i / sub), sub: sub, nG: n,
+      f1: lerp(11.0, 1.30, t),
+      f2: lerp(17.0, 2.9, t),
+      s: hash2(i + 3, seed & 0xffff) * 31.0,
+      ph: hash2(i + 11, (seed >>> 3) & 0xffff) * TAU,
+      // 尖度 = ridged 噪声的 `p` 次幂 ⇒ **只决定"脊有多窄"**。
+      // ⭐ 三轮裁决 ②「三道线 / 起伏太少」的真身在这一行：`p=2.0/1.55` 时 fbm 的 0.5 附近**大片**都算脊
+      //    （rmean≈0.7）⇒ 每层的轮廓是"高台地 + 偶尔一道 V 形缺口"，**恰好是沙丘的反面**，
+      //    十几层并排读下来就是灯芯绒。p 提到 4.2/2.2 后 rmean≈0.35 ⇒ 大片低地 + **窄而带折角的刀背**，
+      //    这才是参考图里"一座一座"的形状（⛔ 靠加层数救，那是把灯芯绒织密）。
+      // ⭐ 3.4/2.1（原为 4.2/2.2）：4.2 的刀背在真机 5× 裁块下读成**针状锯齿**——脊的两侧几乎是垂直的，
+      //    而烘焙的多边形折线以 step≈2.7 px 采样，一个 V 只剩 2–3 个顶点 ⇒ 折线的"棱面"直接可见。
+      //    3.4 保住 rmean≈0.4（低地 + 窄脊，仍不是灯芯绒），只把脊两侧的坡放回可视尺度。
+      sharp: lerp(3.4, 2.1, t),
+      // ⭐⭐ **近景必须是圆丘，⛔ 刀背**（E48 三轮十踩，对照参考图判出来的真身）：
+      //    ridged 噪声天生是"窄刀背 + 宽沙谷"，用它画**近**景 ⇒ 每颗沙丘只剩一条线，
+      //    十几层并排就是本图被否掉的"薄片/灯芯绒"观感。参考图的前景恰恰相反：
+      //    **一颗一颗凸顶圆鼓的大沙丘**，脊线是圆滑过渡的。
+      //    所以按深度把脊形**混向平滑 fbm 丘**：远层 0%（远处山脊本来就是锯齿剪影，
+      //    ridged 是对的），近层 78%（凸顶圆丘）。⛔ 全局换成平滑 fbm：远脊会糊成一团灰。
+      roll: 0.78 * Math.pow(t, 0.85),
+      tone: {
+        top: mixHex(TONE_FAR.top, TONE_NEAR.top, t), mid: mixHex(TONE_FAR.mid, TONE_NEAR.mid, t),
+        bot: mixHex(TONE_FAR.bot, TONE_NEAR.bot, t),
+        lit: mixRgb(TONE_FAR.lit, TONE_NEAR.lit, t), shade: mixRgb(TONE_FAR.shade, TONE_NEAR.shade, t),
+        haze: mixRgb(TONE_FAR.haze, TONE_NEAR.haze, t),
+      },
+    };
+    // 数值积分出该层脊形的均值 ⇒ crest() 减掉它，`d.y` 才是真正的**平均脊线**位置。
+    // 只依赖 f1/s/sharp（⛔ 依赖 W/H/y），因此放这里算一次就够，改尖度不必重跑 layout。
+    d.rmean = ridgeMean(d);
+    // 脊高光要 `'r,g,b'` **三元组**：`tone.top` 是给体块渐变用的 hex，直接拼进 `'rgba(' + …`
+    // 会得到 `rgba(#c57a4e,0)` ⇒ 真浏览器 `addColorStop` 抛 SyntaxError 把整页烘焙打死
+    // （vm 桩件不校验颜色串 ⇒ harness 全绿也照样发现不了，E48 三轮首踩）。
+    d.tone.topRgb = hex2rgb(d.tone.top).join(',');
+    // ② 阳/阴坡要**逐列混色** ⇒ 必须是数字三元组（⛔ 每列 split 一次字符串：R=18 × 500 列 = 9 千次分配）
+    d.tone.litN = d.tone.lit.split(',').map(Number);
+    d.tone.shadeN = d.tone.shade.split(',').map(Number);
+    DUNES.push(d);
+  }
+}
+/** 脊状噪声（ridged multifractal 的一维版）：`1−|2f−1|` 再取 `p` 次幂
+ *  ⇒ **峰尖、谷平**。⛔ 直接用 fbm：fbm 是"山丘"（顶部圆），参考图里的沙脊是**刀背状折线**，
+ *     三轮裁决 ②「沙丘起伏太少」的真身不是层数不够，而是每层的轮廓太圆、读不出"一道一道"。 */
+function ridgeAt(x, y, p) {
+  const f = fbm(x, y, 3, 0.5, 2);
+  return Math.pow(1 - Math.abs(2 * f - 1), p);
+}
+/** 第 i 层在归一化横坐标 u 处的脊形（0…1）。两个八度（0.78 + 0.22）：大脊套小脊
+ *  ⇒ 远处"一道一道"、近处有沙丘群。crest() 与 ridgeMean() 共用，⛔ 两处手写公式（会漂）。
+ *  ⭐ 第二八度**必须比主八度圆**（`sharp·0.62`、频率 2.1 倍而非 2.7 倍）：同 `p` 的高频 ridged
+ *    叠加 = 在主脊的 flank 上再刻一排 3 px 宽的 V，正是 5× 裁块里"锯齿"的第二来源。
+ *    参考图近景沙面上细脊的曲率半径明显大于采样步长——它是**起伏**，不是**刃**。
+ *  ⭐⭐ `roll` 把整条脊形**混向平滑 fbm 丘**（见 buildDunes 的十踩说明）：远层纯 ridged = 锯齿剪影，
+ *    近层 78% 圆丘 = 一颗一颗凸顶大沙丘。两条分支共用同一套采样坐标，⛔ 换公式时漏改一处。 */
+function ridgeMix(c, u) {
+  const a = u * c.f1 + c.s, b = u * c.f1 * 2.1 + c.s * 1.9;
+  const rg = 0.78 * ridgeAt(a, c.s + 3.3, c.sharp)
+           + 0.22 * ridgeAt(b, c.s + 7.1, c.sharp * 0.62);
+  const hl = 0.78 * fbm(a, c.s + 3.3, 3, 0.5, 2)
+           + 0.22 * fbm(b, c.s + 7.1, 2, 0.5, 2);
+  return lerp(rg, hl, c.roll);
+}
+function ridgeMean(c) {
+  const K = 96;
+  let sum = 0;
+  for (let k = 0; k < K; k++) sum += ridgeMix(c, (k + 0.5) / K);   // 中点采样，⛔ 端点（首尾同相位会重复计）
+  return sum / K;
+}
+/** 第 i 层沙脊在像素 x 处的 y（解析、确定性 ⇒ 烘焙、遮挡、自检共用同一口径）
+ *  ⚠️ 振幅与极值住在 **DUNES[i]**（layout 里算），本函数只读 ⇒ 任何调用点都拿到同一个口径。 */
+function crest(i, x) {
+  const c = DUNES[i], u = x / (W || 1);
+  return c.y - H * (c.amp * (ridgeMix(c, u) - c.rmean)
+                  + c.amp2 * Math.sin(u * c.f2 + c.ph));
+}
+/** 深度分数 → **脊线索引**（最近一道 = R−1）；四舍五入 ⇒ 滑杆读回来的就是真正生效的那道脊 */
+function layerOf(fr) { return clamp(Math.round(fr * (DUNES.length - 1)), 0, DUNES.length - 1); }
+/** 画布 g 的成员脊线索引区间（脊线按远→近连续分组 ⇒ 组内遮挡次序天然正确） */
+function groupRidges(g) {
+  const R = DUNES.length, a = g * DUNES[0].sub, b = Math.min(R - 1, a + DUNES[0].sub - 1);
+  return [a, b];
+}
+/** 画布 g 在像素 x 处**看得见的顶边** = 组内各脊的最高点。烟根与驼腿必须落在它之下，
+ *  否则"后画的画布吃掉前景物"这条遮挡链会失效（分组后 ⛔ 再用单条脊线当顶边）。 */
+function groupTopCrest(g, x) {
+  const [a, b] = groupRidges(g);
+  let mn = 1e9;
+  for (let i = a; i <= b; i++) { const y = crest(i, x); if (y < mn) mn = y; }
+  return mn;
+}
+function layout(w, h) {
+  W = w; H = h; S = H / 540;
+  L.sunX = P.comp.sunX * W; L.sunY = P.comp.sunY * H; L.sunR = P.comp.sunR * H;
+  L.smokeTopY = P.comp.smokeTop * H;
+  buildDunes();
+  // ⭐ 全沙海**共用**的亮度阶梯两端（⛔ 逐层各建一条，见 bakeRune ① 的七踩说明）：
+  //    上端 = 地平线（`duneTop`，第一道脊的基准线），下端 = 画面底再放 2%（最后一层的体块吃满）。
+  L.horizonY = P.comp.duneTop * H;
+  L.duneFieldBot = H * 1.02;
+  const R = DUNES.length, nG = DUNES[0].nG;
+  const e = Math.max(1, P.dune.stack);
+  // ① 基准线：`pow(t, e)` 分布 ⇒ e>1 时**远密近疏**，这正是透视下沙丘场的样子
+  //    （参考图：地平线下方挤着一二十道小脊，画面底部只剩三四座大沙丘）。
+  //    `gapK` 仍乘在**分数间距**上（旧口径）⇒ 压小时整片沙海往上收，最后一层不再贴住 duneBot。
+  for (let i = 0; i < R; i++) {
+    DUNES[i].y = lerp(P.comp.duneTop, P.comp.duneBot, Math.pow(DUNES[i].t, e) * P.dune.gapK) * H;
+  }
+  // ② 振幅 = `ovl × 到下一道脊的间距` ⇒ 起伏与间距**同源**，改层数/改指数都不会突然"读平"或"咬死"。
+  //    ⛔ 手填 ampFar/ampNear：那是一对随 R 变化的量，R 一改整片沙海的立体感就崩（三轮裁决 ② 的成因）。
+  //    ovl≈0.75 ⇒ 峰谷差 ≈ 1.35×间距 ⇒ 每道脊都在某处高过下一道（重叠），又不至于把后一道整个盖掉。
+  for (let i = 0; i < R; i++) {
+    const d = DUNES[i];
+    const gap = i < R - 1 ? DUNES[i + 1].y - d.y : d.y - DUNES[i - 1].y;   // 像素
+    d.amp = Math.max(0.004, (gap / H) * P.dune.ovl);   // ⚠️ **分数**！crest() 里是 `y − H·amp·(…)`，
+    d.amp2 = d.amp * 0.30;                             //    直接把像素间距塞进来 = 起伏被放大 H 倍（E48 三轮首踩，mn/mx 冲到 ±3000）
+    d.cols = Math.round(lerp(200, 500, d.t));                  // 烘焙列数：远层本身平，粗步进读不出来，⛔ 逐列成本均分
+    d.bandK = lerp(0.80, 0.95, d.t);                           // 阳/阴坡着色带 = **整条山坡**（该列脊线→本层底）
+    d.hazePad = H * (0.028 * (1 - d.t) + 0.006);                // 脊线上方的暖雾带高度（远层厚、近层只留 6 px 余量）
+    // ③ 大尺度调子 + 风成波纹只给**最近三张画布的最前那道脊**：那是画面上面积最大、最容易读平的沙面，
+    //    而逐脊的描边成本是 R 的倍数（R=18 时全给 = 波纹描边 6 万条，烘焙耗时直接进不了首帧预算）。
+    const lead = d.g >= nG - 3 && i === groupRidges(d.g)[1];
+    d.swales = lead ? Math.round(3 + d.t * 4) : 0;
+    d.ripples = lead;
+  }
+  for (let i = 0; i < R; i++) {
+    const d = DUNES[i];
+    d.mn = 1e9; d.mx = -1e9;
+    const stp = Math.max(2, Math.round(W / 400));
+    for (let x = 0; x <= W; x += stp) { const y = crest(i, x); if (y < d.mn) d.mn = y; if (y > d.mx) d.mx = y; }
+  }
+  L.smokeX = P.comp.smokeX * W;
+  L.srcRidge = layerOf(P.comp.smokeSrc);
+  L.srcLayer = DUNES[L.srcRidge].g;
+  L.carRidge = layerOf(P.comp.carLayer);
+  L.carLayer = DUNES[L.carRidge].g;
+  // ⭐ 烟源层画布的**顶边**（= 遮挡线的位置）与烟柱基点分开存：
+  //    遮挡来自 `drawDune(srcLayer)` 后画，而那张画布的顶边是一条**笔直的横线**（⛔ 不是脊线）。
+  L.srcRidgeY = groupTopCrest(L.srcLayer, L.smokeX);
+  // ⭐ B1b：基点**抬到遮挡线之上**一整个 puff 半径。原来是 `顶边 + 0.010H`（落在顶边**之下** 7 px），
+  //    而最低一粒的半径 ~11 px ⇒ 顶上还有 4 px 露在遮挡线外，被那条**笔直的画布边**齐刷刷切断：
+  //    8× 裁块里柱根是一个**方头"脚"**，读成"一根光柱打在地上"，⛔ "烟从沙丘后面升起来"整条读不出来。
+  //    抬到 `顶脊 − 1.25·r0H` 之后最低一粒**整粒**都在遮挡线之上，那里 alpha 已经归零 ⇒ ⛔ 不存在硬切；
+  //    柱根改由 drawEmber 的暖光在脊线上沿"漏出来"表示源在沙丘后面（⛔ 不画烽燧，裁决不变）。
+  L.smokeBaseY = L.srcRidgeY - Math.max(H * 0.008, P.smoke.r0 * H * 1.25);
+  L.smokeH = Math.max(20, L.smokeBaseY - L.smokeTopY);
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   3 · 孤烟 = 烟丝链（⛔ 软圆盘球）
+       逐粒只有 u（沿柱归一化高度）与相位/变体/圈数，柱形与遮挡全解析。
+   ══════════════════════════════════════════════════════════════════════════ */
+const SK = { n: 0, u: null, ph: null, of: null, lap: null, vr: null };
+function makeSmoke(n, seed) {
+  const st = { n: Math.max(0, Math.round(n)), u: null, ph: null, of: null, lap: null, vr: null };
+  st.u = new Float64Array(st.n); st.ph = new Float64Array(st.n);
+  st.of = new Float64Array(st.n); st.lap = new Int32Array(st.n); st.vr = new Int32Array(st.n);
+  const rnd = mulberry32((seed | 0) ^ 0x2f9a1);
+  for (let i = 0; i < st.n; i++) {
+    // ⭐ 抖动是**槽位偏移**（±17% 槽宽），⛔ 逐粒速度差 —— 速度差会随圈数累积成断档，
+    //    把 T4 的"相邻必须互相埋住"从构造保证变成会踩雷的运气（实测 20 s 后 min 重叠跌到 1.25）。
+    st.of[i] = (rnd() - 0.5) * 0.34;
+    st.u[i] = (i + 0.5 + st.of[i]) / Math.max(1, st.n);
+    st.ph[i] = rnd() * TAU;
+    st.lap[i] = 0;
+    st.vr[i] = variantOf(i, 0, P.smoke.variants);
+  }
+  return st;
+}
+/** ⭐ 变体分配：`i + 2·lap` —— 相邻两粒的差 = 1 + 2Δlap，模 6 **不可能为 0**
+ *  ⇒ "相邻两粒永不贴同一张" 是构造保证，⛔ 不是运气；同时每格随 lap 轮转 3 张不同的贴纸。 */
+function variantOf(i, lap, V) { return ((i + 2 * lap) % V + V) % V; }
+
+/** 摆动基波（两个不可通拍频叠加 ⇒ 峰值会逼近 1.45 但永不变周期）
+ *  ⭐ **行波**：相位随高度连续滞后（`−u·swayLag`），`ph` 只作**微量去相关**（×phJit）。
+ *  ⛔ 逐粒随机相位：相邻两粒朝不同方向摆 ⇒ 柱子读成闪电/Z 字，与需求 ①「孤烟直」直接冲突
+ *  （E48 二轮 1:1 全帧判读实锤：顶端细线拐出三个硬折）。滞后 + 包络都吃倾角预算，
+ *  所以 amp 必须同时下调，T5（≤10°）是这条取舍的裁判。 */
+function swayRaw(u, t, ph) {
+  const j = (ph || 0) * P.smoke.phJit;
+  return Math.pow(u, 1.7) * (Math.sin(TAU * t * P.smoke.swayHz1 - u * P.smoke.swayLag1 + j)
+    + 0.45 * Math.sin(TAU * t * P.smoke.swayHz2 - u * P.smoke.swayLag2 + j * 0.61 + 1.7));
+}
+function swayPx(u, t, ph, mul) { return P.smoke.amp * W * (mul === undefined ? W_.swayMul : mul) * swayRaw(u, t, ph); }
+/** 浓度包络：**起来 → 平台 → 末段收**（根部 0→满，`u∈[0.05,0.82]` 维持满密度，最后 18% 散尽）
+ *  ⭐ B1（2026-10-14 真机判读）：原先是 `(1−u)^1.30` 的**单调衰减** —— 实测柱顶相对局部背景只有
+ *     **+7 L**、柱中段 +24 L、下段 +54 L ⇒ 烟在画面 **41% 高度就散完了**，真机读成"一根贴着地平线
+ *     的短光柱"，「**直上**」这半个核心读感根本没成立（T7 全绿也照样不成立 —— T7 管的是形状，
+ *     ⛔ 不管"看得见多少"）。改成平台段后全柱满密度，只有末段收。
+ *  ⛔ T7 三条仍然成立、**阈值一个字没动**（见 §八）：a(0)=0 / a(1)=0（`fin(0)` 与 `hold(1)` 两头都归零）、
+ *     方向转折仍 = 1（升 → **平**（斜率 0，T7 跳过不计转折）→ 降）、峰仍在 u=0.050 ∈[0.04,0.16]。
+ *     实测 T7：基线 `峰u=0.050 峰值=0.1871 转折=1` → 新版 `峰u=0.050 峰值=0.1450 转折=1`，两侧都 PASS。
+ *  ⚠️⚠️ **T7 判的是峰的位置 `pk`，⛔ 从来没有判过峰的"浓度"**（`pk>=0.04 && pk<=0.16` 里的 pk 是 **u**
+ *     而不是 alpha）。⇒ `alphaK` 2.00→1.45（峰值 0.1871→0.1450）**不受 T7 约束**，是按真机实测配的：
+ *     峰值不动的话平台段会是一根 18.7% 不透明的等宽柱，反而更"奶"。
+ *  ⭐ 包络形状才是 B1 的要害 —— 相对峰值的浓度沿柱高（基线 → 新版）：
+ *     u=.15  86.5% → 99.4% ｜ u=.30  67.2% → 96.6% ｜ u=.45  49.1% → 92.5%
+ *     u=.60  32.5% → 88.0% ｜ u=.75  17.6% → 84.3% ｜ u=.90   5.4% → 47.9%
+ *     基线在 u=0.45（≈地平线高度）就已经掉到一半、u=0.90（≈画面 12% 高度）只剩 5%
+ *     ⇒ 这正是"柱顶相对局部背景只有 +7 L、柱中段 +24 L"的**成因**，也是「直上」读不出来的成因。 */
+function smokeAlpha(u) {
+  const uc = clamp(u, 0, 1);
+  const fin = Math.pow(clamp(uc / 0.05, 0, 1), 0.7);                     // 根部 0→满（原样保留）
+  // 平台段：满密度撑到 u=0.82；`0.18·smoothstep` 是一条**极缓的**整体收薄（单峰仍是单峰，
+  // 因为它在升段之后**单调下降**，⛔ 不制造第二个峰 ⇒ T7 的「转折 ≤1」不受影响）
+  const hold = (1 - smoothstep(0.82, 1.00, uc)) * (1 - 0.18 * smoothstep(0.05, 0.95, uc));
+  return P.smoke.alphaK * 0.1 * fin * hold;
+}
+/** puff 半径：随柱高**呼吸**。
+ *  ⭐ B1：等宽 + 硬边是"光柱"最强的两个信号 —— 5× 裁块里旧版的柱宽从柱根到柱顶几乎不变，
+ *     读成一根**直板**。真实烟柱的轮廓沿高度**收、放、再收**。这是 **u 的纯函数**
+ *     （⛔ 不含 t ⇒ 逐帧可复现、⛔ 不是逐帧随机）。
+ *  ⭐⚠️ **必须住在 `puffR` 里，不能住在 `drawSmoke` 里**：`minOverlap`（T4「相邻必须互相埋住」的
+ *     判据）也读 `puffR`。放逐帧里 = 收窄了半径而 T4 看不见 ⇒ "收窄到断珠"这个回归能悄悄溜过去
+ *     （P13「闸门的覆盖面 = 被闸对象的数量」同族）。放这里 T4 与 harness 自动跟着收窄。
+ *     幅度 0.11/0.05（不是更大的数）：T4 的 min 重叠随最窄半径**线性**下降
+ *     （实测 0.20/0.11 ⇒ 最窄 0.752×，T4 由 2.61 掉到 **1.95**，闸门 1.8 只剩 8% 余量；
+ *     0.11/0.05 ⇒ 最窄 0.872×，T4 ≈ **2.28**，余量 27%）⇒ 轮廓起伏要跟 T4 的余量一起买。 */
+function puffR(u) {
+  const base = P.smoke.r0 * H * (1 + P.smoke.grow * Math.pow(clamp(u, 0, 1), 1.25));
+  return base * (1 + 0.11 * Math.sin(u * 11.3 + 1.7) + 0.05 * Math.sin(u * 23.7 + 0.4));
+}
+/** 柱切线倾角：dx/du ÷ dy/du（dy/du = −smokeH）⇒ 烟丝跟着柱子弯，⛔ 竖直贴 */
+function puffTilt(u, t, ph, mul) {
+  const du = 0.02;
+  const a = swayPx(Math.min(1, u + du), t, ph, mul), b = swayPx(Math.max(0, u - du), t, ph, mul);
+  return Math.atan2((a - b) / (2 * du), L.smokeH);
+}
+function resetSmoke() { const s = makeSmoke(P.smoke.puffs, P.smoke.seed); for (const k in s) SK[k] = s[k]; SK.n = s.n; }
+/** 推进 + 回绕：**全体等速**（抖动只住在槽位偏移 `of` 里，⛔ 逐粒速度差 ⇒ 会累积成断档），
+ *  u≥1 ⇒ 减 1 并 lap+1（**粒子数守恒**，T3 判这条），
+ *  回绕时按 hash2(i, lap) 重新抖相位/变体 ⇒ 同一格每圈长得不一样，⛔ 同一张贴纸一直爬。 */
+function stepSmoke(st, dt, t) {
+  void t;
+  const vP = W_.risePx * dt / Math.max(1, L.smokeH);
+  for (let i = 0; i < st.n; i++) {
+    st.u[i] += vP;
+    if (st.u[i] >= 1) {
+      st.u[i] -= 1; st.lap[i] += 1;
+      st.ph[i] = hash2(i * 7 + 1, st.lap[i] * 13 + 5) * TAU;
+      st.vr[i] = variantOf(i, st.lap[i], P.smoke.variants);
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4 · 烟丝位图烘焙（6 变体 × 中性/暖边两套，128×128）
+       主丝 = 22 颗软圆盘沿 fbm 摆动竖直曲线串成；宽 0.35→1.0；
+       2 条子丝挂在两侧 ⇒ 破掉"一根香肠"；
+       3 遍错位叠印做**无 filter 柔化**（全在烘焙期 ⇒ 0 逐帧成本）。
+   ══════════════════════════════════════════════════════════════════════════ */
+function bakeWisp(variant, warm) {
+  const SZ = 128;
+  const c = mkC(SZ, SZ), g = c.getContext('2d');
+  const tmp = mkC(SZ, SZ), t = tmp.getContext('2d');
+  const rnd = mulberry32(((P.smoke.seed ^ 0x77a1) + variant * 92821 + (warm ? 47 : 11)) | 0);
+  const col = warm ? '255,196,120' : '250,240,230';
+  /* ⭐⭐ 第三轮否决②「烟柱中间还是柱状的」：**沿丝身的低频浓度团块**。
+   *   上一轮只做了**半径**呼吸（`puffR` 的正弦，±14%）—— 那是一条**平滑的正弦**，
+   *   叠在均匀的粒子流上，整柱仍然是一根等密度的实心柱。
+   *   真烟柱的密度沿轴是**疏—密—疏**的起伏，而且起伏的**间距不等**。
+   *   ⛔ 不用正弦做这件事：正弦是**周期**的，读成"波纹/竹节"，⛔ 不是"涡"。
+   *   这里用 K 段**随机**宽度/相位/强度的团块（K 取 2~3：一根丝在柱上只占 ~64 px，
+   *   K 太多会互相叠成噪声；整柱 ~455 px 高、粒子间距 ~23 px ⇒ 合成后自然得到 5~8 个起伏）。
+   *   ⚠️ 这层**住在位图里** ⇒ 逐帧 0 成本，而且 ⛔ 不碰 `puffR` / 粒子位置
+   *   ⇒ T4（重叠率，几何量）与 T5（倾角，几何量）**完全不受影响**。
+   */
+  const K = 2 + Math.floor(rnd() * 2);                       // 2~3 段
+  const cl = [];
+  for (let k = 0; k < K; k++) cl.push({ s: rnd(), w: 0.14 + rnd() * 0.22, a: 0.30 + rnd() * 0.80 });
+  const clump = (s) => {
+    let m = 0;
+    for (let k = 0; k < K; k++) {
+      const d = Math.abs(s - cl[k].s);
+      if (d < cl[k].w) { const q = 1 - d / cl[k].w; const v = cl[k].a * q * q; if (v > m) m = v; }
+    }
+    return m;                                                  // ∈[0, 1.10]
+  };
+  const filament = (ox, wmul, amul) => {
+    const p1 = rnd() * TAU, p2 = rnd() * TAU, p3 = rnd() * TAU, N = 26;
+    for (let i = 0; i < N; i++) {
+      const s = i / (N - 1);                       // 0 = 底 … 1 = 顶
+      const y = SZ * (0.95 - 0.88 * s);
+      // ⭐ 低频项**加强**：原来 3.1/7.7 两个正弦，叠上团块之后再给一记更慢的横摆（1.3），
+      //    丝身的**轮廓**才会自己 wander，而不只是宽度变一变。
+      const wob = Math.sin(s * 1.3 + p1) * 0.16 + Math.sin(s * 3.1 + p2) * 0.12 + Math.sin(s * 7.7 + p3) * 0.05;
+      const x = SZ * (0.5 + ox + wob * (0.22 + 0.78 * s));
+      const cp = clump(s);
+      const w = Math.max(1.2, SZ * 0.30 * wmul * (0.35 + 0.65 * Math.pow(Math.sin(Math.PI * s), 0.55)) * (0.62 + 0.55 * cp));
+      const a = 0.17 * amul * (0.45 + 0.80 * cp);
+      const gr = t.createRadialGradient(x, y, 0, x, y, w);
+      gr.addColorStop(0, 'rgba(' + col + ',' + a.toFixed(4) + ')');
+      gr.addColorStop(0.5, 'rgba(' + col + ',' + (a * 0.53).toFixed(4) + ')');
+      gr.addColorStop(1, 'rgba(' + col + ',0)');
+      t.fillStyle = gr; t.fillRect(x - w, y - w, w * 2, w * 2);
+    }
+  };
+  filament(0, 1.00, 1.00);
+  filament(0.17, 0.62, 0.74);
+  filament(-0.14, 0.55, 0.64);
+  const pass = (dx, dy, a) => { g.globalAlpha = a; g.drawImage(tmp, dx, dy); };
+  pass(0, 0, 0.50); pass(-2, 1, 0.28); pass(2, -1, 0.18); pass(0, 3, 0.14);
+  g.globalAlpha = 1;
+  return c;
+}
+function bakeWisps() {
+  B.wisp = []; B.wispWarm = [];
+  for (let v = 0; v < P.smoke.variants; v++) {
+    B.wisp.push(bakeWisp(v, false));
+    B.wispWarm.push(bakeWisp(v, true));
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   5 · 驼队（偶发横穿 · 腿被中景沙丘的脊线遮没）
+       时间表由固定种子派生 ⇒ 同一次进入画面逐位一致；⛔ 逐帧随机。
+   ══════════════════════════════════════════════════════════════════════════ */
+const CAR = { starts: [], dir: [], span: 0, cross: 0 };
+function buildCaravan() {
+  CAR.starts.length = 0; CAR.dir.length = 0;
+  CAR.cross = 1.24 / Math.max(1e-4, P.caravan.pace);        // 走完 1.24 W（含两侧余量）的秒数
+  const rnd = mulberry32((P.caravan.seed ^ 0x5117) | 0);
+  let T = rnd() * 40, i = 0;
+  while (T < 4200) {
+    CAR.starts.push(T);
+    CAR.dir.push(i % 2 === 0 ? 1 : -1);
+    T += CAR.cross + P.caravan.idle0 + rnd() * (P.caravan.idle1 - P.caravan.idle0);
+    i++;
+  }
+  CAR.span = 1.24;
+}
+/** t 时刻的驼队状态：head = 头峰 x（像素），prog = 0…1；无波次时 active=false */
+function caravanAt(t) {
+  const n = CAR.starts.length;
+  let lo = 0, hi = n - 1, idx = -1;
+  while (lo <= hi) {                                          // ⛔ 线性扫（自检/逐帧都走这条，必须 O(log n)）
+    const mid = (lo + hi) >> 1;
+    if (CAR.starts[mid] <= t) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  if (idx < 0) return { active: false, head: 0, prog: 0, wave: -1, dir: 1 };
+  const p = (t - CAR.starts[idx]) / CAR.cross;
+  if (p >= 1) {
+    const nx = idx + 1 < n ? CAR.starts[idx + 1] - t : 1e9;
+    return { active: false, head: 0, prog: 0, wave: idx, dir: CAR.dir[idx], next: nx };
+  }
+  const d = CAR.dir[idx];
+  const head = d > 0 ? (-0.12 + 1.24 * p) * W : (1.12 - 1.24 * p) * W;
+  return { active: true, head: head, prog: p, wave: idx, dir: d };
+}
+/** 骆驼脚线 y：跟着**驼队所在画布的可见顶边**走，再往下压 `occl·(0.62…1.00)` 个峰高 ⇒ 腿被**后画**的
+ *  沙丘吃掉（遮挡来自图层顺序，⛔ 来自"干脆不画腿"）。jit = 该峰的固定深度抖动，bob = 步态起伏。
+ *  ⚠️ 分组后必须取 `groupTopCrest` 而⛔单条脊线：画布顶边 = 组内各脊的最高点，取低了骆驼会整个埋进画布里。 */
+function camelFootY(x, jit, bob) {
+  return groupTopCrest(L.carLayer, x) + P.caravan.h * H * (P.caravan.occl * (0.62 + 0.38 * jit) + (bob || 0));
+}
+/** 峰高被遮后露出的比例（T9 的判据；1 = 完全可见，0 = 全埋） */
+function camelVisible(jit, bob) {
+  const off = P.caravan.occl * (0.62 + 0.38 * jit) + (bob || 0);
+  return clamp(1.06 - off, 0, 1.06) / 1.06;
+}
+
+/* 驼峰剪影：6 帧步态（点表手写 ⇒ Kotlin 侧照抄同一张表可对账） */
+const GAIT = 6;
+function bakeCamels() {
+  const h = Math.max(14, Math.round(P.caravan.h * H));
+  B.camel = [];
+  for (let f = 0; f < GAIT; f++) bakeOneCamel(f, h);
+  B.camelH = h;
+}
+function bakeOneCamel(f, h) {
+  /* ⭐⭐ **体型（水平）与峰（垂直）解耦** —— 所有者第三轮否决①「驼峰太大了，不协调」的真因。
+   *   上一轮把双峰 rx/ry 各 +14%，它们是**跟着 `h` 一起长**的；而 `h` 为了腿的像素（P22：
+   *   可见腿 = `h·(0.385−off)`）**必须大** ⇒ 峰被 `h` 绑架 ⇒ 越修越不协调。
+   *   实测基线（h=27.4 px）：全高 23.62 px / 全长 22.13 px ⇒ **长/高 = 0.937**，
+   *   而单峰骆驼解剖值是 **1.25~1.35**；峰顶高出背线 6.79 px / 体深 6.29 px ⇒ **峰/体深 = 1.080**，
+   *   解剖值 **0.55~0.62**。⛔ 两个都越界，而它们是**通过 `h` 串在一起**的（峰一高，全高就上去了，
+   *   长/高立刻塌）—— 这才是"峰大"读起来"不协调"而不是"峰大"的机制。
+   *   ⇒ 拆成两个**互不影响的量**：
+   *     `lenK`  = 体型尺寸（**水平**）：躯干长/峰宽/峰间距/颈前伸/腿距/尾 一起缩放 ⇒ 决定"长而低"
+   *     `humpK` = 峰在体型里的比例（**垂直**）：峰**中心高度与 ry 一起**缩放 ⇒ 决定"峰多高"
+   *   ⚠️ 峰必须**中心与 ry 同时**缩放：⛔ 只缩 ry 会让峰整个塌进背里 ⇒ 读成"驼背"而不是"双峰"。
+   *   ⚠️ 头/耳/吻的高度**都跟着 humpK 往下走**，否则峰一降、头反而变成剪影最高点。
+   *   验算（humpK=0.70 / lenK=1.20）：长/高 **1.29** ✔、峰/体深 **0.61** ✔、
+   *   头顶低于后峰 1.27 px、低于前峰 0.57 px ✔（「头顶低于前峰」不变）、
+   *   **腿像素 = h·(0.385−off) 与 lenK/humpK 无关** ✔（P22 的余量原封不动）。
+   */
+  const lenK = P.caravan.lenK, humpK = P.caravan.humpK;
+  const cw = Math.round(h * 1.22 * lenK), ch = Math.round(h * 1.04);
+  const c = mkC(cw, ch), g = c.getContext('2d');
+  g.fillStyle = 'rgb(74,40,28)';                             // ⛔ 各部件 alpha 必须恒 1.00（E47 P23 的教训）
+  g.strokeStyle = 'rgb(74,40,28)'; g.lineJoin = 'round'; g.lineCap = 'round';
+  const X = cw * 0.46, soleY = ch - 1, ph = f / GAIT * TAU;
+  const bodyY = soleY - h * 0.50, bodyL = h * 0.30 * lenK, bodyR = h * 0.115;
+  // 躯干（压扁椭圆）
+  g.beginPath(); g.ellipse(X, bodyY, bodyL, bodyR, 0, 0, TAU); g.fill();
+  // 双峰：峰顶 = 体心上方 `base·humpK·h`（`base` = 原「1.42·bodyR + 0.200h」等价的 h 倍数）。
+  //    ⚠️ 必须是**整只剪影最高的两处**（头/耳/吻都压在它们下面）—— 真机尺寸下"峰"就是全部可辨信息。
+  const hTop = (base) => bodyY - h * base * humpK;
+  hump(g, X - h * 0.115 * lenK, hTop(0.3633), h * 0.135 * lenK, h * 0.200 * humpK);
+  hump(g, X + h * 0.118 * lenK, hTop(0.3269), h * 0.124 * lenK, h * 0.182 * humpK);
+  // 货物捆：⛔ **不许高过峰顶**（否则剪影最高点变成货箱）。改成横搭在后峰的**侧肩**上，
+  //    一样破掉左右对称，但完全不动天际线。
+  g.beginPath(); g.rect(X + h * 0.02 * lenK, bodyY - h * 0.215, h * 0.155 * lenK, h * 0.055); g.fill();
+  // 颈 + 头：**粗颈、头顶低于前峰**（⛔ 细颈高头 = 首轮真机读成"一群鹅"）。
+  //    颈根 `bodyY−0.10h` → `bodyY−0.02h`：峰降下来之后如果颈不跟着降，头会重新高过前峰
+  //    （实测 `humpK=0.70` 时头顶须低于 `bodyY−0.2288h`，即 `ny` 不得高于 `bodyY−0.0408h`）。
+  const nk = X + h * 0.30 * lenK, ny = bodyY - h * 0.02;
+  g.lineWidth = Math.max(1.6, h * 0.105);
+  g.beginPath(); g.moveTo(nk - h * 0.02, ny + h * 0.04); g.lineTo(nk + h * 0.055, ny - h * 0.125); g.stroke();
+  g.beginPath(); g.ellipse(nk + h * 0.075, ny - h * 0.155, h * 0.060, h * 0.033, -0.40, 0, TAU); g.fill();
+  g.beginPath(); g.moveTo(nk + h * 0.105, ny - h * 0.175); g.lineTo(nk + h * 0.155, ny - h * 0.130);
+  g.lineTo(nk + h * 0.100, ny - h * 0.125); g.closePath(); g.fill();          // 吻
+  g.beginPath(); g.moveTo(nk + h * 0.055, ny - h * 0.160); g.lineTo(nk + h * 0.068, ny - h * 0.205);
+  g.lineTo(nk + h * 0.088, ny - h * 0.155); g.closePath(); g.fill();          // 耳（压矮：⛔ 耳尖高过峰顶）
+  // 尾
+  g.lineWidth = Math.max(1, h * 0.022);
+  g.beginPath(); g.moveTo(X - bodyL * 0.98, bodyY - h * 0.01);
+  g.quadraticCurveTo(X - bodyL * 1.18, bodyY + h * 0.05, X - bodyL * 1.06, bodyY + h * 0.13); g.stroke();
+  // 四腿（两节折线，步态相移；⛔ 等宽直线 ⇒ 会读成火柴人）
+  for (let k = 0; k < 4; k++) {
+    const front = k < 2;
+    const ox = (front ? h * 0.185 : -h * 0.185) * lenK;
+    const sw = Math.sin(ph + k * (Math.PI / 2) * 0.55 + (front ? 0 : Math.PI * 0.5)) * h * 0.085;
+    leg(g, X + ox, bodyY + bodyR * 0.55, soleY, sw, h * (k % 2 ? 0.026 : 0.032));
+  }
+  B.camel[f] = { c: c, w: cw, h: ch, cx: X, sole: soleY };
+}
+function hump(g, x, y, rx, ry) { g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.fill(); }
+function leg(g, x0, y0, soleY, sw, w) {
+  const kn = y0 + (soleY - y0) * 0.52;
+  g.lineWidth = w;
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + sw * 0.55, kn); g.lineTo(x0 + sw, soleY - w * 0.3); g.stroke();
+  g.beginPath(); g.ellipse(x0 + sw + w * 0.3, soleY - w * 0.35, w * 0.9, w * 0.45, 0, 0, TAU); g.fill();
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   6 · 烘焙层（一次性 ⇒ ⛔ 不计入逐帧 ops；Kotlin 侧 = ImageBitmap / Bitmap）
+   ══════════════════════════════════════════════════════════════════════════ */
+const B = {};
+function mkC(w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
+/** 天幕：暖红竖向渐变（**按参考图实测亮度阶梯定档**）+ 落日散光（烘进本层 ⇒ 逐帧 0 成本）
+ *  + 极淡 tonal 条纹（⛔ 云，需求「无云」）
+ *  ⭐ 三轮裁决 ①「散光需要对上」⇒ 散光不住在逐帧的日晕里，住在这里。⚠️ 但参考图的散光**很弱**：
+ *     盘外 1.12R 只比同高度天幕亮 L +.03，1.5R 外完全合流 ⇒ 本层做的是"日盘坐进天幕"的一小片抬升，
+ *     ⛔ 一大圈可见的光环边界（那正是"简单的大圆球 + 光晕"的读法）。 */
+function bakeSky() {
+  const c = mkC(W, H), g = c.getContext('2d');
+  const far = DUNES[0];
+  const gr = g.createLinearGradient(0, 0, 0, far.mx);
+  // ⭐ 五个锚点 = 参考图 1 **远离日盘那一侧**（x=0.09W / 0.89W 两列取均值）沿 y 的实测 L 阶梯：
+  //     y .00→.185 ｜ .10→.173（**天顶不是最亮**，照片在顶边有压暗）｜ .24→.185 ｜ .34→.205 ｜ .39→.231
+  //     到地平线 ≈.25。⛔ 上一版的 #f4ac63（L **.40**）：那把带2 抬到 .259（参考图 .205）＝"整片天太亮"，
+  //     而日盘的 L .55~.61 反而被盖住 ⇒ 参考图要的是**平的天幕 + 利的高对比日盘**，⛔ 渐变的亮带。
+  gr.addColorStop(0, '#c65436');     // 天顶 L .186（旧 #bb4f3a .165 偏暗、旧旧 #3d1c2a .026 =「太深」元凶）
+  gr.addColorStop(0.25, '#bf5134');  // L .172 —— 实测的**下凹**，⛔ 单调递增（那会读成"贴地灯管"）
+  gr.addColorStop(0.60, '#c65436');  // L .186
+  gr.addColorStop(0.85, '#c66036');  // L .206
+  gr.addColorStop(1, '#d7693a');     // L .249 地平线
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  // 落日的**散光**（bake 期一次铺满）。⭐ 三轮裁决 ①「散光需要对上」的实测形状：
+  //   参考图 1.2R = (231,74,45) R−G **157** ｜ 1.6R = (208,83,55) ｜ 2.0R = (202,82,56)
+  //   ⇒ 散光是**贴着盘缘的一圈浓红**（抬升 α≈.58），到 1.9R 就完全化进天幕；
+  //   ⛔ 上一版的"半个天空铺 0.26W 的奶黄薄雾"：亮度对得上（L .196 vs .222）但 R−G 只有 107
+  //   ⇒ 观感是"糊了层雾"，不是"把天烧红"。**亮度判据抓不到色相**，故 gate 里另加红度判据。
+  //   ⛔ 圆心用 far.y（脊线均值）而不用盘心：偏上 ~40 px 会把上半环的贴缘浓红摊平。
+  //   ⭐⭐ 第三轮否决③的真因就在这一行：`rad = W·scatter` 是**画幅相对**的，而 `L.sunR` 是
+  //   **H 相对**的。H2 把日盘 R 从 0.112H 放到 0.150H 之后，`rad` 仍停在 154 px ⇒ 烘焙的散射
+  //   只比盘缘多铺了 46 px（原来是 73 px）。⇒ "散光那一层"**并没有被删，是被日盘撑小了**，
+  //   叠上日晕半径同时收窄 ⇒ 画面上等于天空完全没有散射。⇒ 半径改为**跟着盘走**：
+  const sy = L.sunY, bl = P.sun.bloom;
+  const rad = Math.max(L.sunR * 1.95, W * P.sun.scatter);
+  const sa = (v) => clamp(v * bl, 0, 0.95).toFixed(3);
+  const sc = g.createRadialGradient(L.sunX, sy, 0, L.sunX, sy, rad);
+  sc.addColorStop(0.00, 'rgba(255,60,32,' + sa(0.68) + ')');   // 盘内平台段：被日盘盖住，只为让 1.2R 还吃到 .58
+  sc.addColorStop(0.42, 'rgba(255,60,32,' + sa(0.66) + ')');
+  sc.addColorStop(0.63, 'rgba(255,62,33,' + sa(0.58) + ')');   // ← r/R=1.2 实测点
+  sc.addColorStop(0.84, 'rgba(255,66,35,' + sa(0.18) + ')');   // ← r/R=1.6 已经基本化开
+  sc.addColorStop(1.00, 'rgba(255,66,35,0)');
+  g.fillStyle = sc; g.fillRect(0, 0, W, H);
+  // ⭐⭐ **大范围低强度的天幕散射**（所有者建议③，⭐ 唯一能白拿的预算）：
+  //   天幕"被照亮"的那一大片，**面积大、强度低** ⇒ 逐帧按 `π·rad²` 计费极贵，
+  //   但它住在 `sky` 位图里 ⇒ `op('天幕渐变', 1.0)` 那一整屏 blit **已经付过了**，
+  //   再加一层径向渐变 **铺屏 0、ops 0**，只多一次烘焙期的全屏渐变填充。
+  //   ⛔ 不用逐像素散射（那才吃烘焙时间）：canvas 的一次 radial gradient fill 是硬件/库级的合成。
+  //   ⚠️ 形状刻意**贴着地平线收**（0.55 处已很淡）⇒ 不去抬 band1/band2 的 L，
+  //   `e48_ref_palette.py --gate` 的 ±0.045 容差才吃得下（实测 band2 余量只剩 0.004）。
+  const wide = W * 0.62;
+  const ws = g.createRadialGradient(L.sunX, sy + H * 0.02, 0, L.sunX, sy + H * 0.02, wide);
+  ws.addColorStop(0.00, 'rgba(255,74,38,' + sa(0.30) + ')');
+  ws.addColorStop(0.30, 'rgba(255,80,42,' + sa(0.19) + ')');
+  ws.addColorStop(0.62, 'rgba(255,92,50,' + sa(0.075) + ')');   // ≈0.38W 处基本化进天幕
+  ws.addColorStop(1.00, 'rgba(255,104,58,0)');
+  g.fillStyle = ws; g.fillRect(0, 0, W, H);
+  // 高空极淡横向色调（不是云：alpha ≤ skyTex，只破掉"色卡感"）
+  // ⚠️ 每条必须**横贯全宽**且做得很扁：留左右直边 + 太薄 = 读成 JPEG 条带（E48 首轮真机判读）。
+  const rnd = mulberry32((P.dune.seed ^ 0x1f3) | 0);
+  for (let i = 0; i < 8; i++) {
+    const y = H * (0.02 + rnd() * 0.34), hh = H * (0.024 + rnd() * 0.052);
+    const a = P.fx.skyTex * (0.40 + rnd() * 0.60);
+    const gg = g.createLinearGradient(0, y, 0, y + hh);
+    gg.addColorStop(0, 'rgba(255,214,160,0)');
+    gg.addColorStop(0.5, 'rgba(255,214,160,' + a.toFixed(3) + ')');
+    gg.addColorStop(1, 'rgba(255,214,160,0)');
+    g.fillStyle = gg; g.fillRect(-W * 0.05, y, W * 1.10, hh);
+  }
+  B.sky = c;
+}
+
+/** 一张画布 = 一个**深度组**（`sub` 道脊线，远→近依次叠进同一张位图）。
+ *  ⭐ 这就是裁决 ②「很多沙丘重叠」不加价的实现：组内遮挡发生在**烘焙期**，逐帧只有 1 次 blit，
+ *    且画布总高度 = `Σ(下一组首脊 mx − 本组首脊 mn)` 与 sub **无关**。 */
+function bakeGroup(gi) {
+  const [a, b] = groupRidges(gi);
+  const nG = DUNES[0].nG;
+  let y0 = 1e9, pad = 0;
+  for (let i = a; i <= b; i++) { y0 = Math.min(y0, DUNES[i].mn); pad = Math.max(pad, DUNES[i].hazePad); }
+  y0 = Math.max(0, y0 - pad);
+  let y1 = H * 1.02;
+  if (gi < nG - 1) { const na = groupRidges(gi + 1)[0]; y1 = Math.min(H * 1.02, DUNES[na].mx + H * 0.018); }
+  const bh = Math.max(2, Math.round(y1 - y0));
+  const c = mkC(W, bh), g = c.getContext('2d');
+  g.translate(0, -y0);
+  for (let i = a; i <= b; i++) bakeRune(g, i, y1);
+  B['dune' + gi] = { c: c, y0: y0, i: gi };
+  return c;
+}
+
+/** 单道脊 `i` 画进给定上下文（体块 → 阳/阴坡 → 脊刃 → 调子 → 波纹 → 暖雾），⛔ 自己建位图 */
+function bakeRune(g, i, y1) {
+  const d = DUNES[i], tone = d.tone;
+  const step = Math.max(2, Math.round(W / d.cols));
+  const pts = [];
+  for (let x = -step; x <= W + step; x += step) pts.push([x, crest(i, x)]);
+  // ① 体块：竖向三段渐变（脊亮 → 中调 → 底部压暗）
+  g.beginPath();
+  g.moveTo(pts[0][0], pts[0][1]);
+  for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
+  g.lineTo(W + step, y1 + H * 0.02); g.lineTo(-step, y1 + H * 0.02); g.closePath();
+  const gr = g.createLinearGradient(0, L.horizonY, 0, L.duneFieldBot);
+  // ⭐⭐ 体块渐变必须挂在**全沙海共用的一条竖向亮度阶梯**上（`horizonY → 1.02H`），
+  //    ⛔ 每层各挂自己那条 `mn → y1`（E48 三轮七踩，高通分离图实锤）：
+  //    逐层锚点时，屏幕上同一个 y 在"相邻两层的哪一个里"取决于**谁把谁盖住**，而两套渐变的
+  //    归一化位置差约 `gap / (y1−mn) ≈ 0.33` ⇒ 在两处脊线**相交的地方颜色跳一大格**。
+  //    交点几乎都落在**鞍部**（两道驼峰之间），而鞍部附近的等高线近乎竖直 ⇒ 跳变被读成
+  //    **一条笔直的竖边 + 一整块浅/深贴面**（正是 0.40–0.62H 裁块里那些矩形补丁）。
+  //    共用阶梯后：同一个 y 上任何两层**同色** ⇒ 交点处不再有跳变；而"峰顶亮、脊谷暗"这条
+  //    层次线索**完整保留**（它本来就只是"y 越小越亮"，⛔ 依赖逐层锚点）。
+  //    层与层的区分交给 ②b 沿脊走的亮刃 + ② 的面级明暗 + 每层随深度混合的 `tone`。
+  //    ⛔ 回到"沿脊线偏移的等距带"：那会把每层刷成等亮，读回"一匹布"。
+  gr.addColorStop(0, tone.top); gr.addColorStop(0.18, tone.mid); gr.addColorStop(1, tone.bot);
+  g.fillStyle = gr; g.fill();
+  // ⭐ 之后所有"沿脊线铺色"的 pass 一律**裁进体块路径**：着色带现在铺满整条山坡（可达 0.1H），
+  //   ⛔ 靠"脊线上方留 10% 余量"防溢出 —— 溢出会糊到**更远那一层**（最远层直接糊进天幕）⇒
+  //   每道脊外围一圈亮边。`fill()` 不清空路径 ⇒ clip 同一条路径，零额外几何，且全在烘焙期。
+  g.save(); g.clip();
+  // ② 阳坡 / 阴坡：逐列铺一段**从脊线到本层底**的竖向渐变（⛔ 描线：纯面上任何 1 px 线都是"等高线"，E47 P4）
+  // ⚠️ 斜率必须用**宽窗差分**：用相邻 step（≈2.7 px）的斜率 ⇒ 逐列 alpha 跳变 = 竖梳齿
+  //    （E48 首轮真机 5× 裁块判读：整片沙面读成"竖条纹"）。
+  // ⭐ **朝向必须是连续量，⛔ 布尔翻转**（E48 三轮二踩）：`warm = slS < 0` + 保底 alpha ⇒ 每一处
+  //    符号翻转都是一条 step 宽的**硬竖接缝**（阳坡色块直接顶在阴坡色块上），整片沙海读成"竖条纹
+  //    拼布"。改成 `w = (clamp(−slS·gain)+1)/2` 后，翻转点两侧的颜色/alpha 都连续滑过去。
+  // ⭐ 增益不能大到"翻转点几像素内就冲满"（8.0 时每个小面都是"整面饱和 + 硬边界"，读成一块块贴面）；
+  //    具体数值随下面的窗宽联动，见八踩说明。
+  // ⭐⭐ **面积明暗的窗宽必须是"一座沙丘"的尺度，⛔ "一道脊刃"的尺度**（E48 三轮八踩，逐项关掉量出来的）：
+  //    把 ② 拆成两半分别关掉，竖向贴面的能量几乎全在**阴坡项**（关掉阴坡 1.702→1.395，关掉阳坡+亮刃
+  //    只到 1.610）。原因：`winS = 5%W` 在**刀背状窄脊**上仍然横跨了整道刃 ⇒ `slS` 在十几个像素内
+  //    从 +满 翻到 −满 ⇒ `mag`/`w` 跟着翻 ⇒ alpha 以"刃宽"为周期做阶跃，一圈圈竖直贴面就出来了。
+  //    参考图的光照是**面级**的（一座沙丘一个阳面一个阴面，面内几乎均匀），所以窗宽抬到 **11%W**
+  //    （≈ 一座沙丘的半宽），并把增益 3.2→5.5 补回窗宽翻倍造成的斜率衰减。
+  //    脊刃本身的锐度**不丢**：它由 ②b 沿脊走的亮边负责（那是真的高频特征）。
+  const win = Math.max(step * 2, W * 0.02);
+  const winS = Math.max(win * 2, W * 0.11);
+  const span = Math.max(1, d.mx - d.mn);
+  const litN = tone.litN, shaN = tone.shadeN;
+  // ⚠️ 带宽必须**恰好等于步进**（`step + 1` ⇒ 每隔 step px 就有一列被画两遍，source-over 下 alpha
+  //    叠加 = 一条与 step 同周期的竖梳齿；关掉调色层仍在，E48 二轮 3× 对照裁块实锤）。
+  // ⭐ 顶边锚点必须取**原始 crest**（与 ① 体块路径同一个采样格），⛔ 取平滑后的 `sm`：
+  //    平滑窗（±2%W ≈ 25 px）在尖脊上会**滞后好几个像素** ⇒ 着色带的上沿和剪影对不齐，
+  //    每列交界处露出一截竖向台阶 = 满屏竖条纹（E48 三轮 p 提到 4.2 后当场复现）。
+  //    取原始 crest 后着色带与剪影**共用同一条折线**，交界处不再有边；越出体块的部分由 clip 吃掉。
+  // ⭐⭐ **alpha 的尺度必须和朝向的尺度一致，都取宽窗 `slS`**（E48 三轮四踩）：原先 `w` 用宽窗、
+  //    `mag` 用窄窗 `sl`（±2%W），于是**每一道细脊的 flank 都被点亮一次** ⇒ 明暗在细脊波长上反复翻转，
+  //    整片沙面读成一格一格的**竖向贴面**（2× 裁块判读：像一堵砌好的砖墙，而不是"一座一座"的沙丘）。
+  //    参考图的光照是**面级**的：一座沙丘一个阳面、一个阴面，面内几乎均匀，明暗只在**几十至上百像素**
+  //    的尺度上滑动。窄窗 `sl` 从此只服务于**脊刃亮边**（那是真的高频特征），不再参与面积明暗。
+  for (let x = 0; x <= W; x += step) {
+    const sm = (crest(i, x - win) + 2 * crest(i, x) + crest(i, x + win)) / 4;
+    const slS = (crest(i, x + winS) - crest(i, x - winS)) / (2 * winS);
+    const u = slS * 5.5;                                        // 有符号面斜率（±1 ≈ 一个"整面"）
+    // ⭐⭐ **饱和必须是软的，⛔ `clamp(…, 0, 1)`**（E48 三轮六踩，关掉本层的对照裁块实锤）：
+    //    硬夹位一旦命中就**恒等于 1**，于是一整段坡的 alpha 完全相同 = 一块**平板**，
+    //    平板与斜坡的交界处**导数突变** ⇒ 眼睛读成一条**笔直竖边的浅色贴面**（远段裁块里那些
+    //    40–60 px 宽的矩形补丁就是它）。`m/(k+m)` 渐近趋 1、永不到达 ⇒ 只有"越来越平"，没有"平的那块"。
+    //    k=0.30 时 `mag` 在 m=0.3 处给 0.50（比原来的线性 0.3 **更敢压暗**），m=1 处 0.77。
+    const mag = Math.abs(u) / (0.30 + Math.abs(u));
+    // ⛔ `if (mag < 0.04) continue`：斜率在阈值附近来回穿越 ⇒ 逐列"画/不画"= 竖梳齿（首轮真机 5× 裁块）
+    // ⛔ 保底项（`0.40 + 0.60·mag` 那类）：它把 mag→0 的翻转点抬回 40% 强度，等于把接缝又装回去
+    const cy = crest(i, x);
+    // ⭐⭐ **面级明暗的主项是"相对高度"，⛔ "|斜率|"**（E48 三轮十踩，3× 裁块对照参考图判出来的）：
+    //    `mag` 是**线**的属性——它在脊线两侧都取峰值，于是 ② 铺出来的永远是"紧贴剪影的一条亮带
+    //    + 一条暗带"，也就是**描边**；沙丘的身体内部一点明暗都没有 ⇒ 整片读成一叠薄片。
+    //    参考图恰恰相反：明暗铺在**整张坡面**上，驼峰亮、坡脚暗，一个来回只翻一次。
+    //    `hf`（该列在**本层起伏范围内**的相对高度，宽窗平滑后）就是这个量：它随沙丘一颗一颗地起伏，
+    //    ⛔ 不随脊刃左右对称地尖峰。`−0.34` 把零点放在"中等高度"，正负号再决定吃阳色还是阴色。
+    const hf = clamp((d.mx - sm) / span, 0, 1);
+    const shape = Math.pow(hf, 1.15) - 0.34;
+    // ⭐ 偏阴量**随深度变化**（`lerp(0.34, −0.04, t)`，末端是**负**的 ⇒ 最近几层反过来偏阳），
+    //    ⛔ 全深度同一个常数：参考图的亮度阶梯是 **远端被大气透视提亮 → 中景一整片深阴 →
+    //    近景又被掠射光提回来**（实测带 0.205 / 0.080 / 0.083 / 0.099，中段是**谷底**）。
+    const wg = (1 - u) * 0.5 - lerp(0.34, -0.04, d.t);          // 线性目标值（原来直接 clamp 它）
+    // ⭐ 朝向同样**软夹位**：logistic 在 (0.2, 0.8) 区间与线性几乎重合（中心斜率 1.1 ≈ 1），
+    //    两端渐近 ⇒ 颜色 `cr/cg/cb` 不会出现"整段同一个色号"的贴面边界。
+    const w = 1 / (1 + Math.exp(-4.4 * (wg - 0.5)));            // 1 = 面朝落日（暖亮），0 = 背光（暖棕）
+    // ⭐ **掠射保底项**（只对最近几层）：`shape` 在前景的**宽缓大面**上变化慢 ⇒ 最近那几座面积最大的
+    //    沙丘整体偏平，实测带5 比参考图暗 0.015（参考图的前景是全场第二亮）。
+    //    ⛔ 做成 `a` 的常数保底（`0.40 + 0.60·mag` 那类）——那正是首轮竖接缝的成因；
+    //    只加在"偏阳"一侧则**处处连续**：`m` 平滑过 0，保底量跟着平滑归零，装不出接缝。
+    const graze = Math.pow(d.t, 3) * 0.26 * w;
+    // ⭐ 合成"建模量" `m`：正 = 吃阳色，负 = 吃阴色。`dir` 只留三成权重（它是次要的左右不对称），
+    //    `mag` 退居**辅助**（乘 0.30，只给坡面一点方向感，⛔ 再当主项 = 描边）。
+    const dir = w - 0.5;                                        // ∈[−0.5, 0.5]，连续
+    const m = shape + dir * (0.42 + 0.40 * hf) + mag * 0.60 * dir + graze;
+    const an = Math.abs(m);
+    const soft = an / (0.34 + an);                              // 软饱和：⛔ clamp（六踩）
+    // ⭐⭐ **局部反差随距离衰减**（大气透视，H3）。② 的阳/阴坡 alpha 与 ②b 的脊刃亮边原来都
+    //    **不看深度** ⇒ 远景那七八道脊带着**一模一样的 ±20 L 起伏 + 一圈同样的亮刃**，
+    //    真机 3× 裁块读成一叠**瓦楞纸**（量化：脊界处 273 处 >6 L 跳变，正 129 / 负 144 近乎对半）。
+    //    真实的大气透视恰恰是把远处**抹平**的 ⇒ 远层给 0.42、近层给满。
+    //    ⛔ 这是**每层一个常数**（不是逐列量）⇒ 不引入任何新的逐列跳变源，⛔ 不会把竖接缝装回来。
+    const aer = lerp(0.42, 1.00, d.t);
+    const a = soft * (0.62 * P.dune.litK * aer * (m > 0 ? 1 : 0) + 0.80 * P.dune.shadeK * aer * (m > 0 ? 0 : 1));
+    // ⭐ 颜色**也**按 `m` 的符号连续混：`wl` 在 m=0（alpha 恒为 0）处取 0.5 ⇒ 换色发生在"看不见"的地方，
+    //    ⛔ 用 `m>0 ? lit : shade` 直接选色号（那会在 m 穿越 0 处留下可见的色号硬边）。
+    const wl = 1 / (1 + Math.exp(-7.0 * m));
+    const cr = Math.round(litN[0] * wl + shaN[0] * (1 - wl));
+    const cg = Math.round(litN[1] * wl + shaN[1] * (1 - wl));
+    const cb = Math.round(litN[2] * wl + shaN[2] * (1 - wl));
+    const flank = Math.max(H * 0.014, (y1 - cy) * d.bandK);    // 该列**整条山坡**（下沿由后画的那层盖掉）
+    // ⭐ 阴坡**只铺大半条山坡**（0.78→1 段由渐变自己滑到 0）：阴坡项原先一路铺到层底，和 ① 体块共用的
+    //    **全局亮度阶梯**（近地面天然更暗）**同向叠加** ⇒ 每一层的可见下半部被压成一条**横贯全宽的暗带**，
+    //    层与层交替 = 一圈圈**横向等高线**（E48 三轮九踩）。现在主项是沿脊走的 `shape`，铺得开才有效果，
+    //    但仍留 22% 余量给下一座自己的脊下阴带。
+    const flankS = flank * 0.78;
+    const gg = g.createLinearGradient(0, cy, 0, cy + flank);
+    gg.addColorStop(0, 'rgba(' + cr + ',' + cg + ',' + cb + ',' + a.toFixed(3) + ')');
+    gg.addColorStop(flankS / flank, 'rgba(' + cr + ',' + cg + ',' + cb + ',0)');
+    gg.addColorStop(1, 'rgba(' + cr + ',' + cg + ',' + cb + ',0)');
+    g.fillStyle = gg; g.fillRect(x, cy - step, step, flank + step);
+    // ②b **脊线轮廓光**：只留一道**薄亮刃**，⛔ 再配一条脊下阴带（E48 三轮十踩把九踩的结论推翻）。
+    //     九踩当时是因为 ② 只剩"左亮右暗两大面"、沙海读平，才拿亮刃+阴带冒充体积；现在 ② 的主项换成
+    //     沿脊走的相对高度 `shape`，**体积由坡面自己承担** ⇒ 阴带退化成第二条描边，与亮刃一起把每道脊
+    //     框成一条"线"，正是薄片观感的另一半。参考图的脊线是**明暗交界**，不是一圈描边。
+    //     ⛔ 挂到 ① 体块渐变的 stop 0 上：那条渐变住在全沙海共用的**绝对 y** 阶梯上，层内矮一点的
+    //     驼峰全是中间调 ⇒ 层内读平（七踩）。亮边必须**沿脊走**。
+    const rimH = Math.max(3, H * (0.008 + 0.020 * d.t));         // 亮刃总厚：近层厚、远层薄
+    const ca = 0.30 * P.dune.litK * aer * Math.pow(hf, 0.90) * (0.55 + 0.45 * w);
+    if (ca > 0.004) {
+      const cgr = g.createLinearGradient(0, cy, 0, cy + rimH);
+      cgr.addColorStop(0, 'rgba(' + tone.topRgb + ',' + ca.toFixed(3) + ')');
+      cgr.addColorStop(0.30, 'rgba(' + tone.topRgb + ',' + (ca * 0.45).toFixed(3) + ')');
+      cgr.addColorStop(1, 'rgba(' + tone.topRgb + ',0)');
+      g.fillStyle = cgr; g.fillRect(x, cy - step, step, rimH + step);
+    }
+  }
+  g.restore();
+  // ③ 大尺度调子（只给最近三张画布的领脊）：几团超扁的暖/冷渐变把"平"破掉
+  if (d.swales) {
+    const rnd = mulberry32((P.dune.seed ^ (i * 7919 + 13)) | 0);
+    for (let k = 0; k < d.swales; k++) {
+      const u = rnd(), x = W * u, y = crest(i, x) + (y1 - crest(i, x)) * (0.25 + rnd() * 0.6);
+      const rx = W * (0.06 + rnd() * 0.12), ry = H * (0.012 + rnd() * 0.026);
+      const lit = rnd() < 0.55;
+      const col = lit ? tone.lit : tone.shade;
+      const gg = g.createRadialGradient(x, y, 0, x, y, rx);
+      gg.addColorStop(0, 'rgba(' + col + ',' + (0.16 * (0.5 + u)).toFixed(3) + ')');
+      gg.addColorStop(1, 'rgba(' + col + ',0)');
+      g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y);
+      g.fillStyle = gg; g.fillRect(x - rx, y - rx, rx * 2, rx * 2); g.restore();
+    }
+  }
+  // ④ 风成波纹（只给最近三张画布的领脊）：**平行于脊线**的整幅色带，由 fbm 掩膜断续 ⇒ ⛔ 随机短划（会读成划痕，
+  //    E48 首轮真机判读就是"散落的小 dashes"）。Kotlin 侧同为烘焙期一次性描边，0 逐帧成本。
+  //    ⚠️ 每道脊的相位种子必须**不同**（`^ i·977`）：同相位 ⇒ 几层波纹横向串成一条整梳，读成"印刷网点"。
+  if (d.ripples) {
+    const rnd = mulberry32((P.dune.seed ^ (0xabcd + i * 977)) | 0);
+    const N = Math.max(1, Math.round(P.dune.ripples));
+    const seg = Math.max(3, Math.round(W / 110));
+    for (let k = 0; k < N; k++) {
+      const f = 0.12 + (k + 0.35 + rnd() * 0.30) / N * 0.76;         // 体高分数 ⇒ 带随脊线起伏
+      const ph = rnd() * TAU, pd = 0.30 + rnd() * 0.35;              // 掩膜相位 / 疏密
+      const lw = Math.max(0.9, H * (0.0016 + 0.0034 * f) * (0.55 + 0.45 * d.t));
+      g.lineCap = 'round';
+      for (let x = 0; x < W; x += seg) {
+        // ⭐ M2：`f` **沿 x 漂移**。原来 `f` 是**恒定高度分数**又**平行于脊线** ——
+        //    「等高线 + 等距」按定义就是一条**地形等高线**，4× 最近邻裁块实测就是横贯坡面的
+        //    硬细线（读成等高线图，不是沙）。漂移后带子跟着沙面本身起伏，不再是等距等高。
+        //    ⚠️ 两端**各自求 f**（⛔ 用段首那一个值填两端 ⇒ 每 11.6 px 一个台阶，横移时读成锯齿）。
+        const fAt = (xx) => f
+          + 0.055 * Math.sin(xx / W * 9.4 + ph)
+          + 0.030 * Math.sin(xx / W * 21.7 + ph * 2.3);
+        const fa = fAt(x), fb = fAt(Math.min(W, x + seg));
+        const m = fbm((x / W) * 5.5 + ph, fa * 3.1 + pd, 3, 0.5, 2);
+        const a = clamp((m - 0.42) / 0.34, 0, 1);
+        // ⭐ 掩膜阈值 0.06 → 0.22：原来几乎等于**不掩膜**（fbm 均值 ~0.5，`(m−0.42)/0.34`
+        //    在 0.06 处已经过 0.12 alpha），所以每条波纹都是一条**贯通全宽**的实线 ——
+        //    实线 + 恒定 f = 等高线。两个一起改才断得开。
+        if (a < 0.22) continue;
+        const xa = x, xb = Math.min(W, x + seg);
+        const ya = crest(i, xa) + (y1 - crest(i, xa)) * fa;
+        const yb = crest(i, xb) + (y1 - crest(i, xb)) * fb;
+        g.lineWidth = lw * (0.55 + 0.45 * a);
+        g.strokeStyle = 'rgba(' + tone.shade + ',' + (0.20 * a).toFixed(3) + ')';
+        g.beginPath(); g.moveTo(xa, ya + lw * 0.55); g.lineTo(xb, yb + lw * 0.55); g.stroke();
+        g.strokeStyle = 'rgba(' + tone.lit + ',' + (0.13 * a).toFixed(3) + ')';
+        g.beginPath(); g.moveTo(xa, ya - lw * 0.62); g.lineTo(xb, yb - lw * 0.62); g.stroke();
+      }
+    }
+  }
+  // ⑤ 脊线上方的一层暖雾（远层才需要：⛔ 让远处的脊变成剪影刀边，参考图里远脊是**化进天幕**的）
+  const hz = P.fx.haze * (1 - d.t);
+  if (d.hazePad > 0 && hz > 0.02) {
+    const gg = g.createLinearGradient(0, d.mn - d.hazePad, 0, d.mn + H * 0.012);
+    gg.addColorStop(0, 'rgba(' + tone.haze + ',0)');
+    gg.addColorStop(0.62, 'rgba(' + tone.haze + ',' + (0.24 * hz).toFixed(3) + ')');
+    gg.addColorStop(1, 'rgba(' + tone.haze + ',' + (0.42 * hz).toFixed(3) + ')');
+    g.beginPath();
+    g.moveTo(pts[0][0], pts[0][1]);
+    for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
+    g.lineTo(W + step, d.mn - d.hazePad); g.lineTo(-step, d.mn - d.hazePad); g.closePath();
+    g.fillStyle = gg; g.fill();
+  }
+}
+
+/** 横向无缝 fbm 带（贴地浮沙）：Kotlin 侧 = ImageShader(Repeat) ⇒ 1 op */
+function bakeBand(name, w, h, oct, alpha, ySeed, rgb) {
+  const c = mkC(w, h), g = c.getContext('2d');
+  const im = g.createImageData(w, h), d = im.data;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const a = (i / w) * TAU;
+      const v = fbm(Math.cos(a) * 2.6 + 9.1, Math.sin(a) * 2.6 + j / h * 3.2 + ySeed, oct, 0.55, 2);
+      const edge = smoothstep(0, 0.30, j / h) * (1 - smoothstep(0.66, 1, j / h));
+      const aa = clamp((v - 0.40) * 1.9, 0, 1) * alpha * edge;
+      const k = (j * w + i) * 4;
+      d[k] = rgb[0]; d[k + 1] = rgb[1]; d[k + 2] = rgb[2]; d[k + 3] = Math.round(aa * 255);
+    }
+  }
+  g.putImageData(im, 0, 0);
+  B[name] = c;
+}
+
+/** 全屏调色（暗角 + 颗粒合并成一张 ⇒ 逐帧只 1 次 blit）
+ *  ⭐ 三轮裁决 ③「整个色调太深了」的主犯就是这里：旧值 `vignette 0.34 · smoothstep(0.40, 1.05)`
+ *     + 紫黑底 `44,20,26` ⇒ 实测**暗部占比 23.2%**（参考图 1 只有 2.8%）。
+ *     现取 `0.10 · smoothstep(0.62, 1.10)` + 暖棕底，且 ⛔ 暗角色再往蓝紫走。
+ *     判绿口径由 `e48_ref_palette.py --gate` 现算，⛔ 肉眼"看起来亮了一点"。 */
+function bakeGrade() {
+  const c = mkC(W, H), g = c.getContext('2d');
+  const im = g.createImageData(W, H), d = im.data;
+  const cx = W / 2, cy = H * 0.46, diag = Math.hypot(W / 2, H / 2);
+  const grainOn = P.gradeOn && P.fx.grain > 0;
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const r = Math.hypot(i - cx, j - cy) / diag;
+      let a = P.gradeOn ? P.fx.vignette * smoothstep(0.62, 1.10, r) : 0;
+      if (grainOn) a += hash2(i, j) * P.fx.grain * 0.55;
+      const k = (j * W + i) * 4;
+      d[k] = 46; d[k + 1] = 26; d[k + 2] = 20;
+      d[k + 3] = Math.round(clamp(a, 0, 1) * 255);
+    }
+  }
+  g.putImageData(im, 0, 0);
+  B.grade = c;
+}
+
+/** 全部烘焙层（onEnter 一次铺完；⛔ 逐帧新建位图）
+ *  第 g 张画布的下缘 = **第 g+1 组首脊的最低点 + 余量** ⇒ 相邻画布永不漏透明缝（旧版"左下白条"的同族坑）。
+ *  ⛔ 这里不再调 sampleCrests：极值已在 layout 里算好。 */
+function bakeAll(timed) {
+  const t0 = timed ? Date.now() : 0;
+  if (!W || !H) return 0;
+  bakeSky();
+  if (!DUNES.length) return 0;
+  const nG = DUNES[0].nG;
+  for (let gi = 0; gi < nG; gi++) bakeGroup(gi);
+  bakeWisps();
+  bakeCamels();
+  bakeBand('veil', Math.max(64, Math.round(W * 0.9)), Math.max(16, Math.round(H * 0.11)), 4, 0.42, 2.1, [246, 186, 122]);
+  bakeGrade();
+  // ⭐ `bakeAll(1)` = 只回耗时：分组后脊线数 = 画布数 × sub，**逐帧 0 成本**但**烘焙成本按 sub 倍**，
+  //    而烘焙正是 E46 踩过的首帧红线（真机 24 ms/帧预算）⇒ 必须随计量表一起出数，⛔ "应该不慢吧"。
+  return timed ? +(Date.now() - t0).toFixed(1) : 0;
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   7 · 音频模拟（合成律动）+ 平滑（Kotlin 侧 = AudioFrame + AudioSmoother）
+   ══════════════════════════════════════════════════════════════════════════ */
+const A = { bass: 0, mid: 0, treble: 0, energy: 0, section: 0, beat: false, pulse: 0 };
+const SM = { bass: 0, mid: 0, treble: 0, energy: 0, section: 0 };
+function audioSim(t) {
+  if (!P.audioSim) { A.bass = A.mid = A.treble = A.energy = A.section = 0; A.beat = false; A.pulse = 0; return; }
+  A.bass = clamp(0.34 + 0.26 * Math.sin(TAU * t / 1.9) + 0.12 * Math.sin(TAU * t / 0.47), 0, 1);
+  A.mid = clamp(0.30 + 0.22 * Math.sin(TAU * t / 2.7 + 1.1), 0, 1);
+  A.treble = clamp(0.26 + 0.20 * Math.sin(TAU * t / 3.6 + 2.2) + 0.10 * Math.sin(TAU * t / 0.83), 0, 1);
+  A.energy = clamp(0.32 + 0.20 * Math.sin(TAU * t / 6.2 + 0.4), 0, 1);
+  A.section = clamp(0.40 + 0.28 * Math.sin(TAU * t / 11.0 + 0.9), 0, 1);
+  A.beat = (t % 0.5) < 0.02;
+  A.pulse = A.beat ? 1 : Math.max(0, A.pulse - 0.08);
+}
+function resetAudio() { SM.bass = SM.mid = SM.treble = SM.energy = SM.section = 0; }
+function smoothAudio(dt) {
+  const k = 1 - Math.exp(-P.audio.smooth * 60 * dt);
+  SM.bass = lerp(SM.bass, A.bass, k);
+  SM.mid = lerp(SM.mid, A.mid, k);
+  SM.energy = lerp(SM.energy, A.energy, k);
+  SM.treble = lerp(SM.treble, A.treble, k);
+  SM.section = lerp(SM.section, A.section, k);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   8 · 世界状态（⛔ 音频的部分：阵风 / 浮沙漂移有 time-based 基线 ⇒ 无声画面依旧活着）
+   ══════════════════════════════════════════════════════════════════════════ */
+const W_ = { gust: 0, swayMul: 0.50, risePx: 0, ember: 0.70, sunGain: 1, sandK: 0.40,
+             haze: 0.30, driftPx: 0, kRise: 0, kSway: 0, kSun: 0, kSand: 0, swayPxMax: 0 };
+function worldState(t, dt) {
+  W_.gust = Math.sin(TAU * t * P.wind.gustHz1) * 0.62 + Math.sin(TAU * t * P.wind.gustHz2 + 1.3) * 0.38;
+  // 音频增益（Kotlin 侧 = AudioSmoother 后的线性通道；⛔ 不吃 gamma 显示通道 spectrum）
+  W_.kRise = P.audio.kRise * SM.bass;
+  W_.kSway = P.audio.kSway * SM.energy;
+  W_.kSun = P.audio.kSun * SM.treble;
+  W_.kSand = P.audio.kSand * SM.mid;
+  W_.swayMul = 0.50 + W_.kSway;                    // 无声恒 0.50 ⇒ 烟照样摆，⛔ 静音即定格
+  W_.risePx = P.smoke.rise * H * (0.55 + W_.kRise);
+  W_.ember = 0.70 + 0.50 * SM.bass;
+  W_.sunGain = 1 + 0.35 * W_.kSun;
+  W_.sandK = 0.40 + W_.kSand;
+  W_.haze = P.fx.haze * (0.80 + 0.50 * SM.section);
+  W_.driftPx = P.wind.base * W * (1 + P.wind.gustAmp * 0.6 * W_.gust) * (1 + 0.5 * SM.bass);
+  void dt;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   9 · 逐帧计量（ops / 铺屏）
+   ══════════════════════════════════════════════════════════════════════════ */
+let OPS = 0, FILL = 0, COLLAPSE = 0, PROF = {};
+/**
+ * @param cat      类别（profile 用）
+ * @param screens  该组 op **合计**铺屏数（1 = 一屏）
+ * @param n        该组的图元条数
+ * @param collapse 其中"Kotlin 侧折叠掉"的条数（平铺第二张）⇒ kotlinOps = OPS − COLLAPSE
+ */
+function op(cat, screens, n, collapse) {
+  const k = n || 1;
+  OPS += k; FILL += screens; COLLAPSE += collapse || 0;
+  const p = PROF[cat] || (PROF[cat] = { ops: 0, fill: 0 });
+  p.ops += k; p.fill += screens;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10 · 渲染（图层序即生产代码 drawContent 的调用序，⛔ 不得重排）
+   ══════════════════════════════════════════════════════════════════════════ */
+function blit(layer, x, y, w, h, cat, alphaMul) {
+  const c = layer.c !== undefined ? layer.c : layer;
+  if (alphaMul !== undefined && alphaMul !== null) ctx.globalAlpha = alphaMul;
+  ctx.drawImage(c, x, y, w, h);
+  if (alphaMul !== undefined && alphaMul !== null) ctx.globalAlpha = 1;
+  op(cat, (w * h) / (W * H));
+}
+/** 落日（三轮裁决 ①「⛔ 简单的大圆球：颜色、光晕、柔光、散光都需要对上」）
+ *  参考图 1 的**实测**（e48_ref_palette.py 同口径；本轮用 bbox 半高法重新定位，⛔ 沿用上一版手估的盘心）：
+ *    盘心 (0.391W, 0.358H)、**R = 0.112H**（上一版 0.140 ⇒ 大了 25%）
+ *    盘内（沿 +x，环形均值会混进脊线，故取轴向）：
+ *      r/R 0.00 #fcc358 ｜ 0.25 #fcbd54 ｜ 0.50 #fdb755 ｜ 0.75 #ffa54d ｜ 0.88 #fd9244 ｜ 1.00 #ff723d
+ *    沿 +y（向上，最"白"的一条）：0.25 #fff25d ｜ 0.50 #fdfe76 ｜ 0.75 #fefd89 ⇒ **上半盘更偏黄白**
+ *    盘外：1.12 #ee442b（L .223，比天幕 .204 **略亮的一圈细刃**）｜ 1.25 起 = 天幕本身，
+ *          1.33→2.0 的 L 从 .194 掉到 .145（那一路是**往下**采的，落到沙丘上 ⇒ 不是衰减，是遮挡）
+ *  ⇒ 三条结论，逐条落到代码上：
+ *  ① 本体是**扁平的金橙面**（L 一路 .55~.61，⛔ 我上一版那种"中心 .94 → 边缘 .19"的强落差 = 灯泡），
+ *     颜色阶梯是 **黄白 → 金 → 橙 → 边缘砖红**，且**外缘 15% 才明显变橙**；
+ *  ② 盘外**几乎没有大光晕**：1.12R 处只有一圈略亮于天幕的细刃 ⇒ "柔光"= `halo0` 一层，
+ *     ⛔ 三层大日晕（上一版盘外实测 L .355/.286，参考图只有 .22/.20 ⇒ 上半屏被洗白，日盘反而不突出）；
+ *  ③ 边缘是**利**的（1.0→1.12 从 #ff723d 掉到 #ee442b 再进天幕，跨度 0.12R）⇒ 只允许 ≈2 px 的软边，
+ *     ⛔ 用大半径渐变去"柔化"，那正是"简单的大圆球"。
+ *  ⛔ 提高日晕强度去"更亮"：裁决要的是**层次**，不是亮度；treble 只调制 `sunGain`（1.00~1.21）。 */
+function drawSun() {
+  const a = 0.095 * W_.sunGain;
+  if (P.fx.haloLayers > 2) halo(L.sunR * P.sun.halo2, a * 0.22, 0.90);   // 外散（最宽、最淡）
+  if (P.fx.haloLayers > 1) halo(L.sunR * P.sun.halo1, a * 0.40, 0.88);   // 日晕
+  halo(L.sunR * P.sun.halo0, a * 1.00, 0.94);                            // 贴身柔光（恒在 = 实测那圈细刃）
+  const g = ctx.createRadialGradient(L.sunX, L.sunY, 0, L.sunX, L.sunY, L.sunR);
+  g.addColorStop(0.00, '#fcc358');     // 实测盘心 #fcc358 L .604
+  g.addColorStop(0.50, '#fdba50');     // 实测 0.50 → #fdb755
+  g.addColorStop(0.80, '#ffab46');     // 实测 0.75 → #ffa54d、0.88 → #fd9244
+  g.addColorStop(0.92, '#ffb350');     // ⭐⭐ 盘缘亮带：参考图 r/R≈0.9 实测 L .814，原 0.99 stop 的 #ff8b3a（L .47）把它压到 .74。
+  g.addColorStop(0.99, '#ff8b3a');     // 实测盘缘（水平方向）#ff723d L .336，取略高留给出冠
+  g.addColorStop(1.00, 'rgba(238,68,43,0.55)');   // 实测 1.12 → #ee442b：刃**略亮于天幕**，⛔ 归零
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(L.sunX, L.sunY, L.sunR, 0, TAU); ctx.fill();
+  // ⭐ **竖向调色坡（下金上白 → 下红）**：参考图盘心列实测（Δy/R 自盘心向上为正）
+  //     +0.9 → (255,253,142) L **.935** ｜ +0.6 → (255,254,110) .933 ｜ 0.0 → (252,195,88) **.604**
+  //     −0.41 → (250,108,58) L **.318** ⇒ 盘的**上半是接近过曝的淡黄白**、**下半被大气 reddening 烧成橘红**，
+  //     而**水平盘缘只有 .40~.45**（180°/360° 两点实测）⇒ 这不是"上亮下暗的帽"，是**贯穿全盘的竖向坡**。
+  //     ⛔ 偏心焦点做不到：径向渐变的插值圆族在盘缘恒为 t=1，挪内圆心只能把整个盘翻个面。
+  //     ⇒ 用**同一个 arc** 再 fill 一次竖向线性渐变（换 fillStyle 即可，⛔ clip、⛔ 第二条路径）。
+  const cap = ctx.createLinearGradient(0, L.sunY - L.sunR, 0, L.sunY + L.sunR);
+  cap.addColorStop(0.00, 'rgba(255,253,152,1)');      // 顶部过曝淡黄白（实测 L .935 ⇒ alpha 取满）
+  cap.addColorStop(0.20, 'rgba(255,250,138,0.92)');
+  cap.addColorStop(0.40, 'rgba(255,246,128,0.58)');   // 195°/345° 那两点实测 .705/.702
+  cap.addColorStop(0.50, 'rgba(255,240,120,0)');      // **盘心与水平盘缘 = 基色本身**（实测 .604 / .445）
+  cap.addColorStop(0.56, 'rgba(255,235,110,0)');      // 中性带：⛔ 让上半的淡色"漏"到赤道以下
+  cap.addColorStop(0.80, 'rgba(232,72,40,0.55)');     // 下半烧红（实测 +0.41R → L .318）
+  cap.addColorStop(1.00, 'rgba(222,58,34,0.72)');
+  ctx.fillStyle = cap; ctx.fill();
+  op('落日日盘', 2 * (Math.PI * L.sunR * L.sunR) / (W * H));
+}
+/** 一层同心柔光：从 `r0K·R` 起淡出到 `rad` ⇒ ⛔ 从圆心铺满（那会把日盘的剖面盖掉）
+ *  ⚠️ 填充用**半径 rad 的圆**而不是 `2rad` 见方：渐变在 rad 处已经归零，方形的四个角是纯透明像素，
+ *     白付 21% 铺屏（`4r²` vs `πr²`），而铺屏就是本主题的预算红线。
+ *  ⭐ M3：原来的 stop 表是 `[0, a] / [0.30, 0.42a] / [1, 0]` —— 中间那 0.30 掉得太快，
+ *     与天幕自身"越靠地平线越亮"的横向变亮**反向叠加**，于是日盘外出现一圈**暗环**：
+ *     实测径向 L：r=80→127.5、**r=100→103.9**、r=120→106.1、**r=160→110.3**
+ *     （先凹 6 L 再变亮 ⇒ **倒置光晕**，真机读成日盘外一个柔和的圆形暗轮廓/"镜头暗角"）。
+ *     改成"缓降 + 长尾"的三段 `[0, a] / [0.55, 0.72a] / [1, 0]` ⇒ 径向单调 ⇒ ⛔ 不再有暗环。
+ *     代价是总光量略增，故 `drawSun` 的 `a` 由 0.11 降到 0.095 抵消（净亮度基本持平）。 */
+function halo(rad, a, r0K) {
+  const g = ctx.createRadialGradient(L.sunX, L.sunY, L.sunR * r0K, L.sunX, L.sunY, rad);
+  g.addColorStop(0, 'rgba(255,104,52,' + a.toFixed(4) + ')');
+  g.addColorStop(0.55, 'rgba(255,92,46,' + (a * 0.72).toFixed(4) + ')');
+  g.addColorStop(1, 'rgba(255,66,40,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(L.sunX, L.sunY, rad, 0, TAU); ctx.fill();
+  op('日晕', (Math.PI * rad * rad) / (W * H));
+}
+function drawDune(i) {
+  const d = B['dune' + i];
+  if (!d) return;
+  blit(d, 0, d.y0, W, d.c.height, '沙丘层');
+}
+/** 驼队：每峰 1 次 blit；脚线压在中景沙丘脊线**之下** ⇒ 后画的沙丘把腿吃掉（T9） */
+function drawCaravan(t) {
+  const st = caravanAt(t);
+  if (!st.active || !B.camel) return 0;
+  const hh = B.camelH, sp = P.caravan.gap * W;
+  for (let i = 0; i < P.caravan.camels; i++) {
+    const x = st.head - st.dir * i * sp;
+    if (x < -sp * 1.5 || x > W + sp * 1.5) continue;
+    const jit = hash2(i * 5 + 1, st.wave + 1);
+    const bob = Math.sin(TAU * t * P.caravan.bobHz + i * 1.9) * 0.035;
+    const fr = Math.floor(((t * (P.caravan.pace * 3.2) + i * 0.37) % 1) * GAIT) % GAIT;
+    const m = B.camel[fr];
+    const sc = 0.86 + jit * 0.26;
+    const footY = camelFootY(x, jit, bob);
+    const w = m.w * sc, h = m.h * sc;
+    ctx.save();
+    ctx.translate(x, footY);
+    if (st.dir < 0) ctx.scale(-1, 1);
+    ctx.globalAlpha = 0.94;
+    ctx.drawImage(m.c, -m.cx * sc, -m.sole * sc, w, h);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    op('驼队', (w * h * (camelVisible(jit, 0))) / (W * H));
+  }
+  return P.caravan.camels;
+}
+/** 烟根的一点暖光（三轮裁决 ④「下面不要烽火台，不好看」⇒ ⛔ 烽燧本体）：贴在烟源层脊线**之下**，
+ *  随后该层 blit 会把它盖掉大半，只在脊线上沿漏出一团暖色 ⇒ 烟"有来源"而画面上找不到台子。
+ *  bass ⇒ 明暗（沿用旧口径，烟的调制链一行没动）。 */
+function drawEmber(t) {
+  const r = Math.max(5, H * 0.030);
+  const fl = 0.72 + 0.28 * Math.sin(TAU * t / 2.3) * Math.sin(TAU * t / 5.7 + 1.1);
+  const y = L.srcRidgeY + H * 0.010;
+  const g = ctx.createRadialGradient(L.smokeX, y, 0, L.smokeX, y, r);
+  g.addColorStop(0, 'rgba(255,206,142,' + clamp(0.30 * W_.ember * fl, 0, 0.6).toFixed(3) + ')');
+  g.addColorStop(0.5, 'rgba(255,150,72,' + clamp(0.12 * W_.ember * fl, 0, 0.4).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,120,52,0)');
+  ctx.fillStyle = g; ctx.fillRect(L.smokeX - r, y - r, r * 2, r * 2);
+  op('烟根暖光', (r * 2 * r * 2) / (W * H));
+}
+/** 孤烟：芯丝（lighter 累亮）+ 外晕（SrcOver）+ 落日侧暖边（镜像、只在下半段） */
+function drawSmoke(t) {
+  if (!B.wisp || !SK.n) return 0;
+  const V = P.smoke.variants, jitK = P.smoke.jitK;
+  let drawn = 0;
+  for (let i = SK.n - 1; i >= 0; i--) {          // ⛔ 逐帧排序：索引序 ≈ u 序（见方案 §四）
+    const u = SK.u[i];
+    if (u <= 0) continue;
+    const ph = SK.ph[i];
+    // ⭐ B1：逐粒横向抖动 0.42→0.70（±0.35·puffR ≈ ±4 px）。柱**轴**仍由 swayPx 说了算（"直"），
+    //    但每粒烟丝在轴附近**各自 wander** ⇒ 剪影是毛的、不是一条直板。
+    //    ⛔ 抖动源是 `hash2(索引, lap)`，lap 随粒子回绕递增 ⇒ **确定性可复现**，⛔ 不是逐帧随机。
+    const jx = (hash2(i * 11 + 3, SK.lap[i]) - 0.5) * 0.70 * jitK;
+    const jy = (hash2(i * 17 + 5, SK.lap[i] + 2) - 0.5) * 0.5 * jitK;
+    const rot = (hash2(i * 23 + 7, SK.lap[i] + 4) - 0.5) * 0.45;
+    const x = L.smokeX + swayPx(u, t, ph) + jx * puffR(u);
+    const y = L.smokeBaseY - u * L.smokeH + jy * puffR(u) * 0.4;
+    const r = puffR(u);
+    const tl = puffTilt(u, t, ph) + rot;
+    // ⭐ M4：alpha 原先**沿柱恒定** ⇒ 同一根柱子压在浅远脊上只有 +24 L、压在中脊上有 +54 L，
+    //    对比度在两倍之间乱跳，真机读成"贴上去的一根半透明板"。真实的烟越远越被大气透视吃掉
+    //    ⇒ 按柱高做一条**单调**衰减（根部满 → 顶端 0.72）。与 B1 的平台段叠加后，
+    //    顶端净浓度 = 0.145·0.82·0.72 = 0.086，仍**高于**旧版顶端的 0.0695 ⇒ ⛔ 不把 B1 修回去。
+    const dist = 1 - 0.28 * smoothstep(0.35, 1.00, u);
+    const al = smokeAlpha(u) * dist;
+    if (al <= 0.0015) continue;
+    const vr = ((SK.vr[i] % V) + V) % V;
+    puff(B.wisp[vr], x, y, r * P.smoke.haloMul, P.smoke.elong * 0.92, tl, al * P.smoke.haloA, false, '孤烟外晕');
+    puff(B.wisp[vr], x, y, r, P.smoke.elong, tl, al, false, '孤烟芯丝');
+    drawn++;
+    if (u < P.smoke.rimMax) {
+      const side = Math.sign(L.sunX - x) || -1;
+      puff(B.wispWarm[vr], x + side * r * P.smoke.rimOff, y - r * 0.10,
+           r * 0.80, P.smoke.elong * 0.78, tl, al * P.smoke.rimA * W_.ember, side > 0, '孤烟暖边');
+    }
+  }
+  // 芯丝：2 条沿柱轴的细亮线（MED/HIGH）⇒ 让"直"读得出来，⛔ 靠粒子叠出细线
+  if (P.smoke.strands > 0) {
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(0.8, P.smoke.r0 * H * 0.34);
+    const N = 26;
+    /* ⭐⭐ 第三轮否决②的第二半：这两条线原先是**一条笔直的 stroke 从柱根画到柱顶**
+     *   （3.5 px 宽、两条**平行**、相距 ~26 px、纯折线）—— 那不是烟，那是**两根栏杆**，
+     *   是"柱状"读感**最直接**的来源（比等宽还直接：等宽只是"像柱子"，平行直线是"像人造物"）。
+     *   现在给路径加一条**低频横摆**、缩短、压低 alpha ⇒ 读成"一根上升的芯"而不是"一根轨"。
+     *   ⚠️ ops 敏感：MED/HIGH 各 2 次 stroke。⛔ 不用 `setLineDash`（Compose Canvas 无对应），
+     *   ⛔ 不用逐段多次 stroke（26 段 × 2 = 52 ops，直接顶爆图元预算）⇒ 保持**每条一次 stroke**，
+     *   把"断续 / 起伏"做进**几何**而不是 alpha。
+     */
+    for (let s = 0; s < P.smoke.strands; s++) {
+      ctx.beginPath();
+      const ph2 = 0.9 + s * 2.4;                       // 两条线**异相**，⛔ 不再互为镜像
+      const side = (s - (P.smoke.strands - 1) / 2);
+      const uEnd = 0.66;                               // ⛔ 上一轮加到 0.88 是错的：拉得越长，"杆"越长
+      for (let i = 0; i <= N; i++) {
+        const u = 0.05 + (i / N) * (uEnd - 0.05);
+        // 低频横摆：幅度 ~1.4 px，⛔ 不许大到把"直"读成"飘带"
+        const wob = Math.sin(u * 7.1 + ph2) * 1.4 + Math.sin(u * 3.3 + ph2 * 1.7) * 1.1;
+        const x = L.smokeX + swayPx(u, t, 0) + side * puffR(u) * 0.26 + wob;
+        const y = L.smokeBaseY - u * L.smokeH;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = 'rgba(255,242,226,' + (0.055 + 0.022 * s).toFixed(3) + ')';
+      ctx.stroke();
+      op('孤烟芯丝线', (L.smokeH * (uEnd - 0.05) * P.smoke.r0 * H * 0.7) / (W * H));
+    }
+  }
+  return drawn;
+}
+function puff(sp, x, y, r, elong, tilt, alpha, mirror, cat) {
+  if (!sp || alpha <= 0.0015) return;
+  const h = r * 2 * elong, w = r * 2;
+  ctx.save();
+  ctx.globalAlpha = clamp(alpha, 0, 1);
+  ctx.translate(x, y);
+  ctx.rotate(tilt);
+  if (mirror) ctx.scale(-1, 1);
+  ctx.drawImage(sp, -r, -h / 2, w, h);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  op(cat, (w * h) / (W * H));
+}
+function drawVeils(t) {
+  const v = B.veil, vw = v.width, vh = v.height;
+  const yTop = DUNES[DUNES.length - 1].mx - H * 0.02;
+  for (let i = 0; i < P.fx.veils; i++) {
+    const off = ((t * W_.driftPx * (0.9 + i * 0.4)) % vw + vw) % vw;
+    const a = clamp(0.30 * W_.sandK * (1 - i * 0.35), 0, 0.8);
+    ctx.globalAlpha = a;
+    ctx.drawImage(v, -off, yTop + H * 0.03 * i, vw, vh);
+    ctx.drawImage(v, vw - off, yTop + H * 0.03 * i, vw, vh);   // 平铺第二张补右缘
+    ctx.globalAlpha = 1;
+    op('贴地浮沙', (vh * W) / (W * H), 2, 1);                   // Kotlin 侧 ImageShader(Repeat) ⇒ 1 op
+  }
+}
+function drawGrade() {
+  if (!P.gradeOn) return;
+  ctx.drawImage(B.grade, 0, 0, W, H);
+  op('调色(暗角+颗粒)', 1.0);
+}
+/** ⭐ 遮挡**只**由图层顺序产生：驼队和烟根都在"盖住它们的那张画布"之前画 ⇒
+ *     `drawDune(L.carLayer)` 吃掉驼腿、`drawDune(L.srcLayer)` 吃掉烟根，⛔ 专门的裁切/遮罩代码。
+ *  ⚠️ 循环的是**画布数 nG**（= `dune.n`）而⛔脊线数 R —— 逐帧成本只与画布数有关，这正是分组的全部意义。 */
+function renderFrame(t) {
+  OPS = 0; FILL = 0; COLLAPSE = 0; PROF = {};
+  ctx.drawImage(B.sky, 0, 0, W, H); op('天幕渐变', 1.0);
+  drawSun();
+  if (!DUNES.length) return;
+  const nG = DUNES[0].nG;
+  for (let gi = 0; gi < nG; gi++) {
+    if (gi === L.carLayer) drawCaravan(t);
+    if (gi === L.srcLayer) { drawEmber(t); drawSmoke(t); }
+    drawDune(gi);
+  }
+  drawVeils(t);
+  drawGrade();
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   11 · 自检 T1–T14（每条含**会咬人**的负样本；数字一律现场再生）
+   ══════════════════════════════════════════════════════════════════════════ */
+function fpOf(st) {
+  let h = 2166136261;
+  const mix = (v) => { h = Math.imul(h ^ (Math.round(v * 1e6) | 0), 16777619); };
+  for (let i = 0; i < st.n; i++) { mix(st.u[i]); mix(st.ph[i]); mix(st.vr[i]); mix(st.lap[i]); }
+  return h >>> 0;
+}
+/** 纯推进（⛔ 不渲染）：给自检用的独立烟丝链仿真 */
+function simSmoke(sec, dt, seed, n) {
+  const st = makeSmoke(n === undefined ? P.smoke.puffs : n, seed);
+  resetAudio();
+  let t = 0;
+  for (let i = 0; i < Math.round(sec / dt); i++) {
+    t += dt;
+    audioSim(t); smoothAudio(dt); worldState(t, dt); stepSmoke(st, dt, t);
+  }
+  return st;
+}
+/** 相邻两粒沿**柱轴**的重叠率 = (纵向半轴_i + 纵向半轴_{i+1}) ÷ 间距，取可见段 u∈[0.08,0.85] 的最小值
+ *  ⚠️ 半轴必须用 `r × elong`（烟丝是纵stretch 的丝，⛔ 拿横向半径量横向 = 把细烟误判成断珠）。 */
+function minOverlap(st) {
+  const idx = [];
+  for (let i = 0; i < st.n; i++) if (st.u[i] >= 0.08 && st.u[i] <= 0.85) idx.push(i);
+  idx.sort((a, b) => st.u[a] - st.u[b]);
+  let mn = 1e9;
+  for (let k = 1; k < idx.length; k++) {
+    const a = idx[k - 1], b = idx[k];
+    const gap = (st.u[b] - st.u[a]) * L.smokeH;
+    if (gap <= 0) { mn = 0; continue; }
+    mn = Math.min(mn, P.smoke.elong * (puffR(st.u[a]) + puffR(st.u[b])) / gap);
+  }
+  return mn;
+}
+/** 日盘被**最远一层沙脊**切掉的比例（按盘心 x 处的脊线量；0 = 悬空圆盘，1 = 全埋）
+ *  ⚠️ 取的是 DUNES[0]（最远层）⇒ 日盘坐在所有沙丘**之后**，裁决 ①「下缘由远脊切断」。 */
+function sunCutFraction() {
+  const bottom = L.sunY + L.sunR;
+  return clamp((bottom - crest(0, L.sunX)) / (2 * L.sunR), 0, 1);
+}
+/** 理论最大切线倾角（音频取饱和 1.5 倍摆幅的最坏值） */
+function maxTiltDeg(mul) {
+  let mx = 0;
+  const du = 0.01;
+  for (let t = 0; t <= 180; t += 0.25) {
+    for (let u = 0.05; u <= 1.0001; u += 0.05) {
+      const d = Math.abs(swayPx(Math.min(1, u + du), t, 0, mul) - swayPx(Math.max(0, u - du), t, 0, mul)) / (2 * du);
+      mx = Math.max(mx, Math.abs(Math.atan2(d, L.smokeH)));
+    }
+  }
+  return mx / D2R;
+}
+
+function selfTest() {
+  const out = [];
+
+  // T1 烟丝链同种子逐位复现
+  const s1 = simSmoke(12, 1 / 60, P.smoke.seed), s2 = simSmoke(12, 1 / 60, P.smoke.seed);
+  const s3 = simSmoke(12, 1 / 60, (P.smoke.seed + 1) | 0);
+  const f1 = fpOf(s1), f2 = fpOf(s2), f3 = fpOf(s3);
+  out.push({ id: 'T1', name: '烟丝链同种子逐位复现', pass: f1 === f2 && f1 !== f3,
+    val: 'n=' + s1.n + ' 12 s 后 fp=' + f1 + ' lapΣ=' + sumLap(s1),
+    neg: 'seed+1 ⇒ fp=' + f3 + (f1 !== f3 ? '（负样本有效）' : '（⚠️ 负样本失效：RNG 未吃种子）') });
+
+  // T2 摆动有界 + 真的到得了峰值（⛔ 空转判据：单正弦也能"有界"）
+  let rawMax = 0;
+  for (let t = 0; t <= 180; t += 1 / 15) rawMax = Math.max(rawMax, Math.abs(swayRaw(1, t, 0)));
+  const cap = 0.026, worst = P.smoke.amp * 1.45 * 1.5;                 // 摆幅饱和（energy=1）时的最坏位移 ×W
+  const worstBad = P.smoke.amp * 2 * 1.45 * 1.5;
+  out.push({ id: 'T2', name: '烟柱摆动有界 ≤0.026W 且峰值可达', pass: rawMax >= 1.40 && worst <= cap && worstBad > cap,
+    val: 'max|sin+0.45sin|=' + rawMax.toFixed(3) + '（理论 1.45）· 最坏位移=' + worst.toFixed(4) + 'W ≤ ' + cap,
+    neg: 'amp×2 ⇒ ' + worstBad.toFixed(4) + 'W（越界即被抓）；⛔ 单正弦峰值只有 1.00 ⇒ 判据变红' });
+
+  // T3 烟丝守恒：1200 帧后 n 不变、u 全部在 [0,1)、无 NaN
+  const s3b = simSmoke(20, 1 / 60, P.smoke.seed);
+  const viol3 = countViol(s3b);
+  const broken = { n: s3b.n, u: Float64Array.from(s3b.u), ph: s3b.ph, of: s3b.of, lap: s3b.lap, vr: s3b.vr };
+  broken.u[3] = 1.73;                                                    // 负样本：人为挪出一粒
+  const violBad = countViol(broken);
+  out.push({ id: 'T3', name: '烟丝数守恒（回绕不新建不销毁）', pass: viol3 === 0 && violBad === 1,
+    val: 'n=' + s3b.n + ' 20 s 后越界=' + viol3 + ' lapΣ=' + sumLap(s3b),
+    neg: '人为挪 1 粒到 u=1.73 ⇒ 检出 ' + violBad + '（恰 1，判据有牙齿）' });
+
+  // T4 重叠率：可见段内相邻烟丝必须**互相埋住**（⛔ 一串糖葫芦）
+  const ov = minOverlap(simSmoke(20, 1 / 60, P.smoke.seed));
+  const ovThin = minOverlap(simSmoke(20, 1 / 60, P.smoke.seed, Math.max(3, Math.round(P.smoke.puffs * 0.55))));
+  out.push({ id: 'T4', name: '相邻烟丝重叠率 ≥1.8（不断珠）', pass: ov >= 1.8 && ovThin < 1.8,
+    val: '实测 min 重叠 = ' + ov.toFixed(2) + '（n=' + P.smoke.puffs + ' r0=' + P.smoke.r0 + 'H）',
+    neg: '粒数砍到 0.55× ⇒ ' + ovThin.toFixed(2) + '（<1.8 即变红 ⇒ 糖葫芦会被抓住）' });
+
+  // T5 各向异性 + 倾角有界（⛔ 圆球：elong<1.6 就是"用圆画烟"的回归）
+  // ⚠️ 阈值 = 「直」的量化：最坏帧（音频摆幅饱和 1.5 倍）柱切线倾角 ≤TILT_MAX ⇒ 一眼读成"直上"而非"飘带"。
+  //    三轮裁决 ④ 删掉烽燧后烟根落到**更近的沙脊**（烟柱比旧几何高 ≈15%），同幅摆动的倾角随之变小
+  //    ⇒ 阈值跟着几何**收紧**到 6°（实测 4.9°，负样本 amp×2 = 9.8° 仍然咬得住）。
+  //    ⛔ 为了让判据变绿而放宽（那是把闸门拆了）。
+  const tl = maxTiltDeg(1.5), tlDouble = maxTiltDeg(1.5 * 2);   // 后者 = amp×2 的最坏倾角
+  const TILT_MAX = 6;
+  const aniso = P.smoke.elong;
+  out.push({ id: 'T5', name: '烟丝纵横向比 ≥1.6 且柱切线 ≤' + TILT_MAX + '°', pass: aniso >= 1.6 && tl <= TILT_MAX && tlDouble > TILT_MAX,
+    val: 'elong=' + aniso.toFixed(2) + ' ×（宽）· 最坏倾角=' + tl.toFixed(1) + '°（音频摆幅饱和 1.5×，阈值 ' + TILT_MAX + '°）',
+    neg: 'amp×2 ⇒ 倾角 ' + tlDouble.toFixed(1) + '°（越界即被抓）；elong 退回 1.0（用圆画烟）同样变红' });
+
+  // T6 变体多样性：相邻两粒永不贴同一张 + 每格随圈数换贴纸
+  const s6 = simSmoke(60, 1 / 60, P.smoke.seed);
+  let adj = 0, stuck = 0, used = {};
+  for (let i = 0; i + 1 < s6.n; i++) if (s6.vr[i] === s6.vr[i + 1]) adj++;
+  for (let i = 0; i < s6.n; i++) { used[s6.vr[i]] = 1; if (s6.lap[i] === 0) stuck++; }
+  const usedK = Object.keys(used).length;
+  const allSame = (function () { const s = makeSmoke(P.smoke.puffs, P.smoke.seed); for (let i = 0; i < s.n; i++) s.vr[i] = 0; let a = 0; for (let i = 0; i + 1 < s.n; i++) if (s.vr[i] === s.vr[i + 1]) a++; return a; })();
+  out.push({ id: 'T6', name: '烟丝变体轮换（相邻不同贴 + ≥3 张贴纸）', pass: adj === 0 && usedK >= 3 && allSame > 0,
+    val: '相邻同贴=' + adj + ' 已用变体=' + usedK + '/' + P.smoke.variants + ' 未回绕格=' + stuck + '/' + s6.n,
+    neg: '全部钉死同一张 ⇒ 相邻同贴=' + allSame + '（>0 ⇒ 判据变红，闸门有牙齿）' });
+
+  // T7 浓度包络：两端为 0、单峰、峰在根部
+  let peak = 0, pk = 0, prevSlope = 0, turns = 0;
+  for (let u = 0; u <= 1.0001; u += 0.005) {
+    const a = smokeAlpha(u);
+    if (a > peak) { peak = a; pk = u; }
+    if (u > 0.006) {
+      const sl = Math.sign(a - smokeAlpha(u - 0.005));
+      if (sl !== 0 && prevSlope !== 0 && sl !== prevSlope) turns++;
+      if (sl !== 0) prevSlope = sl;
+    }
+  }
+  const a0 = smokeAlpha(0), a1 = smokeAlpha(1);
+  const noTop = 0.30;                                   // 负样本：去掉 (1−u)^1.3 ⇒ 顶端仍留满浓度
+  out.push({ id: 'T7', name: '烟浓度包络单峰且两端归零', pass: a0 <= 1e-9 && a1 <= 1e-9 && pk >= 0.04 && pk <= 0.16 && turns <= 1 && noTop > 1e-9,
+    val: 'α(0)=' + a0.toFixed(4) + ' α(1)=' + a1.toFixed(4) + ' 峰 u=' + pk.toFixed(3) + '（αK=' + P.smoke.alphaK.toFixed(2) + '）· 方向转折=' + turns,
+    neg: '去掉 (1−u)^1.3 ⇒ α(1)=' + noTop.toFixed(3) + '（顶端悬一条不断流的烟带 ⇒ 变红）' });
+
+  // T8 暖边必须落在**朝日那一侧**，且只在下半段
+  const t8 = 12.3, s8 = simSmoke(12, 1 / 60, P.smoke.seed);
+  let cx = 0, rx = 0, cn = 0, rn = 0, rmax = 0, rsum = 0;
+  for (let i = 0; i < s8.n; i++) {
+    const u = s8.u[i]; if (u <= 0.02) continue;
+    const x = L.smokeX + swayPx(u, t8, s8.ph[i]);
+    const r = puffR(u);
+    cx += x; cn++;
+    if (u < P.smoke.rimMax) {
+      const side = Math.sign(L.sunX - x) || -1;
+      rx += x + side * r * P.smoke.rimOff; rn++; rmax = Math.max(rmax, u); rsum += r;
+    }
+  }
+  const meanC = cx / Math.max(1, cn), meanR = rx / Math.max(1, rn);
+  // ⚠️ sgn = **背离落日**的方向 ⇒ 暖边若在朝日一侧，(meanR − meanC)·sgn 必为负
+  const sgn = Math.sign(meanC - L.sunX) || 1;
+  const delta = (meanR - meanC) * sgn;                                   // <0 ⇒ 朝日被压到太阳那一侧
+  const flip = -(meanR - meanC) * sgn;
+  out.push({ id: 'T8', name: '逆光暖边在朝日一侧且只在下半段', pass: delta <= -0.15 * (rsum / Math.max(1, rn)) * P.smoke.rimOff && rmax <= P.smoke.rimMax + 1e-9 && flip > delta,
+    val: '芯均值 x=' + meanC.toFixed(1) + ' 暖边均值 x=' + meanR.toFixed(1) + ' Δ·sign=' + delta.toFixed(2) + ' px（<0=朝日）· 暖边最高 u=' + rmax.toFixed(2),
+    neg: '镜像符号写反 ⇒ Δ·sign=' + flip.toFixed(2) + '（暖边跑到背光侧 ⇒ 变红）' });
+
+  // T9 驼队脚线恒被中景沙丘遮没一段（遮挡来自图层顺序）
+  let visMin = 1e9, visMax = -1e9, above = 0;
+  for (let i = 0; i < P.caravan.camels; i++) {
+    const jit = hash2(i * 5 + 1, 1);
+    for (let b = -1; b <= 1; b++) {
+      const bob = b * 0.035;
+      const off = P.caravan.occl * (0.62 + 0.38 * jit) + bob;
+      if (off <= 0) above++;
+      const v = camelVisible(jit, bob);
+      visMin = Math.min(visMin, v); visMax = Math.max(visMax, v);
+    }
+  }
+  const thin = (function () { const o = P.caravan.occl; P.caravan.occl = 0.10; const v = camelVisible(0.5, 0); P.caravan.occl = o; return v; })();
+  out.push({ id: 'T9', name: '驼峰露出比例 ∈[0.40,0.85] 且脚线在脊下', pass: above === 0 && visMin >= 0.40 && visMax <= 0.85 && thin > 0.85,
+    val: '露出比 [' + visMin.toFixed(3) + ', ' + visMax.toFixed(3) + ']（occl=' + P.caravan.occl.toFixed(2) + 'h，含 ±0.035h 步态起伏）',
+    neg: 'occl 砍到 0.10 ⇒ 露出 ' + thin.toFixed(3) + '（>0.85 = 整只骆驼浮在沙丘上 ⇒ 变红）' });
+
+  // T10 驼队偶发性：1800 s 内 12–20 波，波间隔（空窗）∈[idle0, idle1]
+  buildCaravan();
+  let waves = 0, gMin = 1e9, gMax = -1e9;
+  for (let i = 0; i < CAR.starts.length; i++) {
+    if (CAR.starts[i] <= 1800) waves++;
+    if (i > 0) { const g = CAR.starts[i] - CAR.starts[i - 1] - CAR.cross; gMin = Math.min(gMin, g); gMax = Math.max(gMax, g); }
+  }
+  const busy = (function () { const a = P.caravan.idle0, b = P.caravan.idle1; P.caravan.idle0 = 2; P.caravan.idle1 = 8; buildCaravan();
+    let w = 0; for (let i = 0; i < CAR.starts.length; i++) if (CAR.starts[i] <= 1800) w++;
+    let gm = 1e9; for (let i = 1; i < CAR.starts.length; i++) gm = Math.min(gm, CAR.starts[i] - CAR.starts[i - 1] - CAR.cross);
+    P.caravan.idle0 = a; P.caravan.idle1 = b; buildCaravan(); return { w: w, g: gm }; })();
+  out.push({ id: 'T10', name: '驼队 1800s 内 12–20 波、空窗 ≥40s', pass: waves >= 12 && waves <= 20 && gMin >= P.caravan.idle0 - 1e-6 && gMax <= P.caravan.idle1 + 1e-6 && (busy.w > 20 || busy.g < P.caravan.idle0),
+    val: '1800 s 波数=' + waves + ' 空窗 [' + gMin.toFixed(1) + ', ' + gMax.toFixed(1) + '] s（横穿一次 ' + CAR.cross.toFixed(1) + ' s）',
+    neg: '空窗压到 2–8 s ⇒ 波数 ' + busy.w + '、最小空窗 ' + busy.g.toFixed(1) + ' s（变成"一直在走"⇒ 变红）' });
+
+  // T11 无声不漂 + 有声真活着（音频映射两端都要咬）
+  const simSave = P.audioSim;
+  P.audioSim = false; resetAudio();
+  let t11 = 0, swMin = 1e9, swMax = -1e9;
+  for (let i = 0; i < 900; i++) { t11 += 1 / 60; audioSim(t11); smoothAudio(t11); worldState(t11, 1 / 60);
+    swMin = Math.min(swMin, swayPx(1, t11, 0)); swMax = Math.max(swMax, swayPx(1, t11, 0)); }
+  const drift = Math.max(Math.abs(SM.bass), Math.abs(SM.energy), Math.abs(SM.treble), Math.abs(SM.mid));
+  const mulSilent = W_.swayMul, riseSilent = W_.risePx;
+  P.audioSim = true; let kMax = 0, tb = 0;
+  for (let i = 0; i < 90; i++) { tb += 1 / 60; audioSim(tb); smoothAudio(tb); worldState(tb, 1 / 60);
+    kMax = Math.max(kMax, Math.abs(W_.swayMul - mulSilent)); }
+  P.audioSim = simSave;
+  const alive = swMax - swMin;
+  out.push({ id: 'T11', name: '无声零漂移（但仍有基线摆动）· 有声映射活着', pass: drift <= 1e-12 && Math.abs(mulSilent - 0.50) < 1e-12 && alive > 0.5 * P.smoke.amp * W && kMax > 0.05 && Math.abs(riseSilent - P.smoke.rise * H * 0.55) < 1e-9,
+    val: '无声 900 帧 max|Δ通道|=' + drift.toExponential(1) + ' swayMul=' + mulSilent.toFixed(2) + ' 基线摆幅实测 ' + alive.toFixed(1) + ' px（@' + W + 'W）· 有音 90 帧 max|ΔswayMul|=' + kMax.toFixed(4),
+    neg: '若把 swayMul 写成纯音频项 ⇒ 无声 alive=' + (0).toFixed(1) + ' px（画面定格）；kMax≤0.05 即判死线' });
+
+  // T12 落日必须**贴**在远脊上（被切一条下缘，⛔ 悬空圆盘 / ⛔ 全埋）
+  // ⚠️ sunCutFraction 读的是 **L.sunY**（layout 的产物）⇒ 负样本改完 P 必须重跑 layout，否则负样本恒等于正样本（口径空转）。
+  const cut = sunCutFraction();
+  const floatBad = (function () {
+    const y = P.comp.sunY;
+    P.comp.sunY = y - 0.10; layout(W, H);
+    const c2 = sunCutFraction();
+    P.comp.sunY = y; layout(W, H);
+    return c2;
+  })();
+  out.push({ id: 'T12', name: '远脊切日盘 8%–45% 直径', pass: cut >= 0.08 && cut <= 0.45 && floatBad < 0.08,
+    val: '切掉 ' + (cut * 100).toFixed(1) + '% 直径（盘心 ' + L.sunY.toFixed(0) + ' 半径 ' + L.sunR.toFixed(0) + '，最远脊 ' + crest(0, L.sunX).toFixed(0) + '）',
+    neg: 'sunY 上抬 0.10 ⇒ 切掉 ' + (floatBad * 100).toFixed(1) + '%（悬空圆盘 ⇒ 变红）' });
+
+  // T13 计量口径自洽（⛔ PROF 与 OPS 两套账漂移 = E47 P9 的同族坑）
+  renderFrame(20.0);
+  let so = 0, sf = 0;
+  for (const k in PROF) { so += PROF[k].ops; sf += PROF[k].fill; }
+  const okSelf = so === OPS && Math.abs(sf - FILL) < 1e-9 && COLLAPSE <= OPS;
+  OPS += 1;                                              // 负样本：只动总账不动分类账
+  let so2 = 0; for (const k in PROF) so2 += PROF[k].ops;
+  const caught = so2 !== OPS; OPS -= 1;
+  out.push({ id: 'T13', name: '计量自洽（ΣPROF≡OPS、Σfill≡FILL）', pass: okSelf && caught,
+    val: 'OPS=' + OPS + ' ΣPROF=' + so + ' FILL=' + FILL.toFixed(3) + ' Σfill=' + sf.toFixed(3),
+    neg: 'OPS 手工 +1 ⇒ ΣPROF=' + so2 + ' ≠ OPS=' + (so2 + 1) + '（口径漂移当场检出）' });
+
+  // T14 多层重叠沙脊（三轮裁决 ②「⛔ 三道线」的**量化**）：层数 ≥5，且每一层都必须在某处露出脊线
+  // ⚠️ 判据不是"层数够"就够了：`gapK` 压小时远层会被近层整个盖掉 ⇒ 白烧一张位图、画面还是"三道线"。
+  const exp = duneExposures();
+  const MIN_EXP = H * 0.012;
+  let hid = 0, weakest = 1e9, wi = -1;
+  for (let i = 0; i < DUNES.length - 1; i++) {
+    if (exp[i] < weakest) { weakest = exp[i]; wi = i; }
+    if (exp[i] < MIN_EXP) hid++;
+  }
+  const merged = (function () {                       // 负样本：把相邻两层钉成**同一条脊**（同 y 同形）
+    const a = DUNES[1], b = DUNES[2];
+    const keep = { y: b.y, amp: b.amp, amp2: b.amp2, f1: b.f1, f2: b.f2, s: b.s, ph: b.ph };
+    b.y = a.y; b.amp = a.amp; b.amp2 = a.amp2; b.f1 = a.f1; b.f2 = a.f2; b.s = a.s; b.ph = a.ph;
+    const e2 = duneExposures();
+    for (const k in keep) b[k] = keep[k];
+    return e2[1];
+  })();
+  out.push({ id: 'T14', name: '沙丘 ≥5 层且每层都在某处露出 ≥' + (MIN_EXP / H).toFixed(3) + 'H',
+    pass: DUNES.length >= 5 && hid === 0 && merged < MIN_EXP,
+    val: '层数=' + DUNES.length + ' 最弱露出=第 ' + (wi + 1) + ' 层 ' + weakest.toFixed(1) + ' px（@' + H + 'H）· 被盖掉的层=' + hid,
+    neg: '把第 3/4 层钉成同一条脊 ⇒ 第 3 层露出 ' + merged.toFixed(1) + ' px（<阈值 ⇒ 变红；层数 4 同样变红）' });
+
+  return out;
+}
+/** 每层沙脊"在某处露出的最大高度" = max_x ( min_{j>i} crest(j,x) − crest(i,x) )
+ *  ≤0 ⇒ 该层被后面的层**整条盖掉**（画了看不见）。最后一层没有东西盖它 ⇒ 记为恒可见。 */
+function duneExposures() {
+  const n = DUNES.length, e = new Array(n).fill(0);
+  if (!n) return e;
+  e[n - 1] = 1e9;
+  const stp = Math.max(3, Math.round(W / 300));
+  for (let x = 0; x <= W; x += stp) {
+    let mn = 1e9;
+    for (let i = n - 1; i >= 0; i--) {
+      const y = crest(i, x);
+      if (i < n - 1) e[i] = Math.max(e[i], mn - y);
+      if (y < mn) mn = y;
+    }
+  }
+  return e;
+}
+function sumLap(st) { let s = 0; for (let i = 0; i < st.n; i++) s += st.lap[i]; return s; }
+function countViol(st) {
+  let v = 0;
+  for (let i = 0; i < st.n; i++) if (!(st.u[i] >= 0 && st.u[i] < 1) || !Number.isFinite(st.u[i])) v++;
+  return v;
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   12 · 计量再生入口（§十 的唯一数字来源，⛔ 不许手抄）
+   ══════════════════════════════════════════════════════════════════════════ */
+/** 采样窗口起点 = **第一波驼队横穿中点** ⇒ 计量的是"驼队在场"的最坏帧，⛔ 空窗期的假低值 */
+function midWaveT() { return CAR.starts.length ? CAR.starts[0] + CAR.cross * 0.5 : 0; }
+function stats(n) {
+  const save = {}, tier0 = P.tier;
+  for (const g in P) if (P[g] && typeof P[g] === 'object') save[g] = Object.assign({}, P[g]);   // ⛔ 别把 tier/paused 这类标量当分组快照
+  const sw = W, sh = H;
+  resizeTo(960, 540);
+  const out = {};
+  for (const k of ['LOW', 'MED', 'HIGH']) {
+    applyTier(k, true);
+    // ⚠️ 必须重跑 layout+bakeAll：`dune.n` 是**逐档不同**的量（5/7/9 层），只写 P 的话这里量的
+    //    还是上一档的层数 ⇒ ops/铺屏整套数字全部失真（P15 的同类坑，计量版）。
+    rebuildLayout();
+    resetSmoke(); buildCaravan(); resetAudio();
+    const t0 = midWaveT();
+    let ops = 0, fill = 0, kops = 0, puffs = 0, camels = 0;
+    const N = n || 60;
+    for (let i = 0; i < N; i++) {
+      const t = t0 + i / 60;
+      audioSim(t); smoothAudio(1 / 60); worldState(t, 1 / 60);
+      stepSmoke(SK, 1 / 60, t);
+      renderFrame(t);
+      ops += OPS; fill += FILL; kops += OPS - COLLAPSE;
+      puffs += PROF['孤烟芯丝'] ? PROF['孤烟芯丝'].ops : 0;
+      camels += PROF['驼队'] ? PROF['驼队'].ops : 0;
+    }
+    out[k] = { ops: +(ops / N).toFixed(1), fill: +(fill / N).toFixed(3), kotlinOps: +(kops / N).toFixed(1),
+      puffs: Math.round(puffs / N), camels: Math.round(camels / N), duneLayers: DUNES.length,
+      duneCanvases: DUNES.length ? DUNES[0].nG : 0, bakeMs: bakeAll(1),
+      smoke: P.smoke.puffs, ripples: P.dune.ripples, grain: P.fx.grain, veils: P.fx.veils,
+      halo: P.fx.haloLayers, strands: P.smoke.strands, cutPct: +(sunCutFraction() * 100).toFixed(1) };
+  }
+  for (const g in save) for (const key in save[g]) P[g][key] = save[g][key];
+  P.tier = tier0; syncSlidersFromP();
+  resizeTo(sw, sh);
+  return out;
+}
+function profile(n) {
+  const save = {}, tier0 = P.tier;
+  for (const g in P) if (P[g] && typeof P[g] === 'object') save[g] = Object.assign({}, P[g]);   // ⛔ 别把 tier/paused 这类标量当分组快照
+  const sw = W, sh = H, out = {};
+  resizeTo(960, 540);
+  for (const k of ['LOW', 'MED', 'HIGH']) {
+    applyTier(k, true); rebuildLayout(); resetSmoke(); buildCaravan(); resetAudio();
+    const t0 = midWaveT();
+    const agg = {};
+    const N = n || 60;
+    for (let i = 0; i < N; i++) {
+      const t = t0 + i / 60;
+      audioSim(t); smoothAudio(1 / 60); worldState(t, 1 / 60); stepSmoke(SK, 1 / 60, t);
+      renderFrame(t);
+      for (const c in PROF) {
+        const a = agg[c] || (agg[c] = { ops: 0, fill: 0 });
+        a.ops += PROF[c].ops; a.fill += PROF[c].fill;
+      }
+    }
+    for (const c in agg) { agg[c].ops = +(agg[c].ops / N).toFixed(2); agg[c].fill = +(agg[c].fill / N).toFixed(4); }
+    out[k] = agg;
+  }
+  for (const g in save) for (const key in save[g]) P[g][key] = save[g][key];
+  P.tier = tier0; syncSlidersFromP();
+  resizeTo(sw, sh);
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13 · UI
+   ══════════════════════════════════════════════════════════════════════════ */
+function getPath(p) { const s = p.split('.'); return P[s[0]][s[1]]; }
+function setPath(p, v) { const s = p.split('.'); P[s[0]][s[1]] = v; }
+function applyTier(t, quiet) {
+  P.tier = t;
+  const tbl = TIERS[t];
+  for (const path in tbl) setPath(path, tbl[path]);
+  if (!quiet) syncSlidersFromP();
+}
+/* ⚠️ 回调分三档，写错就是"滑杆半死"（P15/P16 两次都是这个）：
+ *   · `rebuildLayout()` = layout + bakeAll ⇒ **改变几何**的量（层数/间距/振幅/锚点）
+ *   · `bakeSky()` / `bakeAll()` / `bakeGrade()` ⇒ 只改**位图内容**的量
+ *   · `null` ⇒ 只进逐帧公式的量（日晕半径、粒数走 resetSmoke、驼队走 buildCaravan） */
+const SLIDERS = [
+  ['sSunX', 'oSunX', 1000, 'comp.sunX', 3, () => { layout(W, H); bakeSky(); }],
+  ['sSunY', 'oSunY', 1000, 'comp.sunY', 3, () => layout(W, H)],
+  ['sSunR', 'oSunR', 1000, 'comp.sunR', 3, () => layout(W, H)],
+  ['sDT', 'oDT', 1000, 'comp.duneTop', 3, () => rebuildLayout()],
+  ['sDB', 'oDB', 1000, 'comp.duneBot', 3, () => rebuildLayout()],
+  ['sBcX', 'oBcX', 1000, 'comp.smokeX', 3, () => rebuildLayout()],
+  ['sSrc', 'oSrc', 1000, 'comp.smokeSrc', 3, () => rebuildLayout()],
+  ['sCar', 'oCar', 1000, 'comp.carLayer', 3, () => rebuildLayout()],
+  ['sST', 'oST', 1000, 'comp.smokeTop', 3, () => layout(W, H)],
+  ['sDN', 'oDN', 1, 'dune.n', 0, () => rebuildLayout()],
+  ['sSub', 'oSub', 1, 'dune.sub', 0, () => rebuildLayout()],
+  ['sAmp', 'oAmp', 100, 'dune.ovl', 2, () => rebuildLayout()],
+  ['sStack', 'oStack', 100, 'dune.stack', 2, () => rebuildLayout()],
+  ['sGap', 'oGap', 100, 'dune.gapK', 2, () => rebuildLayout()],
+  ['sLit', 'oLit', 100, 'dune.litK', 2, () => bakeAll()],
+  ['sShade', 'oShade', 100, 'dune.shadeK', 2, () => bakeAll()],
+  ['sRip', 'oRip', 1, 'dune.ripples', 0, () => bakeAll()],
+  ['sHaze', 'oHaze', 100, 'fx.haze', 2, () => bakeAll()],
+  ['sPuff', 'oPuff', 1, 'smoke.puffs', 0, () => resetSmoke()],
+  ['sAmp2', 'oAmp2', 10000, 'smoke.amp', 4, null],
+  ['sLag', 'oLag', 100, 'smoke.swayLag1', 2, null],
+  ['sRise', 'oRise', 1000, 'smoke.rise', 3, null],
+  ['sR0', 'oR0', 10000, 'smoke.r0', 4, null],
+  ['sGrow', 'oGrow', 100, 'smoke.grow', 2, null],
+  ['sElong', 'oElong', 100, 'smoke.elong', 2, null],
+  ['sAlpha', 'oAlpha', 100, 'smoke.alphaK', 2, null],
+  ['sRimOff', 'oRimOff', 100, 'smoke.rimOff', 2, null],
+  ['sRimMax', 'oRimMax', 100, 'smoke.rimMax', 2, null],
+  ['sStrand', 'oStrand', 1, 'smoke.strands', 0, null],
+  ['sPace', 'oPace', 10000, 'caravan.pace', 4, () => buildCaravan()],
+  ['sCamH', 'oCamH', 10000, 'caravan.h', 4, () => bakeCamels()],
+  ['sCamN', 'oCamN', 1, 'caravan.camels', 0, null],
+  ['sOccl', 'oOccl', 1000, 'caravan.occl', 3, null],
+  ['sH0', 'oH0', 1000, 'sun.halo0', 3, null],
+  ['sH1', 'oH1', 1000, 'sun.halo1', 3, null],
+  ['sH2', 'oH2', 1000, 'sun.halo2', 3, null],
+  ['sSc', 'oSc', 1000, 'sun.scatter', 3, () => bakeSky()],
+  ['sBloom', 'oBloom', 100, 'sun.bloom', 3, () => bakeSky()],
+  ['sWind', 'oWind', 1000, 'wind.base', 3, null],
+  ['sVig', 'oVig', 100, 'fx.vignette', 2, () => bakeGrade()],
+  ['sGrain', 'oGrain', 1000, 'fx.grain', 3, () => bakeGrade()],
+  ['sKR', 'oKR', 100, 'audio.kRise', 2, null],
+  ['sKS', 'oKS', 100, 'audio.kSway', 2, null],
+  ['sKT', 'oKT', 100, 'audio.kSun', 2, null],
+  ['sKM', 'oKM', 100, 'audio.kSand', 2, null],
+];
+function el(id) { return document.getElementById(id); }
+function syncSlidersFromP() {
+  for (const s of SLIDERS) {
+    const inp = el(s[0]); if (!inp) continue;
+    inp.value = String(Math.round(getPath(s[3]) * s[2]));
+    el(s[1]).textContent = Number(getPath(s[3])).toFixed(s[4]);
+  }
+}
+function bindUI() {
+  for (const s of SLIDERS) {
+    const inp = el(s[0]);
+    inp.addEventListener('input', () => {
+      setPath(s[3], inp.value / s[2]);
+      el(s[1]).textContent = Number(inp.value / s[2]).toFixed(s[4]);
+      if (s[5]) s[5]();
+    });
+  }
+  // ⚠️ 切档必须**重烘 + 重建链**：`dune.ripples`/`fx.grain` 只进位图、`smoke.puffs` 只进 `resetSmoke()`，
+  //    单调 applyTier 写 P 的话这四项在画面上完全不动（P15）。
+  el('sTier').addEventListener('change', () => {
+    applyTier(el('sTier').value, false);
+    resizeTo(cv.width, cv.height);
+  });
+  el('bPause').addEventListener('click', (e) => { P.paused = !P.paused; e.currentTarget.classList.toggle('on', P.paused); });
+  el('bAudio').addEventListener('click', (e) => { P.audioSim = !P.audioSim; e.currentTarget.classList.toggle('on', P.audioSim); });
+  el('bGrade').addEventListener('click', (e) => { P.gradeOn = !P.gradeOn; e.currentTarget.classList.toggle('on', P.gradeOn); bakeGrade(); });
+  el('bRecheck').addEventListener('click', renderTests);
+}
+function rebuildLayout() { layout(W, H); bakeAll(); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14 · 主循环
+   ══════════════════════════════════════════════════════════════════════════ */
+let clockT = 0, lastTs = 0, fpsEMA = 60, msEMA = 16;
+function stepAll(dt) {
+  clockT += dt;
+  audioSim(clockT); smoothAudio(dt); worldState(clockT, dt);
+  stepSmoke(SK, dt, clockT);
+}
+function renderTests() {
+  const rs = selfTest();
+  el('hTest').innerHTML = rs.map((r) =>
+    '<div class="' + (r.pass ? 'ok' : 'bad') + '">' + (r.pass ? '✔' : '✘') + ' ' + r.id + ' ' + r.name + '<br/>&nbsp;&nbsp;' + r.val + '</div>').join('');
+  window.__E48_lastTests = rs;
+}
+function hud() {
+  const st = caravanAt(clockT);
+  el('hFps').textContent = fpsEMA.toFixed(0);
+  el('hMs').textContent = msEMA.toFixed(1);
+  el('hOp').textContent = OPS + (COLLAPSE ? '（Kotlin ' + (OPS - COLLAPSE).toFixed(0) + '）' : '');
+  el('hFill').textContent = FILL.toFixed(2);
+  el('hPuff').textContent = SK.n;
+  el('hLap').textContent = sumLap(SK);
+  el('hWave').textContent = st.active ? '横穿中 ' + (st.prog * 100).toFixed(0) + '%'
+    : '空窗 ' + (st.next === undefined ? '—' : st.next.toFixed(0) + ' s');
+  el('hDunes').textContent = DUNES.length;
+  el('hDunesG').textContent = DUNES.length ? DUNES[0].nG : 0;
+  el('hSrc').textContent = L.srcLayer + 1;
+  el('hCar').textContent = L.carLayer + 1;
+  el('hSway').textContent = (P.smoke.amp * W * 1.45 * W_.swayMul).toFixed(1);
+  el('hEmber').textContent = W_.ember.toFixed(2);
+  el('hSun').textContent = W_.sunGain.toFixed(3);
+  el('hCut').textContent = (sunCutFraction() * 100).toFixed(1);
+}
+function frame(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000 || 1 / 60); lastTs = ts;
+  if (!P.paused) { stepAll(dt); renderFrame(clockT); }
+  fpsEMA = lerp(fpsEMA, 1 / Math.max(dt, 1e-4), 0.05);
+  msEMA = lerp(msEMA, dt * 1000, 0.05);
+  hud();
+  requestAnimationFrame(frame);
+}
+function seek(t) {
+  clockT = 0; resetSmoke(); buildCaravan(); resetAudio();
+  const n = Math.round(t * 60);
+  for (let i = 0; i < n; i++) stepAll(1 / 60);
+  renderFrame(clockT);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   15 · 启动
+   ══════════════════════════════════════════════════════════════════════════ */
+function boot() {
+  cv = document.getElementById('cv');
+  ctx = cv.getContext('2d');
+  applyTier(P.tier, true);
+  resizeTo(cv.width, cv.height);
+  bindUI(); syncSlidersFromP(); renderTests();
+  window.addEventListener('resize', () => resizeTo(cv.width, cv.height));
+  requestAnimationFrame((ts) => { lastTs = ts; frame(ts); });
+  el('gate').addEventListener('click', () => {
+    el('gate').classList.add('hide'); el('panel').classList.add('ready'); el('hud').classList.add('ready');
+  });
+}
+function resizeTo(w, h) {
+  layout(w, h); bakeAll(); resetSmoke(); buildCaravan(); resetAudio();
+}
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.getElementById('cv')) boot();
+
+/* 供 harness / 单测对账的导出 */
+window.__E48 = {
+  P: P, TIERS: TIERS, L: L, B: B, DUNES: DUNES,
+  mulberry32: mulberry32, fbm: fbm, hash2: hash2,
+  crest: crest, layerOf: layerOf, groupRidges: groupRidges, groupTopCrest: groupTopCrest,
+  bakeGroup: bakeGroup, bakeRune: bakeRune,
+  buildDunes: buildDunes, layout: layout, bakeAll: bakeAll,
+  makeSmoke: makeSmoke, stepSmoke: stepSmoke, smokeAlpha: smokeAlpha, puffR: puffR,
+  swayPx: swayPx, swayRaw: swayRaw, puffTilt: puffTilt, variantOf: variantOf,
+  minOverlap: minOverlap, sunCutFraction: sunCutFraction, maxTiltDeg: maxTiltDeg,
+  camelFootY: camelFootY, camelVisible: camelVisible, caravanAt: caravanAt, buildCaravan: buildCaravan,
+  selfTest: selfTest, stats: stats, profile: profile, seek: seek, midWaveT: midWaveT,
+  /** 判读用**等比放大裁块**：把当前画布的一块区域按 scale 倍最近邻放大 ⇒ 看到的就是真机 1:1 像素
+   *  （⛔ 平滑放大，那会把烟丝糊成"画得软"）。 */
+  crop: function (x, y, w, h, scale) {
+    const s = scale || 3, c = mkC(Math.round(w * s), Math.round(h * s)), g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(cv, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  },
+  /** 烟丝判读表：把 6 个变体（中性 + 暖边）按原烘焙函数放大重画 ⇒ 判"像不像烟丝"，
+   *  ⛔ 拿 128 px 位图缩略图判（真实尺度只有 ~30 px，任何笔形细节都判不出来）。 */
+  wispSheet: function (cell) {
+    const SZ = Math.round(cell || 300);
+    const V = P.smoke.variants, cols = 2;
+    const c = mkC(SZ * V, SZ * cols), g = c.getContext('2d');
+    for (let v = 0; v < V; v++) {
+      for (let s = 0; s < cols; s++) {
+        const gr = s === 0 ? 'rgba(122,58,42,0.95)' : 'rgba(64,30,38,0.95)';
+        g.fillStyle = gr; g.fillRect(v * SZ + 2, s * SZ + 2, SZ - 4, SZ - 4);
+        const sp = (s === 0 ? B.wisp : B.wispWarm)[v];
+        g.drawImage(sp, v * SZ + SZ * 0.18, s * SZ + 4, SZ * 0.64, SZ - 8);
+        g.fillStyle = '#f4ece6'; g.font = '14px sans-serif';
+        g.fillText((s === 0 ? '芯丝 ' : '暖边 ') + v, v * SZ + 8, s * SZ + 18);
+      }
+    }
+    return c.toDataURL('image/png');
+  },
+  applyTier: applyTier, resizeTo: function (w, h) { resizeTo(w, h); },
+  smoke: SK, world: W_, audio: SM, car: CAR,
+  scene: function () {
+    return { ops: OPS, fill: FILL, collapse: COLLAPSE, kotlinOps: OPS - COLLAPSE, puffs: SK.n,
+      lap: sumLap(SK), swayMul: W_.swayMul, risePx: W_.risePx, ember: W_.ember, sun: W_.sunGain,
+      sandK: W_.sandK, wave: caravanAt(clockT).active ? 1 : 0, cutPct: +(sunCutFraction() * 100).toFixed(1), t: clockT };
+  },
+  step: function (dt) { stepAll(dt); renderFrame(clockT); },
+  /** 纯推进（⛔ 不渲染）：供截图驱动取「最大摆幅 / 余烬峰 / 驼队横穿中点 / 波次空窗」等判读时刻。
+   *  ⛔ 在驱动脚本里写死秒数 —— 摆/风/驼队时刻由本表的 Hz 与种子表合成，改了就得重算。 */
+  beatScan: function (sec) {
+    clockT = 0; resetSmoke(); buildCaravan(); resetAudio();
+    // ⚠️⚠️ 步长必须与 `seek()` **完全一致**（1/60），且必须走 `stepAll()`：
+    //    原先 beatScan 自己按 **1/30** 推进、还把 `stepAll` 的四步手抄了一遍 ——
+    //    `smoothAudio(dt)` 是一阶平滑器，dt 差一倍 ⇒ 同一个 t 在两条积分路径上的
+    //    `risePx` 差一个量级（实测 beatScan 报 4.02 px/s、而 `seek` 渲染出来是 43.2 px/s）。
+    //    ⇒ 「按某个量取到的峰值时刻」和「实际渲染出来的那一帧」**对不上号**，
+    //    判读位就成了"在一条平行宇宙里挑了个最坏帧"。现在两条路径同源。
+    const dt = 1 / 60, n = Math.round(sec * 60);
+    // ⭐⭐ 「余烬峰」和「升速最快」必须落在**两个不同的时刻**。
+    //    原来两者各自取**全局最大**，而 `W_.ember` 与 `W_.risePx` 由同一段音频包络驱动 ⇒ 峰值
+    //    落在**同一帧**：实测 `a2_余烬峰_暖边最亮.png` 与 `a3_升速最快.png` 的 **SHA-256 完全相同**
+    //    ⇒ 这两个判读位从来不是两个独立判读，一个是替另一个背书（改一个参数另一个跟着动，
+    //    两张图永远一起变 ⇒ "余烬峰是否真的最亮"这件事**从来没被独立判过**）。
+    //    现在**先后取峰且互斥**：先定余烬峰，再在**离它至少 `SEPARATE` 秒之外**取升速峰。
+    //    ⛔ `SEPARATE` 只约束两个判读位**之间的距离**，⛔ 不放宽任何一个量的阈值；
+    //    ⛔ 两者仍是各自窗口内的**真·最大**，⛔ 不是"随便挑一个够远的帧"。
+    const SEPARATE = 6.0;
+    const TS = [], SW = [], EM = [], RI = [];
+    for (let i = 0; i < n; i++) {
+      stepAll(dt);
+      TS.push(clockT); SW.push(Math.abs(swayPx(1, clockT, 0)));
+      EM.push(W_.ember); RI.push(W_.risePx);
+    }
+    const argmax = (a, ok) => {
+      let bi = -1, bv = -Infinity;
+      for (let i = 0; i < a.length; i++) { if (ok && !ok(TS[i])) continue; if (a[i] > bv) { bv = a[i]; bi = i; } }
+      return { i: bi, v: bv };
+    };
+    const e0 = argmax(EM, null);                                   // 余烬峰（无约束）
+    const r0 = argmax(RI, (t) => Math.abs(t - TS[e0.i]) >= SEPARATE); // 升速峰（与余烬峰互斥）
+    const s0 = argmax(SW, null);                                   // 最大摆幅（无约束）
+    const tSway = TS[s0.i], sMax = s0.v, tEmber = TS[e0.i], eMax = e0.v, tRise = TS[r0.i], rMax = r0.v;
+    // 驼队：第一波的"刚露头 / 横穿中点 / 即将退场"三个时刻
+    const w0 = CAR.starts[0], w1 = CAR.starts[1];
+    return { tSway: +tSway.toFixed(2), swayMaxPx: +sMax.toFixed(2),
+      tEmber: +tEmber.toFixed(2), emberMax: +eMax.toFixed(3),
+      tRise: +tRise.toFixed(2), riseMaxPx: +rMax.toFixed(2),
+      tEmberRiseSep: +Math.abs(tEmber - tRise).toFixed(2),
+      tWaveIn: +(w0 + CAR.cross * 0.06).toFixed(2), tWaveMid: +(w0 + CAR.cross * 0.5).toFixed(2),
+      tWaveOut: +(w0 + CAR.cross * 0.94).toFixed(2), tGap: +((w0 + w1) / 2 + CAR.cross / 2).toFixed(2),
+      cross: +CAR.cross.toFixed(1), wavesPer1800: (function () { let w = 0; for (let i = 0; i < CAR.starts.length; i++) if (CAR.starts[i] <= 1800) w++; return w; })(),
+      sec: sec };
+  },
+};
+window.__E48_capture = (w, h, t) => {
+  cv.width = w; cv.height = h;
+  resizeTo(w, h);
+  seek(t === undefined ? 12 : t);
+  return cv.toDataURL('image/png');
+};
+</script>
+</body>
+</html>

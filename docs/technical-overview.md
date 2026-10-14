@@ -15131,3 +15131,86 @@ K 歌页 `KaraokePlaybackScreen` 有升降调 / 变速。底栏「原唱/伴唱�
 lint **0 error / 136 warning**（既有基线不动），`logs_temp/karaoke_fix3_fullverify.log`，8m34s，2026-10-14 本机。
 ⚠️ 与改前那次"0 失败"的区别：那次**依赖 worker 分配顺序**（谁先建 `AppPreferences` 单例），
 改成独占目录后本案与顺序无关 —— 实例不再与任何进程单例共用文件路径，所以不再有时效性红。
+
+### 10.233 v2.38.11 — E47「雪松」落地：第 24 套可视化效果（K1–K7 闭合，K8 真机验收待所有者执行）
+
+方案与决策全文见 `docs/e47-snow-cedar-plan.md`（§四 生成数学、§五 逐帧图元预算、§八 原型缺陷账 P1–P29、
+§九 决策记录 D1–D13）。本节只记**落地实况与实测口径**。
+
+#### 一、落地范围
+
+| 任务 | 产物 | 状态 |
+|---|---|---|
+| K1 接线 | `AppSettings.kt` 加 `SNOW_CEDAR(Tier.ADV, "47", needsParticleBudget = false)` + 双语字符串 + 三处护栏 | ✅ |
+| K2 树 | `SnowCedarTree.kt`（`treeOpt`/`build`/`fingerprint`，`clumps` 每条带 `tx/ty`） | ✅ |
+| K3 烘焙 | `SnowCedarBakes.kt`（无状态画笔 + `SnowBakeQueue`/`SnowBakeKind` 24 类 + `BAKE_BUDGET_MS=24`/`UNIT_PX_CAP=24000`） | ✅ |
+| K4 雪场 | `SnowField.kt`（**五层** flat 数组 + `land` 消隐与图层序） | ✅ |
+| K6 人物 | `SnowPerson.kt`（18 块站定剪影本体 + 肩雪盖；`personY` ⛔ 不入参数） | ✅ |
+| K5 绘制 + K7 音频 | `SnowCedarRenderer.kt`（694 行；`SnowWorld.kt` 的 `SnowAudio`/`SnowWorldState`） | ✅ |
+| K8 真机验收 | 创维 API 22 实机逐项判读 | ⛔ **未执行**（所有者） |
+
+#### 二、三个值得单独记的落地判断
+
+1. **`drawBitmapMesh` 全仓零先例，本效果是第一个**，而规格里给的写法在 API 上直接不成立。
+   `Canvas.drawBitmapMesh(bmp, meshW, meshH, verts, …)` **没有 `texs` 参数**，纹理坐标由顶点位置隐式推出
+   （`u = i/meshW`、`v = j/meshH`）⇒ `meshW = 0` 会得到 `0/0 = NaN`，且 Skia 侧 `SkASSERT(meshWidth > 0)`。
+   改法 = `meshW = 1`（每行两列顶点、**两列吃同一个行偏移** ⇒ 仍是整幅宽的一条带整体平移），
+   顶点 y 取 `meta.h / meshH` 的**恒等映射** —— 若照原型的 `sh = meta.h / rows` 填 y 而 `v` 按 `meshH` 铺，
+   整棵树会被纵向拉伸 `rows/(rows−1)`。
+2. **⛔ 平铺带禁用 `Shader.setLocalMatrix` / 任何 local matrix**。E43 已实测它在硬件画布上**静默退化成
+   identity**（带子不动、无报错，画面读起来像「风停了」），E46 也踩过就地改写共享 shader 的坑。
+   实现改用 Compose `ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Clamp))`，
+   **横向滚动只靠移动 `drawRect` 的 `topLeft.x = −off`**。⛔ 同时禁用 `clipPath` / `clip(Rect)`
+   （本机 API 22 hwui 三次 SIGSEGV），出画幅的部分交给画布自裁（`off ∈ [0, cw)` ⇒ 必然盖满 `[0, w]`）。
+3. **`postFx` 形制已修正（2026-10-14 真机帧率返工，已验证 2164 例全绿 / lint 0 error）**
+   — 原落地写为 `PostFx.NONE`（理由：暗角+颗粒已烘进 grade 位图 ⇒ 基类零绘制）⇒ **⊘ 错误分支**，只算对了 `applyPostFx`，漏了 `RendererFx.needsDamageCoalescer`：`NONE`⇒`hasFullScreenPass()`恒假⇒`needsDamageCoalescer`在 LITE/FULL 也为真⇒每帧白补一次整画布 `drawRect`（`OverlayFx.drawDamageCoalescer`），铺屏 1.000 屏且肉眼不可见。修法：`PostFx(vignette=0.34f)` + `vignetteOverride(fx)=0f`（与 E46 `TripodFogRenderer` **逐字同形制**，见 `MoonlitAudioTest.kt` 钉死的覆写者白名单 + 该类三重身份 KDoc）。`FxCoverageScanTest` 从 `exempt` 移入 `covered`；`drawSun` 额外改 `drawRect→drawCircle`（−0.382 屏，零视觉代价）。设备真实填充从 6.11 → 4.73 屏，**低于 E44 HIGH 的 5.21 屏**。⛔ 低档 `FxLevel.OFF` 时 `needsDamageCoalescer` 因 `level==OFF` 恒真，基类那一屏**省不掉** —— 这是基类层面限制，不是本类可修。
+
+#### 三、雪粒提交次数的一处主动偏离（⛔ 与 §五 口径不同，记录在案）
+
+§五 写的是「每层 1 次 `Canvas.drawPoints`」，五层共 5 op。落地时 dot/bokeh 四层改为**每层 2 次**
+（按 `rzOf(i) >= 1 + rVar·0.5` 分大小两桶，各一次 `drawPoints`），近层 streak 仍是 1 条 Path + 1 次 `drawPath`。
+
+- **为什么**：`drawPoints` 用 `Paint.strokeWidth` 定直径，**逐点半径不可变**；而 §4.4 明确要求逐粒半径抖动
+  （同层等径读成「印刷网点」）。原型靠 1 条 Path + `arc` 逐粒填圆才能做到，Kotlin 侧要保留逐帧低开销
+  就只能分桶。
+- **代价**：雪粒提交 5 → **9 次/帧**，整帧图元 LOW 22.9 / MED 24.9 / HIGH 24.9（§五 的原型折叠口径是 20.9）。
+  仍远低于 30 op 闸门；⛔ **9 次提交未在真机量过**，K8 若掉帧，杠杆是并回单桶（退化为同层等径）。
+
+#### 四、实测
+
+- `testDebugUnitTest --rerun-tasks`：**2164 例 / 203 类 / 0 失败 / 0 跳过**（含 E47 四个测试类 34 例：
+  `SnowCedarGoldenTest` 11 / `SnowCedarBakeGateTest` 13 / `SnowFieldTest` 5 / `SnowPersonGateTest` 5）。
+- `lintDebug`：**0 error**（lint 对 error 阻塞）。
+- 原型侧权威输出不变：`node docs/archive/verification/scripts/e47_snow_harness.js` → 12/12 全绿，
+  末态 `fill = 5.107394083165496`，与 §十 逐位相同。
+- ⛔ **铺屏 5.11 屏超出真机已验收上限**（E44 HIGH 的 4.21，+21%）这件事**没有因为 Kotlin 落地而消失**，
+  降级杠杆与唯一顺序见 §十 第 2 条（① 去掉 grade 全屏位图 → ② 吹雪 3→2 / 阴云 2→1 → ③ 松林带压薄）。
+- ⚠️ **真机未测项**（随 K8 一并交接）：`drawBitmapMesh` 首次上机、`drawPoints` 一次性 1260 粒（HIGH）、
+  78 个菱形塞进一条 Path 的冰晶闪光、`onEnter` 分帧烘焙的墙钟（HIGH 树内雪脊 705 条）。
+
+#### 五、两处「方案初稿漏记」的接线点（⭐ 本节最可复用的部分）
+
+§十二 的接线清单初稿列了 6 个文件，实测**不够**，补记两条 —— 且**两条都不是新效果自己的门禁**：
+
+| 漏记处 | 形态 |
+|---|---|
+| `StarrySkyTest.kt:1039` | E42 的「注册链 枚举 工厂 计数三处一致」把**效果总数硬编码**为 `assertEquals(23, VisualizerTheme.entries.size)` |
+| `MoonlitAudioTest.kt:47-73` | 判据 ① 钉死「调用 `AudioSmoother.updateDt(` 的生产文件**恰好**是 `listOf("MoonlitRenderer.kt", "TripodFogRenderer.kt")`」，E47 的 `SnowWorld.kt` 是第三个要申请者（须写明理由，同 E46 当年的做法） |
+
+⚠️ 「效果总数」与「谁可以用 `updateDt`」都是**跨效果不变量**，由**最先立这道闸的那套效果**的测试持有
+⇒ 它们的报错信息里**不会提到新加的那套效果**，靠 `VisualizerThemeTest` 扫不到。
+兜底口径（已写进 §十二 表尾）：`grep -rn "VisualizerTheme.entries.size\|updateDt(" app/src/test`。
+⭐ 另有一处**编译期陷阱**：`VisualizerRendererFactory.kt` 是**逐条显式 import（26 条，无通配符）**，
+新增渲染器必须补 import 行，否则报 `Unresolved reference` —— 且**实现侧编译通过并不能担保它**，
+因为那版工厂若还停在 `throw NotImplementedError`，编译器根本不引用那个类。
+
+#### 六、本机测试基础设施的一条新口径
+
+`testDebugUnitTest` 在 2164 例全部执行完毕后，收尾阶段抛
+`NoSuchFileException: app/build/test-results/testDebugUnitTest/binary/in-progress-results-generic.bin`，
+**结果目录被清掉**，XML / HTML 报告常常只剩最后一个测试类。
+⇒ 本机判「全量是否全绿」**不能靠读报告目录**，也不靠控制台那行「N tests completed, M failed」（它不点名）。
+做法：挂**仓库外**的 init script 把失败项打到 stdout（`testLogging { events "failed"; exceptionFormat "full" }`）。
+
+与 §10 里为 `UncaughtExceptionsBeforeTest` 挂 `TestListener` 是同一类手法：**探针读不到的东西，
+先让探针把话说出来**，而不是从零复跑一遍去猜。

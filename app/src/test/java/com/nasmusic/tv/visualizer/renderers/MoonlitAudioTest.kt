@@ -57,10 +57,13 @@ class MoonlitAudioTest {
         // 定义处（AudioSmoother.kt 的 KDoc 引用了 `updateDt`，但它不含调用点 `\.updateDt\(`）
         // ⭐ 名单于 2026-10-13 加入 E46：`TripodFogRenderer` 的音频三通道（bass/treble/energy）同样
         //    必须走 dt 变体（方案 §十五 K7），理由与本条根因一致 —— 定率式 `update()` 的隐含 60fps。
+        // ⭐ 名单于 2026-10-14 加入 E47：`SnowWorld.kt` 的 `SnowAudio` 对 bass/energy/treble 三条包络
+        //    各调一次 `updateDt`（方案 §十一 K7 / §六 平滑式 `k = 1 − exp(−smooth·60·dt)`）。
+        //    同一个根因：把 60fps 写死在系数里，掉帧时三条包络的推进量就与真实时间脱钩。
         //    ⛔ 判据形态不变（全仓**恰好这几个文件**，`sorted()` 只抹掉 listFiles 的顺序依赖）：
-        //    第三个效果要进名单得先像这里一样写明理由。
-        assertEquals("生产侧只许 E44 / E46 用 dt 变体（⛔ 定率式 update() 的隐含 60fps 就是 M10 的根因）",
-            listOf("MoonlitRenderer.kt", "TripodFogRenderer.kt"), callers.sorted())
+        //    下一个效果要进名单得先像这里一样写明理由。
+        assertEquals("生产侧只许 E44 / E46 / E47 用 dt 变体（⛔ 定率式 update() 的隐含 60fps 就是 M10 的根因）",
+            listOf("MoonlitRenderer.kt", "SnowWorld.kt", "TripodFogRenderer.kt"), callers.sorted())
 
         val src = rendererSource()
         assertEquals("四个频段各推进一次 ⇒ 全文恰好 4 个调用点",
@@ -408,13 +411,19 @@ class MoonlitAudioTest {
         //    1.000 屏），但 `postFx` 的 `vignette = 0.42f` 字面量必须保留（覆盖门禁 + `needsDamageCoalescer`
         //    两个下游读它）⇒ 唯一自洽的形制就是"字面量留着、基类那一次全屏 drawRect 用钩子关掉"
         //    （方案 §十四 4 定稿；走基类暗角 = MED/HIGH 多付 1.000 屏，撞 R8）。
+        // ⭐ 2026-10-14 加入 E47：形制与理由**逐字同 E46**。⭐⭐ 它是本条的第一个**反向教训**：
+        //    E47 落地时 `postFx` 写成 `PostFx.NONE` 并登记进 `FxCoverageScanTest` 的豁免名单，
+        //    理由是「暗角已烘进位图 ⇒ 基类零绘制」—— ⛔ **只算对了 `applyPostFx`**：
+        //    `NONE` 让 `hasFullScreenPass()` 恒假 ⇒ `needsDamageCoalescer` 在 LITE/FULL 同样为真
+        //    ⇒ 每帧白补一次整画布 `drawRect`，**铺屏 1.000 屏且肉眼不可见**（本机实测 50–80 fps 时
+        //    才暴露，浏览器 harness 看不到这条 pass，因为它活在 Kotlin 基类里）。
         val rendererDir = File(mainSourceRoot(), "com/nasmusic/tv/visualizer/renderers")
         val overriders = rendererDir.listFiles()!!.filter {
             it.name.endsWith(".kt") &&
                 stripComments(it.readText()).contains("override fun vignetteOverride")
         }.map { it.name }
-        assertEquals("只许 E44 / E46 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
-            listOf("MoonlitRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
+        assertEquals("只许 E44 / E46 / E47 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
+            listOf("MoonlitRenderer.kt", "SnowCedarRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
         assertTrue("基类默认值必须是哨兵（不覆盖）",
             mainFileText("RendererFx.kt").contains("vignetteOverride(fx: FxFrame): Float = NO_VIGNETTE_OVERRIDE"))
     }
