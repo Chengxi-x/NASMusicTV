@@ -15046,16 +15046,88 @@ K 歌页 `KaraokePlaybackScreen` 有升降调 / 变速。底栏「原唱/伴唱�
   `focusProperties { exit = … }` 与 `FocusRequester.Cancel` 在本 Compose 版本仍是实验 API。
 
 **回归**：`testDebugUnitTest --rerun-tasks` **199 类 / 2128 例 / 0 失败**，`lintDebug` **0 error**（136 warning，既有基线），2026-10-14 本机。
+⚠️ 这条"0 失败"后来被证明是**运气**（worker 分配顺序刚好让本案先建 `AppPreferences` 单例）——
+本案新加的两条落盘用例是顺序依赖 flake，见本节末「五、单测基础设施返工」。
 
 #### 四、真机验收与遗留
 
-- ⏳ 方案文档 §5 的 **7 步真机验收尚未执行**（TV `192.168.0.114:5555`，v2.38.10 / versionCode 179）。
-- ⏳ **F-F 未验证**：pitch 依赖 `AudioTrack.setPitch`（**API 23+**），而 minSdk 22 的创维开发机上
-  `ExoPlayer` 的 `PlaybackParameters.pitch` **可能整体不生效** ⇒ 若真机"换档听不出差别"，
-  那是 F-F 而不是本次改动失败，须另立 issue。
+**2026-10-14 首轮真机（v2.38.10 / 179，`192.168.0.114:5555`，model `9R54_G8S` / API 22）——7 步里 6 步过、第 4 步红**
+（升降调与变速两个弹窗都测，症状一致）：
+
+| 步 | 结果 |
+|---|---|
+| 1 / 2（进页焦点、开弹窗高亮在当前档位值） | ✅ |
+| 3（弹窗内 `←`/`→` 即时试听） | ✅ **音高实时变化** ⇒ **F-F 不成立**，API 22 上 `AudioTrack.setPitch` 有效，无需另立 issue |
+| 4（`↑`/`↓` 在两行之间走） | ❌ **`↑` 把焦点送出弹窗**（`↓` 正常） |
+| 5（「确定」关闭后 `←`/`→` 与重新 OK） | ✅ **F-A 已修好**（关键判据「按 OK 变播放/暂停」未出现） |
+| 6（BACK 回滚 + 焦点归位）、7（反复开关 10 次 + 底栏淡出后按键） | ✅（F-B 未复现） |
+
+**第 4 步的返工**：`.focusGroup() + focusProperties { exit = { FocusRequester.Cancel } }`
+**只兜住 DOWN**，UP 的搜索根本没走焦点域边界、直接命中遮罩背后页面里仍可聚焦的节点（返回按钮 / 底栏）。
+⇒ 不再依赖越界回调，改为**弹窗内三个节点逐方向显式钉死**（越界走**回环**）：
+
+| 节点 | up | down | left / right |
+|---|---|---|---|
+| 档位值 | `confirmFocus` | `resetFocus` | 由 `onKeyEvent` 吃掉（换档），不参与搜索 |
+| 重置 | `focusRequester`（档位值） | `focusRequester`（回环） | `confirmFocus` |
+| 确定 | `focusRequester` | `focusRequester`（回环） | `resetFocus` |
+
+`focusGroup + exit` 保留为**后备**。⚠️ 「为什么 `exit` 对 UP 不生效」的两种可能
+（① 越界回调只在搜索走域边界时触发，UP 先命中了域外节点；② `FocusRequester.Cancel` 在 1.6.0
+这条路径上被降级成"不移动"、键继续交给上层默认搜索）**都未被排除** ——
+本工程的取舍是不追这个机理，直接把方向钉死（结果可测、不依赖版本内部行为）。
+⛔ 日后升 Compose 别用"更优雅的焦点域方案"替换这张钉位表，除非真机重跑第 4 步。
+
+门禁随之加一条：`KaraokePickerTvFocusScanTest` 断言钉位数量 `up=3 / down=3 / left=2 / right=2`
++ 三个 requester 都在（少一处即该方向又交回几何搜索）。
+
+- ✅ **返工版复验通过**（同日，电视上 `lastUpdateTime` 13:03 的 179 覆盖包，两个弹窗都重跑第 4 步）：
+  四个方向都在「档位值 / 重置 / 确定」之间走或回环，不再越出弹窗 ⇒ §5 的 7 步**全部通过**，本 issue 关闭。
 - ⏳ 高质量分离（Demucs）模式下 preview 是否**即时可闻**未验证（该路径走模型输出而非播放器 pitch/speed），留待真机判定。
 - 方案 B（改成真 `Dialog {}` 独立窗口，焦点归还自动成立）**留作后备**：
   ⚠️ 真 Dialog 内 `RegisterDialogBackHandler` **无效**，BACK 必须改用 `androidx.activity.compose.BackHandler`，
   否则穿透到 Level 3「退出确认」（`DialogBackHandler.kt:53-57`）。
 
 
+
+#### 五、单测基础设施返工（提交前的全量验证踩出来，与真机结论无关）
+
+返工版跑全量 `lintDebug testDebugUnitTest --rerun-tasks` 报 **2129 例 / 2 失败**
+（`logs_temp/karaoke_rework_full_verify.log`，8m9s）：红的正是本次新加的
+`VocalPitchSpeedPreviewCommitTest` 两条**等落盘**用例，`Timed out waiting for 5000 ms` 烧满 5 秒
+（⇒ 写根本没落地，不是断言判错）。而同一份代码早一次全量（15m22s）是 0 失败 ⇒ **顺序依赖 flake**，
+不是焦点返工引入的回归。
+
+**两个成因（都实测证实，缺一不可）**
+
+1. `NasMusicApp.onCreate` 取的是 `AppPreferences.getInstance(this)`（`NasMusicApp.kt:296`）——**进程级单例**，
+   `INSTANCE` 静态永不复位，其 DataStore 文件路径绑在**第一个**创建它的 Robolectric sandbox 的 dataDir 上。
+   Robolectric 每条用例给一个新的 `robolectric-<类>_<方法>_<随机>` 临时目录并在用例结束后清掉 ⇒
+   单例往**已被删掉的目录**里写；`dataStore.edit` 抛的 IOException 被 `viewModelScope` 的
+   fire-and-forget 吞掉，测试侧只剩一句轮询超时。
+   谁先跑到 `application = NasMusicApp::class` 那三个类，决定本案是否踩中 —— 这就是"同一份代码两次全量一绿一红"的机理。
+   （另两个同口径用例 `PlayModeToggleEventTest` / `ArtistExpansionGenerationGateTest` 轮询的都是**内存态**，
+   所以从未暴露此坑；本案是全工程**唯一**等真实磁盘写的 Robolectric 用例。）
+2. 反过来"每条用例 `AppPreferences(app)` 建新实例"也不行：同一条用例里 `onCreate` 已经把进程单例
+   建在本用例的 dataDir 上，两个实例**同一个文件** ⇒ datastore 1.1.1 直接抛
+   `There are multiple DataStores active for the same file`（`OkioStorage.createConnection`，
+   本次实测第一条用例就红在此）。
+
+**修法（零运行时行为改动）**
+
+- 本案改用**独占临时目录**的 `AppPreferences`：`AppPreferences.kt:117` 的文件是
+  `File(context.filesDir, "datastore/…")`，且构造体内**不经** `applicationContext` ⇒
+  用 `object : ContextWrapper(app) { override fun getFilesDir() = 本用例独占目录 }` 包装即生效。
+  目录建在 `java.io.tmpdir`（不受 Robolectric 清理）并带 `System.nanoTime()`（不与任何用例重名），
+  两个坑同时绕开。
+- 为此在 `VocalSeparationViewModel` 上开一个**带默认值的构造参数**
+  `prefs: AppPreferences = (app as NasMusicApp).appPreferences`。默认值就是原路径，
+  `MainViewModel.kt:777` 的两参调用不变 ⇒ **与已真机验收通过的 179 包运行行为完全一致，不必重装**。
+  （先试过的"测试里直接 `app.appPreferences = …` 重绑"不可行：该属性是 `lateinit var` + `private set`。）
+- 另加第 5 条用例**直接 await 挂起写**（不经 fire-and-forget）做"存储实例可写"自检：
+  一旦再退化就带着真实异常红，而不是留一句超时让下一个人从头猜。
+
+**结果**：`lintDebug testDebugUnitTest --rerun-tasks` 全量 **199 类 / 2130 例 / 0 失败 0 错误**、
+lint **0 error / 136 warning**（既有基线不动），`logs_temp/karaoke_fix3_fullverify.log`，8m34s，2026-10-14 本机。
+⚠️ 与改前那次"0 失败"的区别：那次**依赖 worker 分配顺序**（谁先建 `AppPreferences` 单例），
+改成独占目录后本案与顺序无关 —— 实例不再与任何进程单例共用文件路径，所以不再有时效性红。

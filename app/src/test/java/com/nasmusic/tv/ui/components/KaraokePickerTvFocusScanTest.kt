@@ -54,6 +54,31 @@ class KaraokePickerTvFocusScanTest {
     }
 
     @Test
+    fun `弹窗内三个焦点节点必须逐方向钉死目标`() {
+        // 真机（v2.38.10 / versionCode 179，所有者 2026-10-14）：上面那组 focusGroup + exit
+        // **只兜住了 DOWN，UP 仍把焦点送出弹窗**（落到遮罩背后的页面节点）⇒
+        // 上下左右必须由每个节点自己显式指向弹窗内节点，越界走**回环**。
+        // 这里锁"钉位还在、且三个节点都钉全"，防止后来者把它退化回单一 focusGroup。
+        assertTrue("档位值节点 UP 必须回环到底行", "up = confirmFocus" in source)
+        assertTrue("档位值节点 DOWN 必须进底行", "down = resetFocus" in source)
+        assertTrue("底行 UP 必须回到档位值", "up = focusRequester" in source)
+        assertTrue("底行 DOWN 越界必须回到档位值", "down = focusRequester" in source)
+        assertTrue("重置节点必须挂 `.focusRequester(resetFocus)`", ".focusRequester(resetFocus)" in source)
+        assertTrue("确定节点必须挂 `.focusRequester(confirmFocus)`", ".focusRequester(confirmFocus)" in source)
+
+        // 三个节点各自的四个方向都不得留空（留空 = 交给几何搜索 = 会外逃）
+        for ((dir, expected) in listOf("up" to 3, "down" to 3, "left" to 2, "right" to 2)) {
+            val actual = Regex("(?<![A-Za-z_])$dir = [A-Za-z]").findAll(source).count()
+            assertEquals(
+                "`$dir` 钉位数量应为 $expected（档位值 + 重置 + 确定），实际 $actual —— " +
+                    "少一处就意味着那个方向仍会把焦点送出弹窗",
+                expected,
+                actual
+            )
+        }
+    }
+
+    @Test
     fun `档位值节点必须自己吃左右键做步进`() {
         // F-C / 决策 D1：左右换档，箭头降级为装饰
         assertTrue("档位值节点缺 `.onKeyEvent`", ".onKeyEvent" in source)

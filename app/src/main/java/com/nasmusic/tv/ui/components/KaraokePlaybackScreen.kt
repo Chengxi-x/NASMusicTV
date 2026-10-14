@@ -702,6 +702,8 @@ private fun <T> KaraokeStepPickerDialog(
     // true = 关闭时保留当前预览值（确定 / 重置）；false = 取消路径，需要回滚
     var keepValueOnDismiss by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
+    val resetFocus = remember { FocusRequester() }
+    val confirmFocus = remember { FocusRequester() }
 
     fun stepTo(index: Int) {
         val next = index.coerceIn(steps.indices)
@@ -759,8 +761,10 @@ private fun <T> KaraokeStepPickerDialog(
                 ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // TV 焦点域：弹窗内部自成一组，任何方向想越出这一组都**取消移动**
-            // （FocusRequester.Cancel），焦点始终留在弹窗里看得见的地方。
+            // TV 焦点域后备：弹窗内部自成一组，越出这一组时**取消移动**。
+            // ⚠️ 真机实测它**只在 DOWN 方向生效**（UP 仍会越出弹窗，落到遮罩背后的页面节点）⇒
+            // 真正把焦点锁在弹窗内的是下面三个节点各自的 `focusProperties { up/down/left/right }`
+            // 显式钉位，这里只兜住那些没被钉到的路径。
             // 替代了原先"顶行吞 UP / 底行吞 DOWN"两处无条件吞键（F-D）——
             // 吞键本身不让焦点回环，配上无高亮的节点就是"卡死"观感。
             Column(
@@ -816,6 +820,13 @@ private fun <T> KaraokeStepPickerDialog(
                             .width(200.dp)
                             .height(56.dp)
                             .focusRequester(focusRequester)
+                            // 真机（v2.38.10 / 179）反馈：`focusGroup + exit = Cancel` 只兜住了
+                            // DOWN，**UP 会越出弹窗**（落到遮罩背后的页面底栏）⇒ 四个方向
+                            // 一律显式钉死在弹窗内的节点上，越界时**回环**而不是外逃。
+                            .focusProperties {
+                                up = confirmFocus
+                                down = resetFocus
+                            }
                             .onKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                                 when (event.key) {
@@ -868,7 +879,8 @@ private fun <T> KaraokeStepPickerDialog(
 
                 Spacer(Modifier.height(16.dp))
 
-                // 重置 + 确定按钮（越出弹窗的焦点由上面 Column 的 focusGroup + exit 兜住）
+                // 重置 + 确定按钮：上下左右全部钉在弹窗内（越界回环），
+                // 上面 Column 的 focusGroup + exit 只作后备
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -878,7 +890,14 @@ private fun <T> KaraokeStepPickerDialog(
                         onClick = { keepValueOnDismiss = true; onReset(); onDismiss() },
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp),
+                            .height(44.dp)
+                            .focusRequester(resetFocus)
+                            .focusProperties {
+                                up = focusRequester
+                                down = focusRequester
+                                left = confirmFocus
+                                right = confirmFocus
+                            },
                         shape = RoundedCornerShape(8.dp),
                         focusedScale = 1.05f,
                         animationDurationMs = 200,
@@ -898,7 +917,14 @@ private fun <T> KaraokeStepPickerDialog(
                         onClick = { commitAndClose() },
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp),
+                            .height(44.dp)
+                            .focusRequester(confirmFocus)
+                            .focusProperties {
+                                up = focusRequester
+                                down = focusRequester
+                                left = resetFocus
+                                right = resetFocus
+                            },
                         shape = RoundedCornerShape(8.dp),
                         focusedScale = 1.05f,
                         animationDurationMs = 200,

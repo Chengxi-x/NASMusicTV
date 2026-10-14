@@ -47,10 +47,15 @@ import kotlinx.coroutines.launch
  */
 class VocalSeparationViewModel(
     app: Application,
-    private val playerManager: PlayerManager
+    private val playerManager: PlayerManager,
+    /**
+     * 持久化依赖。默认取 `NasMusicApp` 的进程单例（生产路径一律如此）；
+     * 开成构造参数只为单测能注入**本 sandbox 独立实例** —— 单例的 DataStore 文件绑在
+     * 第一个创建它的 Robolectric sandbox 上，跨用例复用会让"等落盘"类断言时绿时红
+     * （与 `AppPreferences` 的 `internal constructor` 同一隔离口径，见其类注释）。
+     */
+    private val prefs: AppPreferences = (app as NasMusicApp).appPreferences
 ) : AndroidViewModel(app) {
-
-    private val prefs = (app as NasMusicApp).appPreferences
 
     /** 进入 K 歌/MTV 模式时启动遥控服务器的回调（由 MainViewModel 注入，避免跨域直连） */
     var onEnsureRemoteControlStarted: (() -> Unit)? = null
