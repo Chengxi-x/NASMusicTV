@@ -429,6 +429,33 @@
 > ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记。
 > `docs/` 根在本轮之后**入库的 Markdown = 3 篇**（`git ls-files docs | grep -E '^docs/[^/]+\.md$'` 实测：`technical-overview.md` 活文档、`conventions-adaptive-ui.md`、`visualizer-effects-list.md` 现役名册；**入库的原型 html = 0 份**）；另有另一在办会话新增、**尚未入库**的 `blackhole-*` / `e45-orbital-*` / `e47-snow-cedar-preview.html`，计数以实测为准，不在此定论。
 
+## 第十轮（2026-10-14，1 个）—— 已落地并打附注 tag `v2.38.10`，真机 7 步验收全过
+
+| 文档 | 判定依据 |
+|---|---|
+| `karaoke-picker-tv-focus-fix-plan.md` | ✅ **已落地**：所有者真机反馈的 K 歌页升降调 / 变速两处问题（「确定后遥控器再也选不中这两个按键」「调原调必须确定才生效、无法即时试听」），走方案 A + A4-①（`←`/`→` 换档即时试听、箭头降级为装饰）+ D2（preview 即时改状态、只有确定才落盘）+ D3（只改 K 歌页，MTV 页不动）。首轮真机 7 步里第 4 步红（`↑` 越出弹窗、`↓` 正常）⇒ 返工为「弹窗内三个节点逐方向显式钉 `up/down/left/right`」，同日复验 **7/7 通过**。随 **v2.38.10 / `versionCode 179`** 提交（`c850d35`）并打附注 tag。移动方式 = **`git mv`**，正文 §一～§7.3 **一字未删**，只在顶部加归档状态头 |
+
+**归档时仍未闭合的事项**（⛔ 逐条留痕，归档 ≠ 已解决）：
+
+1. ⏳ **高质量分离（Demucs）模式下 preview 是否即时可闻**未验证 —— 该路径走模型输出文件而非播放器
+   `setPitch` / `setSpeed`，本案真机第 3 步判的是快速模式。若反馈"高质量模式下调音没反应"即为它。
+2. ⚠️ **F-F 已被真机证伪**（API 22 创维 `9R54_G8S` 上 `AudioTrack.setPitch` 确实会变调）⇒ 不必另立 issue；
+   但该结论只在**这一台**老电视上证过，其他 API 22 机型未覆盖。
+
+> ⚠️ **归档 ≠ 权威转移**：本篇仍是本次修复的唯一方案依据，`app/src/**` 里 2 处 KDoc 引用
+> （`KaraokePickerTvFocusScanTest` / `VocalPitchSpeedPreviewCommitTest`）与 §10.232 都指向它。
+> ⛔ 尤其不要把 §7.1 那张钉位表"优化"回 `focusGroup + exit` —— 它已被真机证明只兜得住 DOWN；
+> 要替换必须先真机重跑 §5 第 4 步。
+>
+> 引用改写 **3 个文件 / 3 处 `docs/` 前缀文本**：2 个测试类 KDoc + `docs/technical-overview.md` §10.232。
+> ⛔ 死链自检：`git ls-files -z | xargs -0 grep -In "docs/karaoke-picker-tv-focus-fix-plan"` →
+> **只应剩本行这一条自指**（命令串本身），其余文件 **0 命中**（2026-10-14 实测）。
+> ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记；
+> 代码事实已在 `## [v2.38.10]` 段内（该段随 tag 冻结，后续缺陷只能开 `[v2.38.11]`）。
+> `docs/` 根在本轮之后**入库的 Markdown = 3 篇**（`technical-overview.md`、`conventions-adaptive-ui.md`、
+> `visualizer-effects-list.md`）；另有另一在办会话新增、**尚未入库**的 `blackhole-*` / `e45-orbital-*` /
+> `e47-*` 方案与原型，计数以 `git ls-files docs | grep -E '^docs/[^/]+\.md$'` 实测为准。
+
 ## 回滚
 
 归档为**纯移动**（`git mv`，历史保留），未删除任何内容。整体回滚：

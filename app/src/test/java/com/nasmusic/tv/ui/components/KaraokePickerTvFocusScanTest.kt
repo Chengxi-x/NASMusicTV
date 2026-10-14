@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * K 歌步进弹窗的 TV 焦点门禁（源码扫描）。
  *
- * 背景见 `docs/karaoke-picker-tv-focus-fix-plan.md`：所有者真机反馈
+ * 背景见 `docs/archive/karaoke-picker-tv-focus-fix-plan.md`：所有者真机反馈
  * 「升降调/变速确定后遥控器再也选不中这两个按键」「调原调必须确定才生效，没法即时试听」。
  * 决策 D1（左右换档 + 箭头降级）与 D2（preview 即时、commit 才落盘）的落地形态全靠
  * Compose 焦点系统行为，**Robolectric 测不到 D-Pad**（全树无 `createComposeRule` 依赖），

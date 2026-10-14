@@ -23,7 +23,7 @@ import org.robolectric.annotation.Config
 
 /**
  * K 歌升降调 / 变速的 preview 与 commit 分工（决策 D2，见
- * `docs/karaoke-picker-tv-focus-fix-plan.md` §3-A3）。
+ * `docs/archive/karaoke-picker-tv-focus-fix-plan.md` §3-A3）。
  *
  * 所有者反馈「调原调必须确定后才能生效，无法及时预览」——修复是步进弹窗每换一档就调
  * [VocalSeparationViewModel.previewPitch] / [previewSpeed]（即时改播放器 + 页面状态、
