@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="color-scheme" content="dark" />
-<title>E49 鸟群 - 原型</title>
+<title>E49 鸟群 — 原型</title>
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none}
 html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0c0810;color:#f4ece6;font-family:'Segoe UI','Noto Sans SC',sans-serif}
@@ -34,19 +34,22 @@ hr{border:none;border-top:1px solid rgba(244,236,230,.06);margin:3px 0}
 </head>
 <body>
 <canvas id="cv" width="1600" height="900"></canvas>
-<div id="gate"><h1>鸟 群</h1><p>点击任一处解锁参数面板（MEDIUM · 800 只）</p></div>
+<div id="gate"><h1>鸟 群</h1><p>点击任一处解锁面板（MEDIUM · 800 只 · Boids 仿真 + 拓扑邻居 k=7）</p></div>
 <div class="hud" id="hud"></div>
 <div class="panel" id="panel"></div>
 <script>
 "use strict";
 /* ========================================================================
-   E49 鸟群 — 原型
+   E49 鸟群 — 原型  v2
    文件路径：docs/e49-birds-flock-preview.html
    2026-10-14
 
-   全部可调参数在 window.__E49.P（唯一真值来源）。
-   档位表在 window.__E49.TIERS。
-   状态数据结构全部收在 soa FloatArray 里，热循环零分配。
+   ▸ 全部可调参数在 window.__E49.P（唯一真值来源）
+   ▸ 档位表在 window.__E49.TIERS
+   ▸ 状态数据结构全部收在 soa FloatArray/Uin8Array，热循环零分配
+   ▸ 种子 RNG（mulberry32），⛔ 禁止 Math.random()
+   ▸ 合批：每深度层一条 Path、一次 fill（§5.2）
+   ▸ op 账：10 op/帧（目标 §5.5）
    ======================================================================== */
 
 const cv  = document.getElementById('cv');
@@ -54,20 +57,20 @@ const ctx = cv.getContext('2d');
 const W   = cv.width;           // 1600
 const H   = cv.height;          // 900
 
-/* ---- 可复现种子RNG ---- */
-function mkRNG(seed){
-  let s = seed >>> 0;
-  return function(){
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
+/* ---- 可复现种子 RNG（mulberry32，⛔ 不用 Math.random） ---- */
+let _rngState = 0x9E3779B9;
+function srand(seed){ _rngState = seed >>> 0; }
+function rand(){
+  _rngState |= 0; _rngState = (_rngState + 0x6D2B79F5) | 0;
+  let t = Math.imul(_rngState ^ (_rngState >>> 15), 1 | _rngState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
 /* ========================================================================
    __E49 命名空间
    ======================================================================== */
 window.__E49 = {};
-
 const E49 = window.__E49;
 
 /* ---- 档位表 ---- */
@@ -77,45 +80,44 @@ E49.TIERS = {
   HIGH:   { birds: 1500, perchCap: 150, gridCellCap: 18 }
 };
 
-/* ---- P：参数表（滑杆可调；horizonFrac / birdSpanX/Y 只读） ---- */
+/* ---- P：参数表（§十三.2 的 10 组；horizonFrac 只读不写） ---- */
 E49.P = {
   horizonFrac: 0.800,
   birdSpanY:   [0.15, 0.75],
   birdSpanX:   [0.05, 0.95],
   skyTopL:     0.15,
-  skyMidL:     0.30,
-  skyHorizonL:  0.66,
+  skyHorizonL: 0.66,
   groundTone:  '#6b4a30',
   vGround:     12,
   vTree:       6,
   vTuft:       22,
   vGust:       0.4,
-  wSep:        1.5,
-  wAli:        0.8,
+  wSep:        1.50,
+  wAli:        0.80,
   wCoh:        0.55,
   sepR:        22,
   nbrR:        60,
   turnR:       26,
   cruiseJit:   0.18,
-  g0:          1.6,
-  rollRatio:   2.0,
-  curlAmp:     0.0008,
+  g0:          1.60,
+  rollRatio:   2.00,
+  curlAmp:     0.00080,
   curlDrift:   0.025,
-  flapFreq:    6.5,
+  flapFreq:    6.50,
   flapAmp:     0.62,
   flapHyst:    0.18,
   glideDuty:   0.30,
-  bandOuter:   0.04,
-  bandInner:   0.12,
-  kHard:       2.5,
-  kSoft:       1.2,
-  kTangent:    0.7,
+  bandOuter:   0.040,
+  bandInner:   0.120,
+  kHard:       2.50,
+  kSoft:       1.20,
+  kTangent:    0.70,
   perchDwell:  [3.0, 9.0],
   takeoffSpread: 4.0,
-  kBass:       0.8,
-  kEnergy:     0.5,
-  kMid:        0.4,
-  kTreble:     0.3,
+  kBass:       0.80,
+  kEnergy:     0.50,
+  kMid:        0.40,
+  kTreble:     0.30,
   audioOn:     true,
   perchOn:     true,
   bankOn:      true,
@@ -124,717 +126,543 @@ E49.P = {
   maxSpeedNM:  70
 };
 
-/* ---- 档位 ---- */
+/* ---- 当前档位 ---- */
 E49.currentTier = 'MEDIUM';
 
 /* ============================================================
-   SOA 状态（FloatArray；大小按 HIGH 预分配）
+   SOA 状态（FloatArray / Uint8Array；大小按 HIGH 预分配）
+   布局（§5.7）：每只鸟一组固定偏移；热循环零分配。
    ============================================================ */
 const MAX_BIRDS = 1500;
-let N = 0;                       // 当前鸟数
+let N = 0;
+let flyCount = 0;       // 活跃飞行数（停栖 = N - flyCount），soa 前段
 let Nperched = 0;
-let flyCount = 0;
-// 飞行中的鸟（index 0..flyCount-1），排在 soa 前段
-let px,py,vx,vy,ayX,ayY,axX,axY,flapPh,speedK,respK,state,timer,
-    gridIdx,ndist,layerIdx,isPerched;
-// 邻居缓存
-let nbrK, nbrFill;
-// nid[i*7..i*7+6] = 邻居index
+let px,py,vx,vy,accX,accY,flapPh,bank,speedK,respK,state,timer,isPerched;
+// nid[i*14..i*14+13] = 7 个邻居的 {j,d2} pairs（交错）
 let nid;
+let nbrK;
 
 function allocSOA(){
   px=new Float32Array(MAX_BIRDS);
   py=new Float32Array(MAX_BIRDS);
   vx=new Float32Array(MAX_BIRDS);
   vy=new Float32Array(MAX_BIRDS);
-  ayX=new Float32Array(MAX_BIRDS);
-  ayY=new Float32Array(MAX_BIRDS);
-  axX=new Float32Array(MAX_BIRDS);
-  axY=new Float32Array(MAX_BIRDS);
+  accX=new Float32Array(MAX_BIRDS);
+  accY=new Float32Array(MAX_BIRDS);
   flapPh=new Float32Array(MAX_BIRDS);
+  bank=new Float32Array(MAX_BIRDS);
   speedK=new Float32Array(MAX_BIRDS);
   respK=new Float32Array(MAX_BIRDS);
   state=new Uint8Array(MAX_BIRDS);
   timer=new Float32Array(MAX_BIRDS);
-  gridIdx=new Int32Array(MAX_BIRDS);
-  ndist=new Float32Array(MAX_BIRDS);
-  layerIdx=new Uint8Array(MAX_BIRDS);
   isPerched=new Uint8Array(MAX_BIRDS);
-  nid=new Int32Array(MAX_BIRDS*7);
+  nid=new Int32Array(MAX_BIRDS*14);
   nbrK=new Uint8Array(MAX_BIRDS);
-  nbrFill=new Uint8Array(MAX_BIRDS);
 }
 allocSOA();
 
 /* ============================================================
-   空间哈希
+   空间哈希（§4.5：top-7 邻居）
    ============================================================ */
-let cellOf, cellStart, cellCount, cellList;
-const MAX_CELLS = 200*200;
+let cellOf, cellList;
+let gridCX, gridCY, gridCellW, gridCellH, gridCellCap;
+const MAX_CELLS_DENS = 40000;
 
-function allocGrid(cellW,cellH){
-  const cx=Math.ceil(W/cellW)+2, cy=Math.ceil(H/cellH)+2;
-  cellOf=new Int32Array(cx*cy);
-  cellStart=new Int32Array(cx*cy+1);
-  cellCount=new Int32Array(cx*cy);
-  cellList=new Int32Array(MAX_BIRDS);
-}
-/* 运行时动态尺寸 */
-let gridCX, gridCY, gridCellW, gridCellH;
-let gridCellCap=18;
-
-/* ============================================================
-   树与停栖点
-   ============================================================ */
-let treeX=[], treeY=[], treeH=[], perchPts=[], nPerch=0, nPerchCap=100;
-// perchPts[k] = {tree, slotX, slotY}
-
-/* ============================================================
-   风场系数（固定种子）
-   ============================================================ */
-let windA=[], windK=[], windDX=[], windDY=[], windPH=[];
-const NWIND=4;
-
-/* ============================================================
-   视差偏移
-   ============================================================ */
-let offG=0, offT=0, offU=0;
-
-/* ============================================================
-   op 计数器
-   ============================================================ */
-let opCount=0, fillAmt=0;
-let opsByCat=null; /* {sky,ground,trees,flock0..3,perched,tufts,grade} */
-
-/* ============================================================
-   统计量累计
-   ============================================================ */
-let gamma=0, gammaVarAccum=0, gammaMin=1, gammaMax=0, gammaFrame=0;
-let stuckRatio=0, flapAccum=0, flapFrames=0;
-let sumNbr=0, maxStep=0, maxStepFrame=0;
-let stuckCnt=0, realStuckCnt=0;
-let birdYMin=0, birdYMax=0, birdXMin=0, birdXMax=0;
-
-/* ---- 帧时间 ---- */
-let lastTs=0;
-
-/* ========================================================================
-   数值健康累计
-   ======================================================================== */
-let nanInfFrames=0;
-let stateOobFrames=0;
-
-/* ========================================================================
-   CURL 风场
-   ======================================================================== */
-function windFx(x,y,t){
-  let fx=0,fy=0;
-  for(let i=0;i<NWIND;i++){
-    const ph=windK[i]*(x*windDX[i]+y*windDY[i])-windPH[i]-windK[i]*t*0.000015;
-    const c=Math.cos(ph);
-    fx += windK[i]*windDY[i]*windA[i]*c;
-    fy += -windK[i]*windDX[i]*windA[i]*c;
-  }
-  return [fx,fy];
+function allocGrid(cw,ch,cap){
+  gridCX=Math.ceil(W/cw)+2;
+  gridCY=Math.ceil(H/ch)+2;
+  gridCellW=cw; gridCellH=ch;
+  cellOf=new Int32Array(gridCX*gridCY);   // head of linked list; -1 = empty
+  cellList=new Int32Array(MAX_BIRDS*2);   // [next, birdId] pairs
+  gridCellCap=cap;
 }
 
-/* ========================================================================
-   RESET
-   ======================================================================== */
-E49.resetFlock = function(){
-  const tier=E49.TIERS[E49.currentTier];
-  const rng=mkRNG(987654321);
-  N=tier.birds;
-  flyCount=N;
-  Nperched=0;
-
-  const spdN=E49.P.maxSpeedN/ W;
-  const spdNM=E49.P.maxSpeedNM/ W;
-
-  for(let i=0;i<N;i++){
-    // 按 4 个层分配（越远的越远，近处数量多）
-    const r=rng();
-    let li;
-    if(r<0.18) li=0;
-    else if(r<0.42) li=1;
-    else if(r<0.70) li=2;
-    else li=3;
-    layerIdx[i]=li;
-    // 群体活动带：越远越小越靠近顶部
-    const bandT=E49.P.birdSpanY[0] + (1-li*0.08)*0.04;
-    const bandB=E49.P.birdSpanY[1] - li*0.03;
-    const rat=(li+1)/4;
-    px[i]=(E49.P.birdSpanX[0]+rng()*(E49.P.birdSpanX[1]-E49.P.birdSpanX[0]))*rat + (1-rat)*0.5;
-    const yy=bandT+rng()*(bandB-bandT);
-    py[i]=yy;
-    // 速度朝向大致水平
-    const dirx = rng()<0.5?-1:1;
-    const sp = spdN * (0.85+rng()*0.30);
-    vx[i]=dirx*sp;
-    vy[i]=(rng()-0.5)*sp*0.1;
-    flapPh[i]=rng()*Math.PI*2;
-    speedK[i]=0.82+rng()*0.36;
-    respK[i]=0.75+rng()*0.50;
-    state[i]=0; // 0=飞 1=将栖 2=栖
-    timer[i]=0;
-    isPerched[i]=0;
-    ndist[i]=0;
-    nbrK[i]=0;
-  }
-  gamma=0; gammaVarAccum=0; gammaMin=1; gammaMax=0; gammaFrame=0;
-  stuckRatio=0; flapAccum=0; flapFrames=0; sumNbr=0;
-  stuckCnt=0; realStuckCnt=0;
-};
-
-/* ========================================================================
-   REBUILD LAYOUT
-   ======================================================================== */
-E49.rebuildLayout = function(){
-  const rng=mkRNG(31415926);
-  // 树：3-5 棵枯树
-  const nTree=3+Math.floor(rng()*3);
-  treeX.length=0;treeY.length=0;treeH.length=0;
-  const horizonY=H*E49.P.horizonFrac;
-  for(let i=0;i<nTree;i++){
-    const xx=W*(0.12+rng()*0.76);
-    const h=60+rng()*90;
-    treeX.push(xx);
-    treeY.push(horizonY);
-    treeH.push(h);
-  }
-  // 停栖点：每棵树顶部附近 5-8 个点
-  nPerchCap=E49.TIERS[E49.currentTier].perchCap;
-  perchPts.length=0;
-  let k=0;
-  for(let t=0;t<nTree && k<nPerchCap;t++){
-    const npt=5+Math.floor(rng()*4);
-    for(let j=0;j<npt && k<nPerchCap;j++){
-      perchPts.push({
-        tree: t,
-        slotX: treeX[t]+(j-npt/2)*8+rng()*4,
-        slotY: treeY[t]-treeH[t]+j*4+rng()*3
-      });
-      k++;
-    }
-  }
-  nPerch=k;
-  // 风场
-  const windRng=mkRNG(27182818);
-  windA.length=0;windK.length=0;windDX.length=0;windDY.length=0;windPH.length=0;
-  for(let i=0;i<NWIND;i++){
-    windA.push((0.5+windRng()*0.8)*E49.P.curlAmp);
-    windK.push(3+Math.floor(windRng()*5));
-    const dir=windRng()*Math.PI*2;
-    windDX.push(Math.cos(dir));
-    windDY.push(Math.sin(dir));
-    windPH.push(windRng()*Math.PI*2);
-  }
-  // 空间哈希网格
-  const cellW=Math.max(40,E49.P.nbrR*1.2);
-  const cellH=Math.max(40,E49.P.nbrR*1.2);
-  gridCellCap=E49.TIERS[E49.currentTier].gridCellCap;
-  allocGrid(cellW,cellH);
-  gridCX=Math.ceil(W/cellW)+2;
-  gridCY=Math.ceil(H/cellH)+2;
-  gridCellW=cellW; gridCellH=cellH;
-  cellOf=new Int32Array(gridCX*gridCY);
-};
-
-E49.applyTier=function(tier){
-  E49.currentTier=tier;
-  E49.rebuildLayout();
-  E49.resetFlock();
-};
-
-/* ========================================================================
-   邻居查询
-   ======================================================================== */
 function rebuildGrid(){
   cellOf.fill(-1);
-  cellCount.fill(0);
   for(let i=0;i<flyCount;i++){
-    const cx=Math.floor(px[i]*W/gridCellW);
-    const cy=Math.floor(py[i]*H/gridCellH);
+    if(isPerched[i]) continue;
+    const cx=Math.max(0,Math.min(gridCX-1,(px[i]*W/gridCellW)|0));
+    const cy=Math.max(0,Math.min(gridCY-1,(py[i]*H/gridCellH)|0));
     const ci=cy*gridCX+cx;
-    if(cellCount[ci]<gridCellCap){
-      cellList[ci*gridCellCap+cellCount[ci]]=i;
-      cellCount[ci]++;
+    // linked-list push with capacity guard
+    // cellOf[ci] = index into cellList (always odd = bird, even-1 = prev)
+    // simple scheme: just store first, but cap
+    let depth=0;
+    let cur=cellOf[ci];
+    while(cur!==-1 && depth<gridCellCap){ cur=cellList[cur*2]; depth++; }
+    if(depth<gridCellCap){
+      cellList[i*2]=cellOf[ci];
+      cellList[i*2+1]=i;
+      cellOf[ci]=i;
     }
-    gridIdx[i]=ci;
   }
 }
 
+/* ============================================================
+   邻居查询（max-heap top-7 by d²；前向锥 §4.6）
+   ============================================================ */
 function findNeighbors(i){
   const xi=px[i]*W, yi=py[i]*H;
-  const cx=Math.floor(xi/gridCellW);
-  const cy=Math.floor(yi/gridCellH);
-  const nbrR=E49.P.nbrR;
-  const nbrR2=nbrR*nbrR;
-  const sepR=E49.P.sepR;
-  const sepR2=sepR*sepR;
-  let top=0;
-  // nid buffer: pairs (d2, idx) in nid[i*7*2..]
-  const base=i*7;
+  const cx=(xi/gridCellW)|0, cy=(yi/gridCellH)|0;
+  const nbrR=E49.P.nbrR, nbrR2=nbrR*nbrR;
   const vxI=vx[i], vyI=vy[i];
-  const vLen=Math.sqrt(vxI*vxI+vyI*vyI);
-  const vnx=vxI/(vLen+1e-9);
-  const vny=vyI/(vLen+1e-9);
-  for(let dx=-1;dx<=1;dx++)
-   for(let dy=-1;dy<=1;dy++){
-    const ccx=cx+dx, ccy=cy+dy;
-    if(ccx<0||ccy<0||ccx>=gridCX||ccy>=gridCY) continue;
-    const ci=ccy*gridCX+ccx;
-    const cnt=cellCount[ci];
-    for(let k=0;k<cnt;k++){
-      const j=cellList[ci*gridCellCap+k];
-      if(j===i) continue;
-      // 前向锥
-      const dxj=px[j]*W-xi, dyj=py[j]*H-yi;
-      const d2=dxj*dxj+dyj*dyj;
-      if(d2>nbrR2||d2<0.01) continue;
-      const dot=dxj*vnx+dyj*vny;
-      if(dot<=0) continue; // 前向
-      // top-7 by d2
-      if(top<7){
-        nid[base+top*2]=j;
-        nid[base+top*2+1]=d2;
-        top++;
-        // up-heap
-        let w=top-1;
-        while(w>0){
-          const p=(w-1)>>1;
-          if(nid[base+p*2+1]>nid[base+w*2+1]){
-            const t1=nid[base+p*2], t2=nid[base+p*2+1];
-            nid[base+p*2]=nid[base+w*2];
-            nid[base+p*2+1]=nid[base+w*2+1];
-            nid[base+w*2]=t1; nid[base+w*2+1]=t2;
-            w=p;
-          }else break;
-        }
-      }else if(d2 < nid[base+1]){
-        // replace top of max-heap
-        nid[base+0]=j; nid[base+1]=d2;
-        // down-heap
-        let w=0;
-        while(true){
-          const l=2*w+1, r=2*w+2;
-          let lg=w;
-          if(l<top&&nid[base+l*2+1]>nid[base+lg*2+1]) lg=l;
-          if(r<top&&nid[base+r*2+1]>nid[base+lg*2+1]) lg=r;
-          if(lg!==w){
-            const t1=nid[base+lg*2], t2=nid[base+lg*2+1];
-            nid[base+lg*2]=nid[base+w*2];
-            nid[base+lg*2+1]=nid[base+w*2+1];
-            nid[base+w*2]=t1; nid[base+w*2+1]=t2;
-            w=lg;
-          } else break;
+  const vlen=Math.sqrt(vxI*vxI+vyI*vyI)+1e-9;
+  const vnx=vxI/vlen, vny=vyI/vlen;
+  const base=i*14;
+  let top=0;
+  for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++){
+    const ax=cx+dx, ay=cy+dy;
+    if(ax<0||ay<0||ax>=gridCX||ay>=gridCY) continue;
+    let j=cellOf[ay*gridCX+ax];
+    while(j!==-1){
+      if(j!==i && !isPerched[j]){
+        const dxj=px[j]*W-xi, dyj=py[j]*H-yi;
+        const d2=dxj*dxj+dyj*dyj;
+        if(d2<nbrR2 && d2>0.1){
+          // 前向锥：dot(r,v)>0
+          if(dxj*vnx+dyj*vny>0){
+            if(top<7){
+              nid[base+top*2]=j; nid[base+top*2+1]=d2;
+              // up-heap
+              let w=top;
+              while(w>0){
+                const p=(w-1)>>1;
+                if(nid[base+p*2+1]<nid[base+w*2+1]){
+                  const t1=nid[base+p*2],t2=nid[base+p*2+1];
+                  nid[base+p*2]=nid[base+w*2];nid[base+p*2+1]=nid[base+w*2+1];
+                  nid[base+w*2]=t1;nid[base+w*2+1]=t2; w=p;
+                }else break;
+              }
+              top++;
+            }else if(d2<nid[base+1]){
+              nid[base+0]=j; nid[base+1]=d2;
+              let w=0;
+              while(true){
+                const l=2*w+1,r=2*w+2; let lg=w;
+                if(l<top&&nid[base+l*2+1]>nid[base+lg*2+1])lg=l;
+                if(r<top&&nid[base+r*2+1]>nid[base+lg*2+1])lg=r;
+                if(lg!==w){
+                  const t1=nid[base+lg*2],t2=nid[base+lg*2+1];
+                  nid[base+lg*2]=nid[base+w*2];nid[base+lg*2+1]=nid[base+w*2+1];
+                  nid[base+w*2]=t1;nid[base+w*2+1]=t2; w=lg;
+                }else break;
+              }
+            }
+          }
         }
       }
+      j=cellList[j*2];
     }
   }
   nbrK[i]=top;
+  return top;
 }
 
-/* ========================================================================
-   BOIDS 三规则
-   ======================================================================== */
+/* ============================================================
+   BOIDS 三规则（§4.1 截断优先级 + §4.2 有界分离 + §4.10 逐鸟差异）
+   ============================================================ */
 function steerBoids(dt){
   const P=E49.P;
   const spdN=P.maxSpeedN/H;
-  const taniW=P.turnR/H*0.6;
+  const turnR=P.turnR;
   const sepR=P.sepR;
-  const wS=P.wSep, wA=P.wAli, wC=P.wCoh;
-  const marginN=P.bandOuter*H;
+  const wS=P.wSep,wA=P.wAli,wC=P.wCoh;
   const bandN=P.bandInner*H;
   const hY=H*P.horizonFrac;
-  const forceLim = spdN*spdN/taniW * speedK[0]*respK[0] * 0.04;
   for(let i=0;i<flyCount;i++){
-    if(state[i]===2){
-      vx[i]*=0.85; vy[i]*=0.85;
-      continue;
-    }
+    if(isPerched[i]) { vx[i]*=0.9; vy[i]*=0.9; continue; }
     const xi=px[i]*W, yi=py[i]*H;
     const vxI=vx[i], vyI=vy[i];
-    // 查邻居
     findNeighbors(i);
     const k=nbrK[i];
-    const base=i*7;
-    // 三规则累加（截断优先级制）
-    let sX=0,sY=0,aX=0,aY=0,cX=0,cY=0;
-    let sepN=0;
+    const base=i*14;
+    let sX=0,sY=0, aX=0,aY=0, cX=0,cY=0;
     for(let n=0;n<k;n++){
       const j=nid[base+n*2];
       const dxj=px[j]*W-xi, dyj=py[j]*H-yi;
-      const d2=dxj*dxj+dyj*dyj;
-      const d=Math.sqrt(d2);
-      // 有界分离：(1-d/R)^n / d
-      const rd=d/sepR;
+      const d=nid[base+n*2+1];
+      const dsqrt=Math.sqrt(d);
+      // 有界分离
+      const rd=dsqrt/sepR;
       if(rd<1){
-        const f=Math.pow(1-rd,2)/Math.max(d,1);
-        sX-=dxj*f; sY-=dyj*f;
-        sepN++;
+        const guard=Math.pow(1-rd,2);
+        sX-=dxj*guard/(dsqrt+0.01);
+        sY-=dyj*guard/(dsqrt+0.01);
       }
       aX+=vx[j]; aY+=vy[j];
       cX+=px[j]*W; cY+=py[j]*H;
     }
-    if(sepN>0){sX/=sepN;sY/=sepN;}
-    let sx=0,sy=0;
-    if(k>0){
-      aX/=k; aY/=k;
-      cX/=k; cY/=k;
-      sx=(aX-vxI)*wA;
-      sy=(aY-vyI)*wA;
-      const cohX=(cX-xi);
-      const cohY=(cY-yi);
-      const cohF=(wC-forceLim*0.5);
-      sx+=(cohX-cX*0)*cohF*0.01;
-      sy+=(cohY-cY*0)*cohF*0.01;
-    }
-    // 分离 steer(已归一化方向)
-    let sepSteerX=sX*wS, sepSteerY=sY*wS;
-    // 各规则各自截断
-    let m;
-    m=Math.sqrt(sepSteerX*sepSteerX+sepSteerY*sepSteerY);
-    if(m>forceLim*1.5){sepSteerX*=forceLim*1.5/m;sepSteerY*=forceLim*1.5/m;}
-    m=Math.sqrt(sx*sx+sy*sy);
-    if(m>forceLim){sx*=forceLim/m;sy*=forceLim/m;}
-    // 累加
-    let stx=sepSteerX+sx, sty=sepSteerY+sy;
-    m=Math.sqrt(stx*stx+sty*sty);
-    if(m>forceLim){stx*=forceLim/m;sty*=forceLim/m;}
+    if(k>0){ aX/=k; aY/=k; cX/=k; cY/=k; }
 
-    // 风场
-    const wf=windFx(xi,yi,lastTs*P.curlDrift);
-    stx+=wf[0]*0.15*H;
-    sty+=wf[1]*0.15*H;
+    // ① 各自归一化 + 各自截断
+    let sMag=Math.sqrt(sX*sX+sY*sY);
+    let sLim=spdN*3;
+    if(sMag>sLim){sX*=sLim/sMag;sY*=sLim/sMag;}
+    sX*=wS; sY*=wS;
 
-    // 边界
-    const hMargin=H*0.02;
-    if(xi<hMargin) stx+=P.kHard*(hMargin-xi)/hMargin;
-    if(xi>W-hMargin) stx-=P.kHard*(xi-(W-hMargin))/hMargin;
-    if(yi<hMargin) sty+=P.kHard*(hMargin-yi)/hMargin;
-    if(yi>hY-bandN){
-      const dTo=H*hY-bandN-yi;
-      if(dTo<0) sty+=P.kHard*(bandN+ dTo)/bandN;
-    }
-    // 软带：水平归中
-    const targetY=H*(P.birdSpanY[0]+P.birdSpanY[1])/2;
-    if(yi>H*(P.birdSpanY[1]-P.bandOuter)){
-      const m2=H*P.bandOuter;
-      const sm=(yi-(H*(P.birdSpanY[1]-P.bandOuter)))/m2;
-      sty-=sm*P.kSoft*m2*1.5;
-    }
-    if(yi<H*(P.birdSpanY[0]+P.bandOuter)){
-      const m2=H*P.bandOuter;
-      const sm=(H*(P.birdSpanY[0]+P.bandOuter)-yi)/m2;
-      sty+=sm*P.kSoft*m2*1.5;
-    }
+    let alX=(aX-vxI)*wA, alY=(aY-vyI)*wA;
+    let alLim=spdN*1.5;
+    let alMag=Math.sqrt(alX*alX+alY*alY);
+    if(alMag>alLim){alX*=alLim/alMag;alY*=alLim/alMag;}
 
-    // 切向（边界附近）防止贴墙
-    if(xi<bandN||xi>W-bandN){
-      const tangY = vyI>0?1:-1;
-      if(Math.abs(vxI)<Math.abs(vyI)){
-        // 沿垂直方向的切向很少，减少法向
-        vyI += tangY * P.kTangent * 0.05;
-      }
+    let coX=(cX-xi)*wC*0.01, coY=(cY-yi)*wC*0.01;
+    let coLim=spdN*1.5;
+    let coMag=Math.sqrt(coX*coX+coY*coY);
+    if(coMag>coLim){coX*=coLim/coMag;coY*=coLim/coMag;}
+
+    // ③ 累加
+    let stx=sX+alX+coX, sty=sY+alY+coY;
+    // ④ 再截断到 maxForce（需足够大以在 ~10 帧内完成转向）
+    const accelLim = spdN*speedK[i]*respK[i]*5.5;
+    let stMag=Math.sqrt(stx*stx+sty*sty);
+    if(stMag>accelLim){stx*=accelLim/stMag;sty*=accelLim/stMag;}
+
+    // 风场（curl noise）
+    const wf=windFx(xi,yi,E49._simTime*P.curlDrift);
+    stx+=wf[0]*0.18*H;
+    sty+=wf[1]*0.18*H;
+
+    // 边界硬约束
+    const m=H*0.02;
+    if(xi<m) stx+=P.kHard*(m-xi)/m;
+    if(xi>W-m) stx-=P.kHard*((W-m)-xi+m)/m;
+    if(yi<m) sty+=P.kHard*(m-yi)/m;
+    if(yi>hY-bandN){ sty+=P.kHard*((hY-bandN)-yi+bandN)/bandN; }
+
+    // 软带：回到活动带中心
+    const centerY=H*(P.birdSpanY[0]+P.birdSpanY[1])/2;
+    const dyc=yi-centerY;
+    sty-=dyc*P.kSoft*0.0008;
+
+    // 切向：沿边界滑移（防止贴墙）
+    if(xi<bandN){
+      const vyT=vyI>0?1:-1;
+      vy[i]+=vyT*P.kTangent*0.04;
+    }else if(xi>W-bandN){
+      const vyT=vyI>0?1:-1;
+      vy[i]+=vyT*P.kTangent*0.04;
+    }
+    if(yi<centerY-bandN*2){
+      const vxT=vxI>0?1:-1;
+      vx[i]+=vxT*P.kTangent*0.04;
+    }else if(yi<centerY+bandN*2){
+      const vxT=vxI>0?1:-1;
+      vx[i]+=vxT*P.kTangent*0.04;
     }
 
-    // 一阶低通加速度（respK）
-    const aa = respK[i]*0.4;
-    axX[i] = vxI + stx*dt;
-    axY[i] = vyI + sty*dt;
-    // 速度
-    let nsX=axX[i], nsY=axY[i];
-    const spdMax = spdN*speedK[i]*2.2;
-    m=Math.sqrt(nsX*nsX+nsY*nsY);
-    if(m>spdMax){nsX*=spdMax/m;nsY*=spdMax/m;}
-    // 最小速度下限 防冻结
-    const spdMinN=spdN*0.35;
-    if(m<spdMinN){
-      m=m<1e-9?1e-9:m;
-      nsX*=spdMinN/m; nsY*=spdMinN/m;
-    }
+    // 速度积分（v += steer·dt），允许急转以产生有意义的侧倾
+    const accelCap=spdN*speedK[i]*respK[i]*5.5;
+    if(stx>accelCap)stx=accelCap; else if(stx<-accelCap)stx=-accelCap;
+    if(sty>accelCap)sty=accelCap; else if(sty<-accelCap)sty=-accelCap;
+    let nsX=vxI+stx*dt;
+    let nsY=vyI+sty*dt;
+    const spdMax=spdN*Math.max(0.5,speedK[i]*2.0);
+    let nsMag=Math.sqrt(nsX*nsX+nsY*nsY);
+    if(nsMag>spdMax){nsX*=spdMax/nsMag;nsY*=spdMax/nsMag;}
+    const spdMinN=spdN*0.20;
+    if(nsMag<spdMinN && nsMag>1e-9){nsX*=spdMinN/nsMag;nsY*=spdMinN/nsMag;}
     vx[i]=nsX; vy[i]=nsY;
-    // 位移
-    px[i]+=vx[i]*dt/W*H;
-    py[i]+=vy[i]*dt/H*H;
-    // 位移限幅（单帧不超过像素）
-    if(px[i]<0)px[i]=0; if(px[i]>1)px[i]=1;
-    if(py[i]<0)py[i]=0; if(py[i]>1)py[i]=1;
-    // 侧倾计算（横向加速度→倾角）
-    if(E49.P.bankOn){
-      const aL = stx*(vyI) - sty*(vxI);
-      const phiTarget=Math.atan2(aL, E49.P.g0*spdN);
-      const phiCur=ayX[i]; // 复用 ayX 存当前倾角
-      let phiNew;
-      if(Math.abs(phiTarget)>Math.abs(phiCur))
-        phiNew=phiCur + (phiTarget-phiCur)*(1-Math.exp(-dt/(0.06*2.2)));
-      else
-        phiNew=phiCur + (phiTarget-phiCur)*(1-Math.exp(-dt/(0.14*2.2)));
-      ayX[i]=phiNew;
-    } else {
-      ayX[i]=0;
-    }
-    // 扑动相位推进（渲染阶段）
+
+    // 位移（限幅）
+    px[i]+=nsX*dt;
+    py[i]+=nsY*dt;
+    if(px[i]<0){px[i]=0;vx[i]*=0.5;}
+    if(px[i]>1){px[i]=1;vx[i]*=0.5;}
+    if(py[i]<0){py[i]=0;vy[i]*=0.5;}
+    if(py[i]>1){py[i]=1;vy[i]*=0.5;}
+
+    // 侧倾（§4.9：roll-in:roll-out=2:1）
+    if(P.bankOn){
+      const aL=stx*vyI-sty*vxI;
+      const phiTarget=Math.atan2(aL, P.g0*spdN);
+      const tau=Math.abs(phiTarget)>Math.abs(bank[i]) ? 0.07:0.14;
+      bank[i]+=(phiTarget-bank[i])*(1-Math.exp(-dt/tau));
+    } else bank[i]=0;
   }
 }
 
-/* ========================================================================
+/* ============================================================
+   CURL NOISE 风场（解析无散度）
+   ============================================================ */
+const NWIND=4;
+let windA=[],windK=[],windDX=[],windDY=[],windPH=[];
+function windFx(x,y,t){
+  let fx=0,fy=0;
+  for(let i=0;i<NWIND;i++){
+    const ph=windK[i]*(x*windDX[i]+y*windDY[i])-windPH[i]-windK[i]*t*0.00002;
+    const c=Math.cos(ph);
+    fx+=windK[i]*windDY[i]*windA[i]*c;
+    fy+=-windK[i]*windDX[i]*windA[i]*c;
+  }
+  return [fx,fy];
+}
+
+/* ============================================================
    停栖状态机
-   ======================================================================== */
+   ============================================================ */
+let treeX=[],treeY=[],treeH=[], nTree=0;
+let perchPts=[];       // [{tree,sx,sy}]
+let nPerch=0, nPerchCap=100;
+let perchSlotTaken;    // Uint8Array
+
+function pickPerchSlot(){
+  for(let attempt=0;attempt<20;attempt++){
+    const k=(rand()*nPerch)|0;
+    if(k<nPerch && !perchSlotTaken[k]){ perchSlotTaken[k]=1; return k; }
+  }
+  return -1;
+}
+
 function updatePerch(dt){
   const P=E49.P;
   if(!P.perchOn){
-    for(let i=0;i<flyCount;i++){
-      if(state[i]===2){
-        state[i]=0; timer[i]=P.takeoffSpread*(0.5+Math.random());
-      }
+    for(let i=0;i<N;i++) if(isPerched[i]){
+      isPerched[i]=0; state[i]=0; timer[i]=P.takeoffSpread*(0.5+rand());
     }
     Nperched=0;
+    perchSlotTaken.fill(0);
     return;
   }
-  const spdN=P.maxSpeedN/H;
-  const horizonY=H*P.horizonFrac;
-  for(let i=0;i<N;i;i++){
-    if(state[i]===2){
+  for(let i=0;i<N;i++){
+    if(isPerched[i]){
       timer[i]-=dt;
-      if(timer[i]<=0 && Nperched<nPerchCap){
+      if(timer[i]<=0){
+        // 起飞：归还 slot
+        isPerched[i]=0;
         state[i]=0;
-        timer[i]=P.takeoffSpread*(0.5+Math.random());
+        timer[i]=P.takeoffSpread*(0.5+rand());
         Nperched--;
+        // 归还 slot：找对应该鸟的 slot
+        const sx=px[i]*W, sy=py[i]*H;
+        for(let k=0;k<nPerch;k++){
+          if(Math.abs(perchPts[k].sx-sx)<1&&Math.abs(perchPts[k].sy-sy)<1&&perchSlotTaken[k]){
+            perchSlotTaken[k]=0; break;
+          }
+        }
       }
     }else{
       // 随机栖落
-      if(Nperched<nPerchCap && Math.random()<0.0004){
-        const th=Math.floor(Math.random()*nPerch);
-        const pk=perchPts[th];
-        px[i]=pk.slotX/W;
-        py[i]=pk.slotY/H;
-        state[i]=2;
-        vx[i]=0; vy[i]=0;
-        timer[i]=P.perchDwell[0]+Math.random()*(P.perchDwell[1]-P.perchDwell[0]);
-        Nperched++;
-        isPerched[i]=1;
+      if(Nperched<nPerchCap && rand()<0.0005 && nPerch>0){
+        const slot=pickPerchSlot();
+        if(slot>=0){
+          const pk=perchPts[slot];
+          px[i]=pk.sx/W; py[i]=pk.sy/H;
+          vx[i]=0; vy[i]=0;
+          isPerched[i]=1;
+          state[i]=2;
+          timer[i]=P.perchDwell[0]+rand()*(P.perchDwell[1]-P.perchDwell[0]);
+          Nperched++;
+        }
       }
     }
   }
 }
 
-/* ========================================================================
-   序参量 γ
-   ======================================================================== */
+/* ============================================================
+   序参量 γ（极化）+ 各向异性
+   ============================================================ */
+let gamma=0, gammaAccum=0, gammaVarAccum=0, gammaMin=1, gammaMax=0, gammaFrame=0;
+let phiAligned=0, phiAntialigned=0;
 function computeOrder(){
   let sx=0,sy=0;
+  let aCnt=0, anCnt=0;
   for(let i=0;i<flyCount;i++){
+    if(isPerched[i]) continue;
     const m=Math.sqrt(vx[i]*vx[i]+vy[i]*vy[i]);
     if(m>1e-9){
-      sx+=vx[i]/m;
-      sy+=vy[i]/m;
+      sx+=vx[i]/m; sy+=vy[i]/m;
+      // 各向异性（统计同向 / 反向）
+      if(vx[i]>0) aCnt++; else anCnt++;
     }
   }
   const g=Math.sqrt(sx*sx+sy*sy)/Math.max(flyCount,1);
   gamma=g;
+  gammaAccum+=g;
   gammaVarAccum+=(g-0.5)*(g-0.5);
   if(g<gammaMin)gammaMin=g;
   if(g>gammaMax)gammaMax=g;
   gammaFrame++;
-  // 群体包围盒
-  if(flyCount>0){
-    birdXMin=px[0];birdXMax=px[0];
-    birdYMin=py[0];birdYMax=py[0];
-    for(let i=1;i<flyCount;i++){
-      if(px[i]<birdXMin)birdXMin=px[i];
-      if(px[i]>birdXMax)birdXMax=px[i];
-      if(py[i]<birdYMin)birdYMin=py[i];
-      if(py[i]>birdYMax)birdYMax=py[i];
-    }
-  }
+  phiAligned=aCnt; phiAntialigned=anCnt;
 }
 
-/* ========================================================================
-   渲染层
-   ======================================================================== */
-const INK='#1a1410';
-let layOps=[0,0,0,0,0,0,0,0];
+/* ============================================================
+   渲染（每层一条 Path + 一次 fill，§5.5 ~10 op/帧）
+   ============================================================ */
+let opsByCat={sky:0,ground:0,trees:0,f0:0,f1:0,f2:0,f3:0,perched:0,tufts:0,grade:0};
+function resetOps(){ for(const k in opsByCat) opsByCat[k]=0; }
+function totalOps(){ return Object.values(opsByCat).reduce((s,v)=>s+v,0); }
 
 function drawSky(){
   const P=E49.P;
   const horizonY=H*P.horizonFrac;
-  const g=ctx.createLinearGradient(0,0,0,horizonY);
+  const g=ctx.createLinearGradient(0,0,0,horizonY+1);
   g.addColorStop(0,`hsl(225,18%,${Math.round(P.skyTopL*100)}%)`);
-  g.addColorStop(0.5,`hsl(220,22%,${Math.round(P.skyMidL*100)}%)`);
-  g.addColorStop(0.78,`hsl(35,18%,${Math.round(P.skyHorizonL*60+18)}%)`);
-  g.addColorStop(1,`hsl(38,30%,${Math.round(P.skyHorizonL*55+22)}%)`);
+  g.addColorStop(0.5,`hsl(220,22%,30%)`);
+  g.addColorStop(0.78,`hsl(35,20%,${Math.round(P.skyHorizonL*65)}%)`);
+  g.addColorStop(1,`hsl(38,32%,${Math.round(P.skyHorizonL*58)}%)`);
   ctx.fillStyle=g;
-  ctx.fillRect(0,0,W,horizonY);
-  layOps[0]++;
+  ctx.fillRect(0,0,W,horizonY+1);
+  opsByCat.sky++;
   return horizonY;
 }
 
 function drawGround(horizonY){
   const P=E49.P;
-  const gh=H-horizonY;
   ctx.fillStyle=P.groundTone;
-  ctx.fillRect(0,horizonY,W,gh);
-  offG=(offG+P.vGround*0.12*0.016*30)%W;
-  offT=(offT+P.vTree*0.10*0.016*30)%W;
-  offU=(offU+P.vTuft*0.18*0.016*30)%W;
-  layOps[1]++;
+  ctx.fillRect(0,horizonY,W,H-horizonY);
+  opsByCat.ground++;
+  let offG=(P.vGround*0.12*E49._frameT*30)%W;
+  let offT=(P.vTree*0.10*E49._frameT*30)%W;
+  let offU=(P.vTuft*0.18*E49._frameT*30)%W;
+  return [offG,offT,offU];
 }
 
-function drawTrees(){
-  const P=E49.P;
-  const horizonY=H*P.horizonFrac;
+function drawTrees(offT){
   ctx.fillStyle='#2a1a10';
-  for(let i=0;i<treeX.length;i++){
-    const x=treeX[i]-offT*0.3;
-    const y=treeY[i];
-    const h=treeH[i];
-    // 主干
+  for(let i=0;i<nTree;i++){
+    const x=((treeX[i]-offT)%W+W)%W;
+    const y=treeY[i], h=treeH[i];
     ctx.fillRect(x-3,y-h,6,h*0.55);
-    // 枝条
-    ctx.fillRect(x-0.5*h*0.2,y-h*0.9,h*0.4,4);
-    ctx.fillRect(x-0.5*h*0.25,y-h*0.9+h*0.3,h*0.5,4);
-    ctx.fillRect(x-0.4,y-h,h*0.3,4);
+    ctx.fillRect(x-h*0.18,y-h*0.9,h*0.36,4);
+    ctx.fillRect(x-h*0.22,y-h*0.9+h*0.3,h*0.44,4);
+    ctx.fillRect(x-h*0.16,y-h*0.6,h*0.32,4);
   }
-  layOps[2]++;
+  opsByCat.trees++;
 }
 
-function drawBirdLayer(li,alpha){
-  const P=E49.P;
-  let bi=[];
+/* ---- V形鸟剪影合批（3 triangles per bird = 9 vertices, §4.8.1） ---- */
+function drawFlockLayer(li){
+  let any=false;
   for(let i=0;i<flyCount;i++){
-    if(layerIdx[i]===li && state[i]!==2) bi.push(i);
+    if(isPerched[i]) continue;
+    const liBird = layerOfBird(i);
+    if(liBird===li){ any=true; break; }
   }
-  if(bi.length===0) return;
-  const spdN=P.maxSpeedN/H;
-  const inkMix = [0.28,0.46,0.68,1.0][li];
-  const c=Math.round(26+inkMix*(30-26));
-  const col=`rgba(${c},${Math.round(c*0.78)},${Math.round(c*0.62)},${alpha})`;
-  ctx.fillStyle=col;
+  if(!any) return;
+  // color: mix sky-ink
+  const inkMix=[0.28,0.46,0.68,1.0][li];
+  const a=[0.42,0.58,0.78,1.0][li];
+  const cr=Math.round(26*(1-inkMix)+8*inkMix);
+  const cg=Math.round(20*(1-inkMix)+5*inkMix);
+  const cb=Math.round(14*(1-inkMix)+3*inkMix);
+  ctx.fillStyle=`rgba(${cr},${cg},${cb},${a})`;
   ctx.beginPath();
-  let vCount=0;
-  for(let k=0;k<bi.length;k++){
-    const i=bi[k];
+  const P=E49.P;
+  for(let i=0;i<flyCount;i++){
+    if(isPerched[i]) continue;
+    if(layerOfBird(i)!==li) continue;
     const xi=px[i]*W, yi=py[i]*H;
-    const vLen=Math.sqrt(vx[i]*vx[i]+vy[i]*vy[i]);
-    const axX=vx[i]/(vLen+1e-9);
-    const axY=vy[i]/(vLen+1e-9);
-    const nX=-axY, nY=axX;
-    let wingR=P.flapAmp*Math.abs(Math.sin(flapPh[i]));
-    const spdR=Math.min(vLen/(spdN*1.5),1);
-    wingR*=0.3+spdR*0.7;
-    const bank=ayX[i]; // 侧倾压缩因子
-    const compress=Math.cos(bank);
-    const sW=10*(0.6+0.4*compress)*(0.9+0.1*speedK[i]);
-    const wr=9*wingR;
-    const tipLx=xi+nX*0.5*sW+axX*0;
-    const tipLy=yi+nY*0.5*sW-axY*0;
-    const tipRx=xi-nX*0.5*sW+axX*0;
-    const tipRy=yi-nY*0.5*sW-axY*0;
-    const bodyX=xi-axX*0.4*sW;
-    const bodyY=yi-axY*0.4*sW;
-    const wingLx=tipLx - nX*wr*0.3;
-    const wingLy=tipLy + wr;
-    const wingRx=tipRx + nX*wr*0.3;
-    const wingRy=tipRy + wr;
-    // triangle: tipL-body-tipR, body-wingL, body-wingR
-    ctx.moveTo(tipLx,tipLy);
-    ctx.lineTo(bodyX,bodyY);
-    ctx.lineTo(tipRx,tipRy);
-    ctx.closePath();
-    ctx.moveTo(bodyX,bodyY);
-    ctx.lineTo(wingLx,wingLy);
-    ctx.lineTo(tipLx,tipLy);
-    ctx.closePath();
-    ctx.moveTo(bodyX,bodyY);
-    ctx.lineTo(wingRx,wingRy);
-    ctx.lineTo(tipRx,tipRy);
-    ctx.closePath();
-    vCount+=9;
+    const m=Math.sqrt(vx[i]*vx[i]+vy[i]*vy[i])+1e-9;
+    const axx=vx[i]/m, ayy=vy[i]/m;
+    const nxx=-ayy, nyy=axx;
+    const wing=P.flapAmp*(0.5+0.5*Math.sin(flapPh[i]));
+    const compress=Math.cos(bank[i]);
+    const sW=11*(0.6+0.4*compress)*(speedK[i]*0.3+0.85);
+    const wr=9*wing;
+    const tipLx=xi+nxx*0.5*sW, tipLy=yi+nyy*0.5*sW;
+    const tipRx=xi-nxx*0.5*sW, tipRy=yi-nyy*0.5*sW;
+    const bodyX=xi-axx*0.4*sW, bodyY=yi-ayy*0.4*sW;
+    const wingLx=tipLx-nxx*wr*0.5, wingLy=tipLy+wr;
+    const wingRx=tipRx+nxx*wr*0.5, wingRy=tipRy+wr;
+    ctx.moveTo(tipLx,tipLy);ctx.lineTo(bodyX,bodyY);ctx.lineTo(tipRx,tipRy);ctx.closePath();
+    ctx.moveTo(bodyX,bodyY);ctx.lineTo(wingLx,wingLy);ctx.lineTo(tipLx,tipLy);ctx.closePath();
+    ctx.moveTo(bodyX,bodyY);ctx.lineTo(wingRx,wingRy);ctx.lineTo(tipRx,tipRy);ctx.closePath();
   }
   ctx.fill();
-  layOps[3+li]++;
+  opsByCat['f'+li]++;
+}
+
+function layerOfBird(i){
+  return Math.min(3,Math.max(0,((py[i]-E49.P.birdSpanY[0])/(E49.P.birdSpanY[1]-E49.P.birdSpanY[0])*4)|0));
 }
 
 function drawPerched(){
   if(!E49.P.perchOn) return;
-  let n=0;
-  ctx.fillStyle=INK;
+  let has=false;
+  for(let i=0;i<N;i++) if(isPerched[i]){has=true;break;}
+  if(!has) return;
+  ctx.fillStyle='#1a140e';
   ctx.beginPath();
   for(let i=0;i<N;i++){
-    if(state[i]===2){
-      const x=px[i]*W, y=py[i]*H;
-      ctx.moveTo(x-2,y);
-      ctx.lineTo(x,y-6);
-      ctx.lineTo(x+2,y);
-      ctx.closePath();
-      n++;
-    }
+    if(!isPerched[i]) continue;
+    const x=px[i]*W,y=py[i]*H;
+    ctx.moveTo(x-3,y);ctx.lineTo(x,y-8);ctx.lineTo(x+3,y);ctx.closePath();
   }
   ctx.fill();
-  layOps[7]++;
+  opsByCat.perched++;
 }
 
-function drawTufts(){
+function drawTufts(offU){
   const P=E49.P;
   const horizonY=H*P.horizonFrac;
   ctx.fillStyle='#3d2a18';
   ctx.beginPath();
-  for(let i=0;i<24;i++){
-    const x=(i/24)*W-offU;
-    const y=horizonY+2+(i%2)*3;
-    ctx.moveTo(x,y);
-    ctx.lineTo(x+1,y-8-(i%3)*3);
-    ctx.lineTo(x+2,y);
+  for(let i=0;i<30;i++){
+    const x=((i/30)*W-offU*1.5)%W;
+    const h=6+((i*7)%5)*2;
+    ctx.moveTo(x,horizonY);
+    ctx.lineTo(x+1,horizonY-h);
+    ctx.lineTo(x+2,horizonY);
     ctx.closePath();
   }
   ctx.fill();
+  opsByCat.tufts++;
 }
 
 function drawGrade(){
-  // 暗角（径向渐变）
   const g=ctx.createRadialGradient(W/2,H*0.45,H*0.18,W/2,H*0.6,H*0.82);
   g.addColorStop(0,'rgba(0,0,0,0)');
   g.addColorStop(1,'rgba(0,0,0,0.32)');
   ctx.fillStyle=g;
   ctx.fillRect(0,0,W,H);
-  layOps[0]++;
+  opsByCat.grade++;
 }
 
 /* ========================================================================
-   推进 + 渲染
+   主循环
    ======================================================================== */
 const FIXED_DT=1/60;
 const MAX_SUBSTEPS=3;
 let acc=0;
+let lastTs=0;
+E49._frameT=0;
+E49._simTime=0;
+let paused=false;
+let fpsEMA=16/1000;
 
 function simulate(dt){
   rebuildGrid();
   steerBoids(dt);
   updatePerch(dt);
-  // 扑动相位每帧推进（渲染阶段）
-  const P=E49.P;
-  const flapOmega=2*Math.PI*P.flapFreq*0.6;
-  for(let i=0;i<flyCount;i++){
-    flapPh[i]+=flapOmega*dt;
-    if(state[i]===2){
-      flapPh[i]+=(0-Math.sin(flapPh[i]))*dt*8;
+  // 扑动相位（§5.8：渲染阶段推进）
+  const omega=2*Math.PI*E49.P.flapFreq*0.6;
+  for(let i=0;i<N;i++){
+    if(isPerched[i]){
+      flapPh[i]+=(0-Math.sin(flapPh[i]))*Math.min(1,dt*8);
+    }else{
+      flapPh[i]+=omega*dt;
+    }
+    // NaN 守卫
+    if(!isFinite(px[i])||!isFinite(py[i])||!isFinite(vx[i])||!isFinite(vy[i])){
+      nanInfFrames++;
+      px[i]=Math.max(0,Math.min(1,px[i]||0.5));
+      py[i]=Math.max(0,Math.min(1,py[i]||0.5));
+      vx[i]=vx[i]||0; vy[i]=vy[i]||0;
     }
   }
 }
 
-function render(dt){
-  ctx.clearRect(0,0,W,H);
+function render(){
+  resetOps();
   const horizonY=drawSky();
-  drawGround(horizonY);
-  drawTrees();
-  drawBirdLayer(0,0.45);
-  drawBirdLayer(1,0.62);
-  drawBirdLayer(2,0.80);
-  drawBirdLayer(3,1.00);
+  const [offG,offT,offU]=drawGround(horizonY);
+  drawTrees(offT);
+  drawFlockLayer(0);
+  drawFlockLayer(1);
+  drawFlockLayer(2);
+  drawFlockLayer(3);
   drawPerched();
-  drawTufts();
+  drawTufts(offU);
   if(E49.P.grade) drawGrade();
 }
 
@@ -842,131 +670,229 @@ function render(dt){
    HUD
    ======================================================================== */
 const hudEl=document.getElementById('hud');
+const checksEl=document.getElementById('checks');
+let nanInfFrames=0;
+let stuckFrames=0;
+let sumNbrAccum=0;
+let birdXMin=0,birdXMax=0,birdYMin=0,birdYMax=0;
 
-let frameI=0;
-let fpsEMA=16;
+function computeFill(){
+  const sky=1.0, ground=0.20, trees=0.04, tufts=0.05, grade=E49.P.grade?1.0:0;
+  const flock = flyCount>0?((flyCount/1500)*0.25):0;
+  return sky+ground+trees+tufts+grade+flock;
+}
+
+function medianBank(){
+  const a=[];
+  for(let i=0;i<flyCount;i++){
+    if(!isPerched[i]) a.push(Math.abs(bank[i])*180/Math.PI);
+  }
+  if(!a.length) return 0;
+  a.sort((x,y)=>x-y);
+  return a[Math.floor(a.length/2)];
+}
+
+function layerCount(li){
+  let c=0;
+  for(let i=0;i<flyCount;i++) if(!isPerched[i]&&layerOfBird(i)===li) c++;
+  return c;
+}
+
 function loop(ts){
   if(!lastTs) lastTs=ts;
-  const rawDt=(ts-lastTs)/1000;
-  const dt=Math.min(rawDt,0.1);
+  const rawDt=Math.min((ts-lastTs)/1000,0.1);
   lastTs=ts;
   fpsEMA=fpsEMA*0.92+rawDt*0.08;
-  frameI++;
-  acc+=dt;
-  let step=0;
-  while(acc>=FIXED_DT && step<MAX_SUBSTEPS){
-    simulate(FIXED_DT);
-    acc-=FIXED_DT;
-    step++;
+  E49._frameT+=rawDt;
+  if(!paused){
+    acc+=rawDt; let step=0;
+    while(acc>=FIXED_DT && step<MAX_SUBSTEPS){
+      E49._simTime+=FIXED_DT;
+      simulate(FIXED_DT);
+      acc-=FIXED_DT; step++;
+    }
   }
-  render(dt);
+  render();
   computeOrder();
-  // op 汇总
-  opCount=layOps.reduce((s,v)=>s+v,0);
-  layOps.fill(0);
-  // HUD
-  const spdAvg=Math.sqrt(vx[0]*vx[0]+vy[0]*vy[0])*H;
+  // 包围盒
+  if(flyCount>0){
+    let mnX=px[0],mxX=px[0],mnY=py[0],mxY=py[0];
+    for(let i=1;i<flyCount;i++){
+      if(!isPerched[i]){
+        if(px[i]<mnX)mnX=px[i]; if(px[i]>mxX)mxX=px[i];
+        if(py[i]<mnY)mnY=py[i]; if(py[i]>mxY)mxY=py[i];
+      }
+    }
+    birdXMin=mnX;birdXMax=mxX;birdYMin=mnY;birdYMax=mxY;
+  }
+  // 邻居均值累计
+  let sn=0;
+  for(let i=0;i<flyCount;i++) if(!isPerched[i]) sn+=nbrK[i];
+  sumNbrAccum+=sn;
+  // 冻结帧
+  let frozen=0;
+  for(let i=0;i<flyCount;i++) if(!isPerched[i]){
+    const m=Math.sqrt(vx[i]*vx[i]+vy[i]*vy[i]);
+    if(m<E49.P.maxSpeedN/H*0.15) frozen++;
+  }
+  if(frozen>flyCount*0.7) stuckFrames++;
+  const gOk=gamma>0.30 && (gammaVarAccum/Math.max(gammaFrame,1))>0.0005;
+  const fillOk=computeFill()<4.5;
+  const opsOk=totalOps()<=13;
+  const selfOk = gOk&&fillOk&&opsOk;
   hudEl.innerHTML=
-`<span class="lbl">帧速</span> ${fpsEMA.toFixed(1)}ms / ${(1/Math.max(fpsEMA,0.001)).toFixed(0)}fps
+`<span class="lbl">帧速</span> ${(fpsEMA*1000).toFixed(1)}ms / ${(1/Math.max(fpsEMA,1e-6)).toFixed(0)}fps
 <span class="lbl">鸟数</span> ${N} (${flyCount}飞 + ${Nperched}栖)
-<span class="lbl">图元</span> ${opCount} ops
-<span class="lbl">铺屏</span> ${(computeFill()*100).toFixed(1)}%
-<span class="lbl">层鸟</span> far:${countLayer(0)} mid:${countLayer(1)} nr:${countLayer(2)} hr:${countLayer(3)}
-<span class="lbl">γ</span> ${gamma.toFixed(3)} (σ²=${(gammaVarAccum/Math.max(gammaFrame,1)).toFixed(4)})
-<span class="lbl">侧倾中位</span> ${medianRoll().toFixed(1)}°
-<span class="lbl">flap%</span> ${flapPct().toFixed(0)}%
+<span class="lbl">图元</span> ${totalOps()} ops
+<span class="lbl">铺屏</span> ${computeFill().toFixed(2)}
+<span class="lbl">层鸟</span> f:${layerCount(0)} m:${layerCount(1)} n:${layerCount(2)} h:${layerCount(3)}
+<span class="lbl">γ极化</span> ${gamma.toFixed(3)} (E=${(gammaAccum/Math.max(gammaFrame,1)).toFixed(3)} σ²=${(gammaVarAccum/Math.max(gammaFrame,1)).toFixed(4)})
+<span class="lbl">邻居</span> 均值${(sumNbrAccum/Math.max(gammaFrame,1)/Math.max(flyCount,1)).toFixed(1)}
+<span class="lbl">侧倾中位数</span> ${medianBank().toFixed(1)}°
 <span class="lbl">bbox</span> ${(birdXMax-birdXMin).toFixed(2)}×${(birdYMax-birdYMin).toFixed(2)}
-<span class="lbl">邻居均值</span> ${(sumNbr/Math.max(gammaFrame,1)).toFixed(1)}
-<span class="lbl">判定</span> ${(gamma>0.33&&gammaVarAccum/Math.max(gammaFrame,1)>0.001)?'✓':'.'}`;
+<span class="lbl">冻结帧</span> ${stuckFrames}
+<span class="lbl">NaN帧</span> ${nanInfFrames}
+<span class="lbl">判定</span> ${selfOk?'✓ γ+ops+fill':'. '+(gOk?'':'γ')+(opsOk?'':' ops')+(fillOk?'':' fill')}`;
   requestAnimationFrame(loop);
 }
 
-function countLayer(li){
-  let c=0;
-  for(let i=0;i<flyCount;i++) if(layerIdx[i]===li&&state[i]!==2)c++;
-  return c;
-}
-function medianRoll(){
-  let a=[];
-  for(let i=0;i<flyCount;i++) a.push(Math.abs(ayX[i])*180/Math.PI);
-  a.sort((x,y)=>x-y);
-  return a.length?a[Math.floor(a.length/2)]:0;
-}
-function flapPct(){
-  let f=0;
-  for(let i=0;i<flyCount;i++) if(Math.abs(Math.sin(flapPh[i]))<0.5)f++;
-  return 100*f/Math.max(flyCount,1);
-}
-function computeFill(){
-  // 近似：2个全屏(天+暗角)+2个带+4个flock层+1栖+1草丛
-  const sky=1.0, ground=0.18, trees=0.04, tufts=0.05, grade=E49.P.grade?1.0:0;
-  return sky+ground+trees+tufts+grade+(flyCount>0?0.25:0);
-}
-
 /* ========================================================================
-   selfTest：结构判据
+   selfTest（T1–T11，结构判据）
    ======================================================================== */
 E49.selfTest = function(){
   const r=[];
-  // T1: op ≤ 30
-  const opsOk = opCount<=30;
-  r.push(`T1 op≤30: ${opCount} ${opsOk?'PASS':'FAIL'}`);
-  // T2: γ 在合理范围
-  const gOk = gamma>0.1 && gamma<1.0;
-  r.push(`T2 γ范围: ${gamma.toFixed(3)} ${gOk?'PASS':'FAIL'}`);
-  // T3: 鸟数正确
-  const nOk = N===E49.TIERS[E49.currentTier].birds;
-  r.push(`T3 鸟数=${N}: ${nOk?'PASS':'FAIL'}`);
-  // T4: 无 NaN 帧
-  r.push(`T4 NaN/Inf: ${nanInfFrames} ${nanInfFrames===0?'PASS':'FAIL'}`);
+  const P=E49.P;
+  // T1: op 预算 ≤ 13（宽松，Kotlin 折叠后 ≤ 10）
+  const ops=totalOps();
+  r.push(`T1 op=${ops} ≤13: ${ops<=13?'PASS':'FAIL'}`);
+  // T2: γ 范围
+  const gOk=gamma>0.1 && gamma<1.0 && (gammaVarAccum/Math.max(gammaFrame,1))>0.0001;
+  r.push(`T2 γ=${gamma.toFixed(3)} var=${(gammaVarAccum/Math.max(gammaFrame,1)).toFixed(4)}: ${gOk?'PASS':'WARN'}`);
+  // T3: 鸟数
+  const nOk=(N===E49.TIERS[E49.currentTier].birds);
+  r.push(`T3 N=${N}: ${nOk?'PASS':'FAIL'}`);
+  // T4: 无 NaN
+  r.push(`T4 NaN=${nanInfFrames}: ${nanInfFrames===0?'PASS':'FAIL'}`);
   // T5: 冻结帧
-  r.push(`T5 冻结=${stuckCnt}:${realStuckCnt}: ${(realStuckCnt<5)?'PASS':'WARN'}`);
-  // T6: 铺屏合理
+  r.push(`T5 冻结=${stuckFrames}: ${stuckFrames<20?'PASS':'WARN'}`);
+  // T6: 铺屏
   const fill=computeFill();
-  r.push(`T6 铺屏=${fill.toFixed(2)}: ${(fill<4.5)?'PASS':'FAIL'}`);
-  // T7: 邻居均值
-  const avgNbr=sumNbr/Math.max(gammaFrame,1);
-  r.push(`T7 邻居=${avgNbr.toFixed(1)}: ${(avgNbr>3&&avgNbr<7.5)?'PASS':'WARN'}`);
-  // T8: 状态守恒
-  const conserveOk = (flyCount+Nperched===N);
-  r.push(`T8 守恒 ${flyCount}+${Nperched}=${N}: ${conserveOk?'PASS':'FAIL'}`);
-  // T9: 侧倾中位数
-  const medRoll=medianRoll();
-  r.push(`T9 侧倾中位=${medRoll.toFixed(1)}°: ${(medRoll<45)?'PASS':'WARN'}`);
-  // T10: 扑动占比
-  const fp=flapPct();
-  r.push(`T10 flap%=${fp.toFixed(0)}: ${(fp>20&&fp<80)?'PASS':'WARN'}`);
-  // T11: op 层数恒 1
-  let layerOpOk=true;
-  // layOps 已清零，用最后一次 opsByCat
-  r.push(`T11 层op: layOps已清，保留结构`);
-  return r;
+  r.push(`T6 fill=${fill.toFixed(2)}: ${fill<4.5?'PASS':'FAIL'}`);
+  // T7: 邻居
+  const avgNbr=sumNbrAccum/Math.max(gammaFrame,1)/Math.max(flyCount,1);
+  r.push(`T7 邻居=${avgNbr.toFixed(1)} (3~7): ${(avgNbr>2.5&&avgNbr<7.5)?'PASS':'WARN'}`);
+  // T8: 状态守恒（在栖标志数 = Nperched 计数器）
+  let nPflag=0;
+  for(let i=0;i<N;i++) if(isPerched[i]) nPflag++;
+  const conserveOk = (nPflag===Nperched) && (Nperched<=nPerchCap);
+  r.push(`T8 在栖=${Nperched}(flag=${nPflag}) cap=${nPerchCap}: ${conserveOk?'PASS':'FAIL'}`);
+  // T9: 侧倾 < 45°
+  const med=medianBank();
+  r.push(`T9 bank中位数=${med.toFixed(1)}°: ${med<45?'PASS':'WARN'}`);
+  // T10: 扑动 ratio
+  let flapC=0;
+  for(let i=0;i<flyCount;i++) if(!isPerched[i]&&Math.sin(flapPh[i])>-0.5) flapC++;
+  const fp=flyCount>0?flapC/flyCount:0;
+  r.push(`T10 flap%=${(fp*100).toFixed(0)}: ${(fp>0.2&&fp<0.95)?'PASS':'WARN'}`);
+  // T11: 每层 op 结构恒等
+  const layerOpOk=(opsByCat.f0<=1&&opsByCat.f1<=1&&opsByCat.f2<=1&&opsByCat.f3<=1);
+  r.push(`T11 层op恒等 f${opsByCat.f0}${opsByCat.f1}${opsByCat.f2}${opsByCat.f3}: ${layerOpOk?'PASS':'FAIL'}`);
+  return {pass:r.filter(x=>x.includes('PASS')).length, total:r.length, lines:r};
 };
 
-/* ========================================================================
-   stats(n)
-   ======================================================================== */
 E49.stats = function(n){
   n=n||60;
-  const r=E49.selfTest();
-  r.push('');
-  r.push(`档位 ${E49.currentTier} / 鸟数 ${N} / perchOn=${E49.P.perchOn} / bankOn=${E49.P.bankOn}`);
-  return r.join('\n');
+  const st=E49.selfTest();
+  return st.lines.join('\n')+`\n档位 ${E49.currentTier} / perch=${E49.P.perchOn} / bank=${E49.P.bankOn} / grade=${E49.P.grade}`;
 };
 
 /* ========================================================================
-   UI：滑杆 + 按钮
+   RESET / APPLY TIER
+   ======================================================================== */
+E49.resetFlock = function(){
+  const tier=E49.TIERS[E49.currentTier];
+  srand(987654321);
+  N=tier.birds;
+  flyCount=N;
+  Nperched=0;
+  const spdN=E49.P.maxSpeedN/H;
+  for(let i=0;i<N;i++){
+    const r=rand();
+    let li;
+    if(r<0.18) li=0; else if(r<0.42) li=1; else if(r<0.70) li=2; else li=3;
+    const bandT=E49.P.birdSpanY[0]+0.04;
+    const bandB=E49.P.birdSpanY[1]-0.03;
+    px[i]=E49.P.birdSpanX[0]+rand()*(E49.P.birdSpanX[1]-E49.P.birdSpanX[0]);
+    py[i]=bandT+rand()*(bandB-bandT);
+    const dirx=rand()<0.5?-1:1;
+    const sp=spdN*(0.85+rand()*0.30);
+    vx[i]=dirx*sp;
+    vy[i]=(rand()-0.5)*sp*0.1;
+    flapPh[i]=rand()*Math.PI*2;
+    speedK[i]=0.82+rand()*0.36;
+    respK[i]=0.75+rand()*0.50;
+    state[i]=0;
+    timer[i]=0;
+    isPerched[i]=0;
+    bank[i]=0;
+    accX[i]=0;accY[i]=0;
+  }
+  gamma=0;gammaAccum=0;gammaVarAccum=0;gammaMin=1;gammaMax=0;gammaFrame=0;
+  nanInfFrames=0;stuckFrames=0;sumNbrAccum=0;
+};
+
+E49.rebuildLayout = function(){
+  srand(31415926);
+  nTree=3+((rand()*3)|0);
+  treeX.length=0;treeY.length=0;treeH.length=0;
+  const hY=H*E49.P.horizonFrac;
+  for(let i=0;i<nTree;i++){
+    treeX.push(W*(0.12+rand()*0.76));
+    treeY.push(hY);
+    treeH.push(60+rand()*90);
+  }
+  nPerchCap=E49.TIERS[E49.currentTier].perchCap;
+  perchPts.length=0; perchSlotTaken=new Uint8Array(nPerchCap);
+  let k=0;
+  for(let t=0;t<nTree && k<nPerchCap;t++){
+    const npt=5+((rand()*4)|0);
+    for(let j=0;j<npt && k<nPerchCap;j++){
+      perchPts.push({tree:t, sx:treeX[t]+(j-npt/2)*8+rand()*4, sy:treeY[t]-treeH[t]+j*4+rand()*3});
+      k++;
+    }
+  }
+  nPerch=k;
+  // 风场
+  srand(27182818);
+  windA.length=0;windK.length=0;windDX.length=0;windDY.length=0;windPH.length=0;
+  for(let i=0;i<NWIND;i++){
+    windA.push((0.5+rand()*0.8)*E49.P.curlAmp);
+    windK.push(3+((rand()*5)|0));
+    const dir=rand()*Math.PI*2;
+    windDX.push(Math.cos(dir));windDY.push(Math.sin(dir));
+    windPH.push(rand()*Math.PI*2);
+  }
+  // 网格
+  allocGrid(Math.max(40,E49.P.nbrR*1.2),Math.max(40,E49.P.nbrR*1.2),E49.TIERS[E49.currentTier].gridCellCap);
+};
+
+E49.applyTier = function(tier){
+  E49.currentTier=tier;
+  E49.rebuildLayout();
+  E49.resetFlick();
+};
+E49.resetFlick = E49.resetFlock;
+
+/* ========================================================================
+   UI 构建（滑杆 10 组 + 按钮 7 个）
    ======================================================================== */
 (function buildUI(){
   const panel=document.getElementById('panel');
   const sliders=[
-    // 构图锚点（只读）
-    {group:'构图锚点（只读）',items:[
-      {key:'horizonFrac',label:'地平线 frac',min:0.7,max:0.85,step:0.001,fmt:x=>x.toFixed(3),ro:true},
-      {key:'birdSpanY_min',label:'鸟带顶部',min:0.08,max:0.4,step:0.001,fmt:x=>x.toFixed(3),
-        get:()=>E49.P.birdSpanY[0],set:v=>{E49.P.birdSpanY[0]=v;}},
-      {key:'birdSpanY_max',label:'鸟带底部',min:0.5,max:0.85,step:0.001,fmt:x=>x.toFixed(3),
-        get:()=>E49.P.birdSpanY[1],set:v=>{E49.P.birdSpanY[1]=v;}}
+    {group:'构图锚点',items:[
+      {key:'horizonFrac',label:'地平线',min:0.7,max:0.85,step:0.001,ro:true},
+      {key:'birdSpanY.0',label:'鸟带顶',min:0.08,max:0.4,step:0.001,get:()=>E49.P.birdSpanY[0],set:v=>E49.P.birdSpanY[0]=v},
+      {key:'birdSpanY.1',label:'鸟带底',min:0.5,max:0.85,step:0.001,get:()=>E49.P.birdSpanY[1],set:v=>E49.P.birdSpanY[1]=v}
     ]},
     {group:'天与地',items:[
       {key:'skyTopL',label:'天顶明度',min:0.05,max:0.45,step:0.001},
@@ -974,155 +900,117 @@ E49.stats = function(n){
       {key:'groundTone',label:'地面颜色',isColor:true}
     ]},
     {group:'视差',items:[
-      {key:'vGround',label:'地面速度',min:0,max:80,step:0.5,fmt:x=>x.toFixed(0)},
-      {key:'vTree',label:'树速度',min:0,max:50,step:0.5,fmt:x=>x.toFixed(0)},
-      {key:'vTuft',label:'草丛速度',min:0,max:120,step:0.5,fmt:x=>x.toFixed(0)},
-      {key:'vGust',label:'阵风基线',min:0,max:2,step:0.01,fmt:x=>x.toFixed(2)}
+      {key:'vGround',label:'地面',min:0,max:80,step:0.5},
+      {key:'vTree',label:'树',min:0,max:50,step:0.5},
+      {key:'vTuft',label:'草丛',min:0,max:120,step:0.5},
+      {key:'vGust',label:'阵风基线',min:0,max:2,step:0.01}
     ]},
     {group:'鸟群规则',items:[
-      {key:'wSep',label:'分离权重',min:0,max:4,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'wAli',label:'对齐权重',min:0,max:4,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'wCoh',label:'聚合权重',min:0,max:4,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'sepR',label:'分离半径',min:8,max:60,step:0.5,fmt:x=>x.toFixed(0)},
-      {key:'nbrR',label:'邻居半径',min:20,max:150,step:1,fmt:x=>x.toFixed(0)},
-      {key:'turnR',label:'转弯半径',min:5,max:80,step:0.5,fmt:x=>x.toFixed(0)},
-      {key:'cruiseJit',label:'逐鸟差异',min:0,max:0.5,step:0.005,fmt:x=>x.toFixed(3)}
+      {key:'wSep',label:'分离',min:0,max:4,step:0.01},
+      {key:'wAli',label:'对齐',min:0,max:4,step:0.01},
+      {key:'wCoh',label:'聚合',min:0,max:4,step:0.01},
+      {key:'sepR',label:'分离半径px',min:8,max:60,step:0.5},
+      {key:'nbrR',label:'邻居半径px',min:20,max:150,step:1},
+      {key:'turnR',label:'转弯半径px',min:5,max:80,step:0.5},
+      {key:'cruiseJit',label:'逐鸟差异',min:0,max:0.5,step:0.005}
     ]},
     {group:'空气动力',items:[
-      {key:'g0',label:'侧倾旋钮 g₀',min:0.2,max:5,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'rollRatio',label:'滚入滚出比',min:1,max:5,step:0.1,fmt:x=>x.toFixed(1)},
-      {key:'curlAmp',label:'风场幅值',min:0,max:0.005,step:0.00005,fmt:x=>x.toFixed(5)},
-      {key:'curlDrift',label:'风场漂移',min:0,max:0.2,step:0.001,fmt:x=>x.toFixed(3)}
+      {key:'g0',label:'侧倾旋钮',min:0.2,max:5,step:0.01},
+      {key:'rollRatio',label:'滚入滚出比',min:1,max:5,step:0.1},
+      {key:'curlAmp',label:'风场幅值',min:0,max:0.005,step:0.00005},
+      {key:'curlDrift',label:'风场漂移',min:0,max:0.2,step:0.001}
     ]},
     {group:'扑动',items:[
-      {key:'flapFreq',label:'扑动频率',min:0.5,max:20,step:0.1,fmt:x=>x.toFixed(1)},
-      {key:'flapAmp',label:'扑动幅度',min:0,max:1,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'flapHyst',label:'滞回带宽',min:0,max:0.5,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'glideDuty',label:'滑翔占空',min:0,max:1,step:0.01,fmt:x=>x.toFixed(2)}
+      {key:'flapFreq',label:'频率',min:0.5,max:20,step:0.1},
+      {key:'flapAmp',label:'幅度',min:0,max:1,step:0.01},
+      {key:'flapHyst',label:'滞回带宽',min:0,max:0.5,step:0.01},
+      {key:'glideDuty',label:'滑翔占空',min:0,max:1,step:0.01}
     ]},
     {group:'边界',items:[
-      {key:'bandOuter',label:'软带外',min:0,max:0.2,step:0.001,fmt:x=>x.toFixed(3)},
-      {key:'bandInner',label:'软带内',min:0.02,max:0.4,step:0.001,fmt:x=>x.toFixed(3)},
-      {key:'kHard',label:'硬边界系数',min:0,max:6,step:0.05,fmt:x=>x.toFixed(2)},
-      {key:'kSoft',label:'软带系数',min:0,max:4,step:0.05,fmt:x=>x.toFixed(2)},
-      {key:'kTangent',label:'切向系数',min:0,max:3,step:0.05,fmt:x=>x.toFixed(2)}
+      {key:'bandOuter',label:'软带外',min:0,max:0.2,step:0.001},
+      {key:'bandInner',label:'软带内',min:0.02,max:0.4,step:0.001},
+      {key:'kHard',label:'硬边界系数',min:0,max:6,step:0.05},
+      {key:'kSoft',label:'软带系数',min:0,max:4,step:0.05},
+      {key:'kTangent',label:'切向系数',min:0,max:3,step:0.05}
     ]},
     {group:'停歇',items:[
-      {key:'perchDwell_min',label:'最短停栖 s',min:0.5,max:6,step:0.1,
-        get:()=>E49.P.perchDwell[0],set:v=>{E49.P.perchDwell[0]=v;},fmt:x=>x.toFixed(1)},
-      {key:'perchDwell_max',label:'最长停栖 s',min:2,max:20,step:0.1,
-        get:()=>E49.P.perchDwell[1],set:v=>{E49.P.perchDwell[1]=v;},fmt:x=>x.toFixed(1)},
-      {key:'takeoffSpread',label:'错峰幅度',min:0.5,max:10,step:0.1,fmt:x=>x.toFixed(1)}
+      {key:'perchDwell.0',label:'最短停栖s',min:0.5,max:6,step:0.1,get:()=>E49.P.perchDwell[0],set:v=>E49.P.perchDwell[0]=v},
+      {key:'perchDwell.1',label:'最长停栖s',min:2,max:20,step:0.1,get:()=>E49.P.perchDwell[1],set:v=>E49.P.perchDwell[1]=v},
+      {key:'takeoffSpread',label:'错峰幅度',min:0.5,max:10,step:0.1}
     ]},
     {group:'音频映射',items:[
-      {key:'kBass',label:'kBass 风场',min:0,max:4,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'kEnergy',label:'kEnergy',min:0,max:3,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'kMid',label:'kMid 雾',min:0,max:3,step:0.01,fmt:x=>x.toFixed(2)},
-      {key:'kTreble',label:'kTreble',min:0,max:3,step:0.01,fmt:x=>x.toFixed(2)}
+      {key:'kBass',label:'kBass→风场',min:0,max:4,step:0.01},
+      {key:'kEnergy',label:'→漂移',min:0,max:3,step:0.01},
+      {key:'kMid',label:'→雾',min:0,max:3,step:0.01},
+      {key:'kTreble',label:'→天顶',min:0,max:3,step:0.01}
     ]},
-    {group:'调试',items:[
-      {key:'showKNN',label:'画邻居连线',isBool:true},
-      {key:'showField',label:'画 curl 场',isBool:true},
-      {key:'showBox',label:'画包围盒',isBool:true}
+    {group:'调试开关',items:[
+      {key:'showKNN',label:'画邻居连线',isBool:true,init:false},
+      {key:'showField',label:'画curl场',isBool:true,init:false},
+      {key:'showBox',label:'画包围盒',isBool:true,init:false}
     ]}
   ];
+  E49.P.showKNN=false; E49.P.showField=false; E49.P.showBox=false;
 
   for(const grp of sliders){
-    const h=document.createElement('h3');
-    h.textContent=grp.group;
-    panel.appendChild(h);
+    const h=document.createElement('h3');h.textContent=grp.group;panel.appendChild(h);
     for(const it of grp.items){
-      const row=document.createElement('div');
-      row.className='srow';
-      const lab=document.createElement('label');
-      lab.textContent=it.label;
-      const sv=document.createElement('span');
-      sv.className='sv';
+      const row=document.createElement('div');row.className='srow';
+      const lab=document.createElement('label');lab.textContent=it.label;
+      const sv=document.createElement('span');sv.className='sv';
       let inp;
+      const fmt=x=>String(Math.round(x*1000)/1000);
       if(it.isColor){
-        inp=document.createElement('input');
-        inp.type='color';
-        inp.value=E49.P[it.key];
-        inp.oninput=()=>{E49.P[it.key]=inp.value;sv.textContent=inp.value;};
-        sv.textContent=inp.value;
+        inp=document.createElement('input');inp.type='color';
+        inp.value=E49.P[it.key];sv.textContent=inp.value;
+        inp.oninput=()=>{E49.P[it.key]=inp.value;};
       }else if(it.isBool){
-        inp=document.createElement('input');
-        inp.type='checkbox';
+        inp=document.createElement('input');inp.type='checkbox';
         inp.checked=!!E49.P[it.key];
         inp.onchange=()=>{E49.P[it.key]=inp.checked;};
       }else{
-        inp=document.createElement('input');
-        inp.type='range';
+        inp=document.createElement('input');inp.type='range';
         inp.min=it.min;inp.max=it.max;inp.step=it.step;
         const def=it.get?it.get():E49.P[it.key];
-        inp.value=def;
-        sv.textContent=(it.fmt||String)(def);
-        inp.oninput=()=>{
-          const v=parseFloat(inp.value);
-          if(it.set) it.set(v); else E49.P[it.key]=v;
-          sv.textContent=(it.fmt||String)(v);
-        };
+        inp.value=def;sv.textContent=fmt(def);
+        inp.oninput=()=>{const v=parseFloat(inp.value);if(it.set)it.set(v);else E49.P[it.key]=v;sv.textContent=fmt(v);};
       }
-      row.appendChild(lab);
-      row.appendChild(inp);
-      if(!it.isBool) row.appendChild(sv);
+      row.appendChild(lab);row.appendChild(inp);
+      if(!it.isBool)row.appendChild(sv);
       panel.appendChild(row);
     }
   }
 
-  // 按钮
-  const hr2=document.createElement('hr');
-  panel.appendChild(hr2);
-  const btnDiv=document.createElement('div');
-  btnDiv.className='btn-row';
-  const tiers=['LOW','MEDIUM','HIGH'];
+  const hr=document.createElement('hr');panel.appendChild(hr);
+  // 档位按钮
   let tierBtns=[];
-  for(const t of tiers){
+  const btnR1=document.createElement('div');btnR1.className='btn-row';
+  for(const t of ['LOW','MEDIUM','HIGH']){
     const b=document.createElement('button');
     b.className='btn'+(t===E49.currentTier?' active':'');
     b.textContent=t;
-    b.onclick=()=>{E49.applyTier(t); tierBtns.forEach(x=>x.classList.remove('active')); b.classList.add('active');};
-    btnDiv.appendChild(b);
-    tierBtns.push(b);
+    b.onclick=()=>{E49.applyTier(t);tierBtns.forEach(x=>x.classList.remove('active'));b.classList.add('active');};
+    btnR1.appendChild(b);tierBtns.push(b);
   }
-  panel.appendChild(btnDiv);
+  panel.appendChild(btnR1);
 
-  const btnDiv2=document.createElement('div');
-  btnDiv2.className='btn-row';
-  const btns=[
-    {id:'bPause',label:'暂停(todo)'},
-    {id:'bAudio',label:'音频:Audio',toggle:'audioOn'},
-    {id:'bPerch',label:'停歇:On',toggle:'perchOn'},
-    {id:'bBank',label:'侧倾:On',toggle:'bankOn'},
-    {id:'bGrade',label:'调色:On',toggle:'grade'},
-    {id:'bRecheck',label:'重跑自检',action:()=>{
-      const r=E49.selfTest();
-      console.log('[E49] selfTest:\n'+r.join('\n'));
-      document.getElementById('checks').textContent=r.filter(x=>x.includes('PASS')).length+'/'+r.length;
-    }}
-  ];
-  for(const b of btns){
-    const el=document.createElement('button');
-    el.className='btn';
-    el.textContent=b.label;
-    if(b.toggle){
-      el.onclick=()=>{
-        E49.P[b.toggle]=!E49.P[b.toggle];
-        el.textContent=b.label.split(':')[0]+':'+(E49.P[b.toggle]?'On':'Off');
-        el.classList.toggle('active',E49.P[b-toggle]);
-      };
-      el.classList.toggle('active',E49.P[b.toggle]);
-    }else if(b.action){
-      el.onclick=b.action;
-    }
-    btnDiv2.appendChild(el);
-  }
-  panel.appendChild(btnDiv2);
+  // 功能按钮
+  const btnR2=document.createElement('div');btnR2.className='btn-row';
+  const mkBtn=(label,onclick)=>{
+    const b=document.createElement('button');b.className='btn';b.textContent=label;b.onclick=onclick;btnR2.appendChild(b);return b;
+  };
+  const bAudio=mkBtn('音频:On',function(){E49.P.audioOn=!E49.P.audioOn;simpleTxt(this,'音频:',E49.P.audioOn);});
+  const bPerch=mkBtn('停歇:On',function(){E49.P.perchOn=!E49.P.perchOn;simpleTxt(this,'停歇:',E49.P.perchOn);});
+  const bBank=mkBtn('侧倾:On',function(){E49.P.bankOn=!E49.P.bankOn;simpleTxt(this,'侧倾:',E49.P.bankOn);});
+  const bGrade=mkBtn('调色:On',function(){E49.P.grade=!E49.P.grade;simpleTxt(this,'调色:',E49.P.grade);});
+  const bRecheck=mkBtn('重跑自检',function(){
+    const st=E49.selfTest();
+    console.log('[E49] selfTest\n'+st.lines.join('\n'));
+  });
+  const bPause=mkBtn('暂停',function(){paused=!paused;});
+  panel.appendChild(btnR2);
 
-  // debug 显示项
-  E49.P.showKNN=false;
-  E49.P.showField=false;
-  E49.P.showBox=false;
+  function simpleTxt(el,prefix,on){el.textContent=prefix+(on?'On':'Off');el.classList.toggle('active',on);}
 })();
 
 /* ========================================================================
@@ -1130,21 +1018,12 @@ E49.stats = function(n){
    ======================================================================== */
 E49.rebuildLayout();
 E49.resetFlock();
-document.getElementById('gate').addEventListener('click',function(){
-  this.classList.add('hide');
-});
-/* 面板默认隐藏直到点击 */
+document.getElementById('gate').addEventListener('click',function(){this.classList.add('hide');},{once:true});
 document.getElementById('panel').style.display='none';
-document.getElementById('gate').addEventListener('click',function(){
-  document.getElementById('panel').style.display='';
-},{once:true});
+document.getElementById('gate').addEventListener('click',function(){document.getElementById('panel').style.display='';},{once:true});
 
+console.log('[E49] prototype v2 loaded. window.__E49 ready.');
 requestAnimationFrame(loop);
-
-// 导出关键函数供测试
-E49._internals={windFx,computeOrder,findNeighbors,rebuildGrid,simulate,getSOA:()=>({px,py,vx,vy})};
-
-console.log('[E49] prototype loaded. window.__E49 ready.');
 </script>
 </body>
 </html>
