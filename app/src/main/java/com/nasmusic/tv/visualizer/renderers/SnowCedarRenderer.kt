@@ -26,7 +26,7 @@ import kotlin.math.max
 /*
  * ============================================================================
  *  E47「雪松」绘制侧（K5 / K7）
- *  原型：`docs/e47-snow-cedar-preview.html` §10 的 `renderFrame` 与全部 `draw*`
+ *  原型：`docs/archive/e47-snow-cedar-preview.html` §10 的 `renderFrame` 与全部 `draw*`
  *  （`:1233-1414`）。本文件**只做重放**：几何与烘焙全部在
  *  `SnowCedarParams` / `SnowCedarMath` / `SnowCedarTree` / `SnowCedarBakes` /
  *  `SnowField` / `SnowPerson` / `SnowWorld` 里，逐帧只做「取状态 → 落笔」。

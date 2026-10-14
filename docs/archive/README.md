@@ -98,6 +98,12 @@
 | `phone-support-plan.md` | 电视 + 手机双端支持已落地 | `AGENTS.md` |
 | `催眠频谱效果开发方案.md` | 催眠可视化已落地（CHANGELOG「新增催眠 E25」） | `FormulaLayout.kt` |
 
+### 第四轮 — E47「雪松」可视化（2026-10-14，已验证帧率 100+，release v2.38.11）
+
+| 文档 | 判定依据 | 被谁引用（已改写） | 挂起决策 |
+|---|---|---|---|
+| `e47-snow-cedar-plan.md` + `.html` | K1–K7 闭合；v2.38.11 release APK（24.46 MB，V2 CN=NASMusicTV）；真机帧率 50–80→100+；`postFx` 形制修正已归档至 `§10.233` | `SnowCedarRenderer.kt`（KDoc）、`SnowCedarParams.kt`、`technical-overview.md` §10.233、`MoonlitAudioTest.kt`（`vignetteOverride` 白名单） | ⛔ K8 真机验收（创维 API 22）仍待所有者执行：树下/同线判读、铺屏降档、`drawBitmapMesh` 首次上机未确认 |
+
 ---
 
 ## 第三轮（13 个）—— 所有者确认：状态标记全部过期

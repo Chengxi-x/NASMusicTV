@@ -1,7 +1,7 @@
 # E47「雪松 · 漫天大雪」视觉化效果开发方案
 
 > **状态**：**Kotlin 落地完成（v2.38.11）—— K1–K7 全部闭合，K8 真机验收 ⛔ 未执行（待所有者）**
-> 本轮交付物 = 本文档 + `docs/e47-snow-cedar-preview.html`（纯 Canvas 2D 原型，自带 12 条自检）
+> 本轮交付物 = 本文档 + `docs/archive/e47-snow-cedar-preview.html`（纯 Canvas 2D 原型，自带 12 条自检）
 > + `docs/archive/verification/scripts/e47_snow_harness.js`（数值再生脚本）
 > + `docs/archive/verification/scripts/e47_visual_driver.mjs`（真浏览器截图驱动）
 > + Kotlin 侧 8 个主文件（`SnowCedar{Params,Math,Tree,Bakes,Renderer}.kt` / `SnowField.kt` / `SnowPerson.kt` / `SnowWorld.kt`）
@@ -690,7 +690,7 @@ E47 是唯一把「Kotlin 折叠数」单列成第二列的。铺屏（= 全屏�
 
 ## 十三、原型使用说明
 
-**浏览器**：直接打开 `docs/e47-snow-cedar-preview.html`（1600×900 canvas），点画面开门禁后出右栏与 HUD。
+**浏览器**：直接打开 `docs/archive/e47-snow-cedar-preview.html`（1600×900 canvas），点画面开门禁后出右栏与 HUD。
 **30 个滑杆 + 1 个档位选择器**，分七组：构图锚点（`hz`/`treeX`/`treeY`/`top`/`crownW`/`sunX`/`sunY` 7 条）、
 大树（`depth`/`lenDecay`/`spreadDeg`/`droop`/`maxSegs` 5 条）、枝上积雪（`snowHMin`/`snowK`/`clump` 3 条）、
 漫天大雪（`flakes`/`fall`/`wind.base`/`gustAmp`/`swayAmp` + 返工新增 `rVar`/`streak`，7 条）、

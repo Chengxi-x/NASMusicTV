@@ -1,7 +1,7 @@
 package com.nasmusic.tv.visualizer.renderers
 
 /**
- * E47「雪松」的参数表 —— `docs/e47-snow-cedar-preview.html` 里 `P` + `TIERS` 的 1:1 移植。
+ * E47「雪松」的参数表 —— `docs/archive/e47-snow-cedar-preview.html` 里 `P` + `TIERS` 的 1:1 移植。
  *
  * ## 为什么单独一个文件、为什么全是 `Double`
  * 原型是浏览器里调出来的，**每一个数都是定稿值**；Kotlin 侧任何"顺手改成 Float"都会让

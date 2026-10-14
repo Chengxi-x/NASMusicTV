@@ -317,10 +317,10 @@ function steerBoids(dt){
     let stMag=Math.sqrt(stx*stx+sty*sty);
     if(stMag>accelLim){stx*=accelLim/stMag;sty*=accelLim/stMag;}
 
-    // 风场（curl noise）
+    // 风场（curl noise）— 主导方向，打破对跖双群
     const wf=windFx(xi,yi,E49._simTime*P.curlDrift);
-    stx+=wf[0]*0.18*H;
-    sty+=wf[1]*0.18*H;
+    stx+=wf[0]*0.04*H;
+    sty+=wf[1]*0.04*H;
 
     // 边界硬约束
     const m=H*0.02;
@@ -387,7 +387,11 @@ function steerBoids(dt){
 const NWIND=4;
 let windA=[],windK=[],windDX=[],windDY=[],windPH=[];
 function windFx(x,y,t){
-  let fx=0,fy=0;
+  // 主导风：波长>>画幅的横向平流 → 给整群同一方向推力，打破对跖双群
+  const baseFx=0.20*Math.sin(y*0.0012-t*0.06)+0.07;
+  const baseFy=0.05*Math.sin(x*0.0010+t*0.04);
+  // 涡项（附加小尺度 curl 扰动）
+  let fx=baseFx, fy=baseFy;
   for(let i=0;i<NWIND;i++){
     const ph=windK[i]*(x*windDX[i]+y*windDY[i])-windPH[i]-windK[i]*t*0.00002;
     const c=Math.cos(ph);
@@ -824,10 +828,10 @@ E49.resetFlock = function(){
     const bandB=E49.P.birdSpanY[1]-0.03;
     px[i]=E49.P.birdSpanX[0]+rand()*(E49.P.birdSpanX[1]-E49.P.birdSpanX[0]);
     py[i]=bandT+rand()*(bandB-bandT);
-    const dirx=rand()<0.5?-1:1;
+    // 全部鸟同向初始化（避免对跖双群极化作废γ）
     const sp=spdN*(0.85+rand()*0.30);
-    vx[i]=dirx*sp;
-    vy[i]=(rand()-0.5)*sp*0.1;
+    vx[i]=sp*(0.7+rand()*0.3);
+    vy[i]=(rand()-0.5)*sp*0.15;
     flapPh[i]=rand()*Math.PI*2;
     speedK[i]=0.82+rand()*0.36;
     respK[i]=0.75+rand()*0.50;
