@@ -4,6 +4,7 @@ import android.content.Context
 import com.nasmusic.tv.data.model.VisualQuality
 import com.nasmusic.tv.data.model.VisualizerTheme
 import com.nasmusic.tv.visualizer.renderers.BeatFireworkRenderer
+import com.nasmusic.tv.visualizer.renderers.BirdsFlockRenderer
 import com.nasmusic.tv.visualizer.renderers.CircularRingRenderer
 import com.nasmusic.tv.visualizer.renderers.ConstellationRenderer
 import com.nasmusic.tv.visualizer.renderers.LiquidGridRenderer
@@ -72,6 +73,8 @@ object VisualizerRendererFactory {
         VisualizerTheme.TRIPOD_FOG -> TripodFogRenderer()
         // E47「雪松」零外部资产（8 类位图全在 onEnter 后按画幅烘焙）⇒ ⛔ 不收 Context。
         VisualizerTheme.SNOW_CEDAR -> SnowCedarRenderer()
+        // E49「鸟群」零外部资产（6 类位图全在首帧 boot 程序化烘焙）⇒ ⛔ 不收 Context。
+        VisualizerTheme.BIRDS_FLOCK -> BirdsFlockRenderer()
     }
 
     /**

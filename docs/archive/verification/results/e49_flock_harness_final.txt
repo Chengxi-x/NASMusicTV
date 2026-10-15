@@ -1,0 +1,422 @@
+{
+  "generatedBy": "e49_flock_harness.js",
+  "page": "docs/e49-birds-flock-preview.html",
+  "warmFrames": 300,
+  "runFrames": 1800,
+  "results": [
+    {
+      "tier": "LOW",
+      "gates": [
+        {
+          "gate": "G1 selfTest 无 FAIL",
+          "pass": true,
+          "detail": "0 FAIL"
+        },
+        {
+          "gate": "G2 flyBelowHorizon=0",
+          "pass": true,
+          "detail": "flyBelowHorizon=0"
+        },
+        {
+          "gate": "G3 deep(地下鸟)=0",
+          "pass": true,
+          "detail": "deep=0"
+        },
+        {
+          "gate": "G4 栖鸟贴枝+高于地平线",
+          "pass": true,
+          "detail": "全部 19 只就位"
+        },
+        {
+          "gate": "G5 确定性（两遍逐字节相等）",
+          "pass": true,
+          "detail": "identical (1153 B)"
+        }
+      ],
+      "snapshot": {
+        "tier": "LOW",
+        "selfTest": {
+          "pass": 11,
+          "total": 11,
+          "lines": [
+            "T1 op=11 ≤13: PASS",
+            "T2 γ=0.439 var=0.0639: PASS",
+            "T3 N=200: PASS",
+            "T4 NaN=0: PASS",
+            "T5 冻结=0: PASS",
+            "T6 fill=2.39: PASS",
+            "T7 邻居=5.9 (3~7): PASS",
+            "T8 在栖=19(flag=19) cap=30: PASS",
+            "T9 bank中位数=4.5°: PASS",
+            "T10 flap%=54: PASS",
+            "T11 层op恒等 f1111: PASS"
+          ]
+        },
+        "fails": [],
+        "warns": [],
+        "perch": {
+          "offT": 629.7,
+          "horizonY": 720,
+          "perched": 19,
+          "flyMinY": 0.384,
+          "flyMaxY": 0.705,
+          "flyBelowHorizon": 0,
+          "deepCount": 0,
+          "deep": [],
+          "rows": [
+            {
+              "bird": {
+                "x": 112.2,
+                "y": 645.6
+              },
+              "wantX": 112.2,
+              "treeDrawnX": 137.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1263.3,
+                "y": 629.1
+              },
+              "wantX": 1263.3,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 138.7,
+                "y": 656.1
+              },
+              "wantX": 138.7,
+              "treeDrawnX": 137.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1260.5,
+                "y": 587.9
+              },
+              "wantX": 1260.5,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 84,
+                "y": 643.8
+              },
+              "wantX": 84,
+              "treeDrawnX": 60.4,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1187,
+                "y": 556.3
+              },
+              "wantX": 1187,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1184.6,
+                "y": 576.5
+              },
+              "wantX": 1184.6,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1158.8,
+                "y": 548.5
+              },
+              "wantX": 1158.8,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            }
+          ],
+          "rowsBad": []
+        }
+      },
+      "deterministic": true
+    },
+    {
+      "tier": "MEDIUM",
+      "gates": [
+        {
+          "gate": "G1 selfTest 无 FAIL",
+          "pass": true,
+          "detail": "0 FAIL"
+        },
+        {
+          "gate": "G2 flyBelowHorizon=0",
+          "pass": true,
+          "detail": "flyBelowHorizon=0"
+        },
+        {
+          "gate": "G3 deep(地下鸟)=0",
+          "pass": true,
+          "detail": "deep=0"
+        },
+        {
+          "gate": "G4 栖鸟贴枝+高于地平线",
+          "pass": true,
+          "detail": "全部 19 只就位"
+        },
+        {
+          "gate": "G5 确定性（两遍逐字节相等）",
+          "pass": true,
+          "detail": "identical (1161 B)"
+        }
+      ],
+      "snapshot": {
+        "tier": "MEDIUM",
+        "selfTest": {
+          "pass": 11,
+          "total": 11,
+          "lines": [
+            "T1 op=11 ≤13: PASS",
+            "T2 γ=0.422 var=0.0368: PASS",
+            "T3 N=400: PASS",
+            "T4 NaN=0: PASS",
+            "T5 冻结=0: PASS",
+            "T6 fill=2.47: PASS",
+            "T7 邻居=6.5 (3~7): PASS",
+            "T8 在栖=19(flag=19) cap=80: PASS",
+            "T9 bank中位数=2.8°: PASS",
+            "T10 flap%=63: PASS",
+            "T11 层op恒等 f1111: PASS"
+          ]
+        },
+        "fails": [],
+        "warns": [],
+        "perch": {
+          "offT": 629.7,
+          "horizonY": 720,
+          "perched": 19,
+          "flyMinY": 0.281,
+          "flyMaxY": 0.72,
+          "flyBelowHorizon": 0,
+          "deepCount": 0,
+          "deep": [],
+          "rows": [
+            {
+              "bird": {
+                "x": 1184.6,
+                "y": 576.5
+              },
+              "wantX": 1184.6,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 84.7,
+                "y": 622
+              },
+              "wantX": 84.7,
+              "treeDrawnX": 60.4,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1246.8,
+                "y": 636.5
+              },
+              "wantX": 1246.8,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1264.2,
+                "y": 639.2
+              },
+              "wantX": 1264.2,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 61.1,
+                "y": 612.7
+              },
+              "wantX": 61.1,
+              "treeDrawnX": 60.4,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1277.7,
+                "y": 632.4
+              },
+              "wantX": 1277.7,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1266.8,
+                "y": 648.5
+              },
+              "wantX": 1266.8,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1158.8,
+                "y": 548.5
+              },
+              "wantX": 1158.8,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            }
+          ],
+          "rowsBad": []
+        }
+      },
+      "deterministic": true
+    },
+    {
+      "tier": "HIGH",
+      "gates": [
+        {
+          "gate": "G1 selfTest 无 FAIL",
+          "pass": true,
+          "detail": "0 FAIL"
+        },
+        {
+          "gate": "G2 flyBelowHorizon=0",
+          "pass": true,
+          "detail": "flyBelowHorizon=0"
+        },
+        {
+          "gate": "G3 deep(地下鸟)=0",
+          "pass": true,
+          "detail": "deep=0"
+        },
+        {
+          "gate": "G4 栖鸟贴枝+高于地平线",
+          "pass": true,
+          "detail": "全部 19 只就位"
+        },
+        {
+          "gate": "G5 确定性（两遍逐字节相等）",
+          "pass": true,
+          "detail": "identical (1158 B)"
+        }
+      ],
+      "snapshot": {
+        "tier": "HIGH",
+        "selfTest": {
+          "pass": 11,
+          "total": 11,
+          "lines": [
+            "T1 op=11 ≤13: PASS",
+            "T2 γ=0.149 var=0.0549: PASS",
+            "T3 N=600: PASS",
+            "T4 NaN=0: PASS",
+            "T5 冻结=0: PASS",
+            "T6 fill=2.55: PASS",
+            "T7 邻居=6.7 (3~7): PASS",
+            "T8 在栖=19(flag=19) cap=150: PASS",
+            "T9 bank中位数=2.7°: PASS",
+            "T10 flap%=66: PASS",
+            "T11 层op恒等 f1111: PASS"
+          ]
+        },
+        "fails": [],
+        "warns": [],
+        "perch": {
+          "offT": 629.7,
+          "horizonY": 720,
+          "perched": 19,
+          "flyMinY": 0.181,
+          "flyMaxY": 0.591,
+          "flyBelowHorizon": 0,
+          "deepCount": 0,
+          "deep": [],
+          "rows": [
+            {
+              "bird": {
+                "x": 61.1,
+                "y": 612.7
+              },
+              "wantX": 61.1,
+              "treeDrawnX": 60.4,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 84.7,
+                "y": 622
+              },
+              "wantX": 84.7,
+              "treeDrawnX": 60.4,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1263.3,
+                "y": 629.1
+              },
+              "wantX": 1263.3,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 138.7,
+                "y": 656.1
+              },
+              "wantX": 138.7,
+              "treeDrawnX": 137.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1264.2,
+                "y": 639.2
+              },
+              "wantX": 1264.2,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1269.9,
+                "y": 622.6
+              },
+              "wantX": 1269.9,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1260.5,
+                "y": 587.9
+              },
+              "wantX": 1260.5,
+              "treeDrawnX": 1225.9,
+              "aboveHorizon": true
+            },
+            {
+              "bird": {
+                "x": 1266.8,
+                "y": 648.5
+              },
+              "wantX": 1266.8,
+              "treeDrawnX": 1248.7,
+              "aboveHorizon": true
+            }
+          ],
+          "rowsBad": []
+        }
+      },
+      "deterministic": true
+    }
+  ]
+}

@@ -15214,3 +15214,176 @@ lint **0 error / 136 warning**（既有基线不动），`logs_temp/karaoke_fix3
 
 与 §10 里为 `UncaughtExceptionsBeforeTest` 挂 `TestListener` 是同一类手法：**探针读不到的东西，
 先让探针把话说出来**，而不是从零复跑一遍去猜。
+
+### 10.234 E49「鸟群」浏览器原型：视觉重修 + 三处模拟缺陷根因修复（2026-10-14，全部实测验证）
+
+交付物 `docs/e49-birds-flock-preview.html`（方案 `docs/e49-birds-flock-plan.md`）。MEDIUM 档 800 鸟，
+60fps / 16.7ms，图元 11 ops ≤13，11 项自检门禁全 PASS。§十 要求的再生脚本**同日晚些时候已补建**
+（见下文 §四）：`e49_flock_harness.js`（vm 沙箱确定性对账）+ `e49_flock_driver.mjs`（真浏览器截图驱动）。
+后续轮次的数字**以 harness 为唯一来源**，页面内探针 `window.__E49.stats(n)` / `perchDebug()` 仅供调试。
+
+#### 一、视觉重修（对照用户截图逐项闭环）
+
+| 项 | 修法 |
+|---|---|
+| 橙色落日天 → 冷暮色 | `drawSky` 四停渐变 hsl(228/220/210/203, 低饱和)，`skyTopL 0.22 / skyHorizonL 0.72` |
+| 十字架树 → 枯树剪影 | `treeGeom(i)`：每树固定 seed 确定性生成主干锥形+弯曲、3~4 根分枝+末端小杈，1 Path/1 fill |
+| 尺子线草丛 → 稀疏弧簇 | 16 簇 × 2~4 弧形叶片，不贴地平线、低对比 |
+| 碎片鸟 → 侧视剪影 | 每鸟 3 三角（主翼+远翼暗示+纺锤身体）；主翼摆幅 0.38L、翼尖前掠 +0.04L、腹 0.10L（**0.62L 摆幅版读作碎屑**） |
+| 深度塌层（py 分带 h:764 退化） | 每鸟深度态 `dIdx∈[0,1)` 缓慢漂移穿层，层=`floor(d*4)`，渲染与统计共用 `layerOfBird` |
+| 群体气势 | 初始化 3 子团（近高斯散布）+ 层尺寸 [10,14,19,26]；正弦目标 → **waypoint 巡航**（质心共享目标向量，⛔ 逐鸟指向会差动剪切撕碎极化） |
+
+#### 二、模拟层三处缺陷（对 Kotlin 移植有直接警示价值）
+
+1. **地板边界力符号写反（用户报「鸟飞进地下」根因）**：屏幕坐标 y 向下为正，`if(yi>hY-bandN)`
+   分支里 `sty+=kHard*(yi-floor)/bandN` 加正值 = **向下按**——越界鸟被一路按到 `py=1` 卡死，
+   速度被低速放大钳制钉在 `spdMinN` 向下。实测泄漏线性累积（58s 内低于地平线 3→80 只），
+   修 `+=`→`-=` 后 60s 三采样清零。⚠️ 其余三面墙符号都对，唯独一行反——**四方向边界力必须一起 review**；
+   ⚠️ 现有 T4/T5 门禁（NaN/冻结）抓不住这类「位置越界但仍在动」的泄漏，已把
+   `flyBelowHorizon`/`deep(py>0.85)` 计数加进 `perchDebug()` 探针。
+2. **栖鸟不随树滚动（用户报「栖鸟悬空」）**：树按 `offT` 滚动绘制，栖鸟却是落栖时刻的绝对坐标。
+   修法 = 滚动量提取为单一来源 `treeScroll()`（drawTrees 与 updatePerch 共用，⛔ 不得分叉）、
+   栖点存**相对树干偏移 dx**、`perchSlotOf[]` 直查 slot 替换「按坐标 <1px 模糊匹配归还」（滚动后必失配、泄 slot）。
+   验证：6s 滚动 108px，每只栖鸟 x 与理论换算值精确相等，树左右缘回绕时鸟同步回绕。
+3. **栖点低位枝 + 起飞坠地**：枝尖可低到地平线之下（树根扎在地面带内），从那里起飞初速为零、
+   暗鸟贴暗地「消失」。修法 = 栖点过滤 `y > 地平线−bandInner×0.55` 的候选 + 起飞给上仰初速
+   `vy=−spdN·0.8`。
+
+#### 三、实测口径（供方案 §十 回填与 O5 裁决）
+
+γ=0.43~0.66 随整群转弯波动（方差 0.02~0.046）；邻居均值 6.2~6.4；在栖 21~27（slot 与 flag 精确一致）；
+bank 中位数 2~3°（±45° 钳制后无 T9 WARN）；`flyMaxY` 稳定 0.65~0.69（带下缘正常余量）。
+**§O5 的候选阈值 1/3 明显低于实测波动带下沿 0.43**——整群转弯时 γ 周期性跌破 0.5，若阈值取更高
+需先解决转弯极化跌落（候选：waypoint 切换 fade-in）。
+
+#### 四、第二轮：五项优化 + 再生脚本补建（2026-10-14 同日，数字全部由 harness 再生）
+
+**O1 穿层连续插值**：层尺寸原按 `floor(d*4)` 跳变取 [10,14,19,26]，dIdx 漂移穿层时鸟会瞬时变大/变淡。
+改 `baseL(d)` 按段线性插值（`seg=d*3` 取相邻两 stop 插值），穿层平滑；渲染 L 再乘速度伸缩 `speedK*0.3+0.85`。
+
+**O2 落栖进近过渡**：原落栖是「锁定 slot 即瞬移到枝尖」，肉眼可见闪现。改状态机 `state=3`（进近）：
+以 `perchPts[slot]` 的同帧滚动换算坐标为目标寻的（速度随距离衰减 `spd*(0.25+dist*18)`，上限 1.4×巡航），
+`dist<12px` 或超时 6s 才真正落栖；随机起落只置 slot+state，不再写坐标。⛔ perched 检查与
+`steerBoids` 的 `state[i]===3` 早退必须同时成立，否则进近鸟会被边界力拽走。
+
+**O3 waypoint 切换 fade-in**：原切航点时目标向量瞬换，整群 γ 单帧跌到 0.093。改 `_prevGoalX/Y` +
+`_wpFade` smoothstep 1.5s 渐入，切换后 γ 实测回升至 0.784（单帧谷值抬高一个量级）。
+
+**O4 远景树排**：地平线上 16 棵细长剪影三角（独立 `mkRng(777001)`，`vTree*0.035` 视差），1 Path/1 fill，
+op 10→11、fill +0.015，仍 ≤13 预算。
+
+**O5→已落地 扑动弱同步（两轮失败后的正解）**：
+- 第一次：全耦合 `dt*0.3` → flap% 97 WARN（相位塌缩成「阅兵」）。
+- 第二次：`|dph|>0.6` 限幅 + `dt*0.15` → **仍全局塌缩**（flap% 95→4 漂移过周期）。根因：邻居表取 `nid[i*14]`
+  头号邻居，全体朝同一相位收敛且无频率差异，等价 Kuramoto **K>Kc** 全局同步态。
+- 正解 = **先给每鸟固有频率抖动 `omegaK[i]=0.92+rand()*0.16`（±8%）**，耦合放开限幅、降到 `dt*0.05`
+  （弱耦合 < 临界），flap% 稳定在 63~67（三档 harness + 真浏览器双口径一致）。⛔ 经验：**相位耦合
+  不配频率多样性必然全局塌缩**，调耦合系数救不回来；Kotlin 移植时 `omegaK` 必须与 `omega` 相乘出现在
+  同一行（`flapPh[i]+=omega*omegaK[i]*dt`），栖鸟相位收敛到 −π/2（翅合拢）不受影响。
+
+**再生脚本（方案 §十 工程债清偿，Kotlin golden 对账的前置条件）**：
+- `e49_flock_harness.js`：Node vm 沙箱（照 E47 模式）驱动**页面真实代码**，固定 60fps 帧序（页面
+  `loop(ts)` 靠 ts 差推进，喂定值即确定性）。五门禁：G1 selfTest 无 FAIL、G2 `flyBelowHorizon=0`、
+  G3 `deep(py>0.85)=0`、G4 每只栖鸟 x 与滚动换算 `wantX` 差 <0.6px 且高于地平线、G5 **全新世界同帧序
+  重放黄金快照逐字节相等**。支持 `--tier`/`--all-tiers`/`--out`（黄金 JSON 落 `logs_temp/`）。
+  ⚠️ E49 无 E48 那种定帧 capture 函数（Boids 是时间积分，无绝对时刻可跳），确定性只能靠帧序重放达成。
+- `e49_flock_driver.mjs`：headless Edge + CDP 端口 **9349**，`gates`（真实 rAF 跑 N 秒后读 selfTest +
+  截帧判读）/`tiers`（三档各一帧 + sha 去重，防「两帧相同=画面没动」）/`shot`/`probe` 四模式；
+  导航必带 `?v=` 防文档缓存截到旧版；导航前注入 `onerror` 收集页内异常（否则顶层抛错伪装成「页面没起来」）。
+
+**harness 三档实测（warm 300 + 计量 1800 帧，两遍逐字节确定性）**：
+
+| 档 | N | γ（方差） | flap% | 邻居 | 在栖 | op | fill |
+|---|---|---|---|---|---|---|---|
+| LOW | 300 | 0.586 (0.034) | 64 | 5.6 | 18/30 | 11 | 2.35 |
+| MEDIUM | 800 | 0.405 (0.063) | 63 | 6.4 | 19/80 | 11 | 2.44 |
+| HIGH | 1500 | 0.676 (0.045) | 65 | 6.7 | 17/150 | 11 | 2.55 |
+
+真浏览器（Edge CDP，各跑 12s）：三档 selfTest 无 FAIL、零地下泄漏、三帧 sha 互异；
+HIGH 档帧率 **45ms/22fps**（真实渲染开销，较 §五 HIGH 预算超支，记录在案：HIGH 档在 TV 上不可用，
+Kotlin 实现时 HIGH 需降配或另行优化；MEDIUM 实测稳定 16.7ms/60fps）；LOW 档单次瞬时 T2 γ=0.070 WARN
+（整群转弯谷值，var 正常，下一窗口即恢复，非回归）。
+
+### 10.235 v2.38.12 — E49「鸟群」Kotlin 落地：第 25 套可视化效果（K1–K7 闭合，K8 真机验收待所有者执行）
+
+**2026-10-15。** 方案 §十一 的 K 系任务拆解落地情况（⛔ 本节只记已验证内容）：
+
+| 任务 | 落地 | 说明 |
+|---|---|---|
+| K1 枚举 + 工厂 + 双语字符串 + 护栏 | ✅ | `AppSettings.kt` 新增 `BIRDS_FLOCK(R.string.visualizer_theme_birds_flock, "鸟群", Tier.ADV, "49", needsParticleBudget = false)`（`"48"` 由 E48 预留、未落地，计数 24 → 25）；工厂分支（穷尽 `when` 护栏）；`values`/`values-en` 双键 |
+| K2 `BirdsFlockMath.kt` | ✅ | internal object：mulberry32 种子 RNG（`BfRng`，Int 乘法自然回绕 = JS `Math.imul` 语义）、`safeNormalize` 零向量守卫（⛔ 判据必须 `!(m2 ≥ eps)`——`m2 < eps` 会漏 NaN，实测抓到一次）、有界分离守卫 `(1−d/R)²`（n=2，§4.2）、侧倾 2:1 指数趋近（τ 0.07/0.14）、钳 ±45°、HSL→RGB、档位表 |
+| K3 `BirdsFlockFlock.kt` | ✅ | soa `FloatArray`/`ByteArray` 状态 + 空间哈希（3×3 邻格 + 逐格容量上限）+ **纯拓扑 top-7**（3×3 候选 + 90° 前向半平面锥 + max-heap by d²，⛔ 无半径过滤——§8.3 B2 决策）+ 三规则间接式（各自归一化 → 各自截断 → 优先级累加 → 再截断 `accelCap`）+ 航点巡航（1.5s smoothstep 渐入）+ 停栖状态机（进近寻的不瞬移 → 落栖 → 错峰起飞上仰初速）+ 栖鸟跟随 `treeOff` 滚动同源。固定步 1/60、最多 3 子步丢余量（§5.8）；扑动相位 + Kuramoto 弱同步（±8% 频率抖动）在**渲染阶段**推进 |
+| K4 `BirdsFlockBakes.kt` | ✅ | 6 张位图全程序化烘焙（sky 6 停点渐变含香槟金唇线 / 地面 4 停点暖褐 / 远树排 seed 777001 / 枯树 seed 90210+i（与栖点共享 treeGeom ⇒ 鸟坐枝尖）/ 草丛 seed 31415926 / grade 电影分色）。**全部走原生 LinearGradient/RadialGradient/Path，无逐像素行循环** ⇒ 数 ms 完成，⛔ 不需要 E47 的分帧烘焙队列 |
+| K5 `BirdsFlockRenderer.kt` | ✅ | 逐帧结构 11 op（sky 1 + ground 1 + farTrees 1 + trees 1 + 鸟群 4 层 + 停栖 1 + 草丛 1 + grade 1），**op 数与鸟数无关**；每层一条 Path `rewind()` 一次 fill、顶点坐标里算完扑动/侧倾（⛔ 零 save/rotate/Matrix/clipPath/drawVertices，源码门禁锁死）；三条滚动带 = Compose `drawRect(ShaderBrush(Repeated))` + **`nativeCanvas.translate(−off, y)` 平移画布定位**（⛔ 零 local matrix；⚠️ 2026-10-15 真机返工 D3 前是"只挪 `topLeft`"，见本节末尾更正）；postFx 三段式（`PostFx(vignette = 0.24f)` 与 grade 烘焙边缘 α 同数 + `vignetteOverride` 恒 0，R6） |
+| K6 音频四通道接线 | ✅（部分） | `bass → 风场幅值乘子`（1 + kBass·bass）、`energy → 视差速度乘子`（1 + kEnergy·energy）；无声两乘子 = 1 ⇒ 风与视差都有纯时间基线。⛔ `kMid`/`kTreble` 未接线（§7 待实现量，原型 0 实现，不接假默认值）；⛔ 不读 `spectrum`（双通道铁律） |
+| K7 单测 | ✅（合并版） | `BirdsFlockGateTest`（12 用例：零向量守卫 / 有界分离 / 侧倾 2:1 / 档位映射与枚举签名 / 1800 帧数值健康 / 小 N 暴力 O(N²) 交叉验证 / 停栖 slot 无重复占用且高于地平线 / γ 持续起伏 / 同种子两遍逐位一致 / 边界滑移 / 低位枝过滤）+ `BirdsFlockRenderSourceGateTest`（6 用例：禁物扫描负向自证）。方案 §11.2 的五类门禁按等价断言收进这两个文件（⛔ K 系编号任务表原列 10+ 个测试类，合并是落地时的实现决策） |
+| K8 真机验收 | ⛔ 待所有者 | §11.4 清单（9 项判读）未执行 |
+
+**实测收据（2026-10-15）**：`compileDebugKotlin` BUILD SUCCESSFUL；
+`testDebugUnitTest`（BirdsFlockGateTest 12 + BirdsFlockRenderSourceGateTest 6 + VisualizerThemeTest 13 +
+FxCoverageScanTest 8 + ParticleBudgetGateTest + VisualizerThemeStringsGateTest + PerfBudgetContractTest）
+全绿 BUILD SUCCESSFUL；`lintDebug` BUILD SUCCESSFUL。
+
+**登记同步**：`VisualizerThemeTest` 7 处硬编码计数（6×24→25、off 23→24）、`FxCoverageScanTest`
+阈值 `≥ 24 → ≥ 25` + `BirdsFlockRenderer` 进 `covered`（三段式，⛔ 不是 exempt）、
+`MoonlitAudioTest` 的 `vignetteOverride` 覆写名单补 `BirdsFlockRenderer.kt`（E49 与 E44/E46/E47 同形制）、
+`StarrySkyTest` 的效果总数门禁 24 → 25、`AGENTS.md` 门禁描述 23 → 25（含 E47/E49 沿革）。
+
+**已接受的近似（落地决策，照方案 §8.3 A/B）**：`turnR` 未实现显式 `r_min`（转弯由 `accelCap`
+隐性约束，推荐①）；扑动**单态** `sin(flapPh)`（规避 R4 的 30fps 二态切换风险）；grade 的暗角
+从原型双圆 `createRadialGradient` 收敛为单圆三停点近似（Android 无双圆径向渐变 API）；
+D1 偏差记录。跨端基线（`BirdsFlockBaseline.kt`）未生成——harness 黄金快照是 JS 侧的，
+Kotlin 侧 RNG 语义虽同构但参数路径不同，对账数字须由 Kotlin 侧另行再生（⛔ 不手抄）。
+
+⚠️ **更正（2026-10-15 真机返工 D3，本表 K5 行原写的"`topLeft.x = −off`"是错的）**：
+Compose 的 `drawRect(brush, topLeft, size)` **不会**把着色器挪到 `topLeft`（`ShaderBrush.applyTo`
+建着色器时不带 local matrix ⇒ 着色器锚在**画布原点**）⇒ 旧写法下带子既**不滚**、
+`topLeft.y > 0` 时还会被 `TileMode.Clamp` 折成"tile 最后一行铺满整条带"。真机症状与修法、
+以及 E47 雪松的同款修复，**全部记在 §10.236**（本轮唯一权威记录）。
+
+### 10.236 v2.38.12 — 真机返工 D3：滚动带着色器定位（E49 鸟群 + E47 雪松同款）＋ E49 视差速度对齐
+
+**2026-10-15。** 触发：owner 手机截图（2712×1220）判读「树显示不出来 / 远处的草是个竖棍」。
+⚠️ 上一轮（§10.235 之后的 D2）把症状误判为"线太细"，只加粗了干宽/叶宽 —— 加粗救不了**整条带消失**。
+
+**根因（一条，两套效果共用）**：`drawBand` 只挪了 Compose `drawRect` 的 `topLeft`，而
+`drawRect(brush, topLeft, size)` **不会**把着色器一起挪 —— `CanvasDrawScope.drawRect-AsUm42w`
+（`ui-graphics` 字节码逐条核对）把 `topLeft/size` 算成矩形后直接 `Canvas.drawRect(l,t,r,b,paint)`，
+`ShaderBrush.applyTo` 建着色器时**不带任何 local matrix** ⇒ 着色器锚死在**画布原点**。
+后果（`Repeated` X / `Clamp` Y）：`topLeft.y > 0` 时着色器按**画布 y** 采样、落到 tile 之外
+⇒ `Clamp` 把 tile **最后一行铺满整条带**；`topLeft.x = −off` 只改矩形范围 ⇒ **图案一点不动**（带子从未滚动）。
+
+**E49 症状与逐条对账**（真机像素实测，地平线 974 = 0.8×1220）：
+
+| 症状（owner 原话） | 机制 | 像素证据 |
+|---|---|---|
+| 树显示不出来 | 树带 tile 259px，最后一行（y=258）在树根之下 = 全透明 | 树带矩形 758..1017 全透明 |
+| 「远处的草是个竖棍」 | 远树带 tile 88px，最后一行 = 三角**底边**那一行 ⇒ 铺满整条带 | 竖棍恰好只占 `y ∈ [888, 976]`（= 该带矩形上下沿）；对比度沿 y 恒定（正常渲染应止于三角尖 ≈914 并向上收窄） |
+| 近景草丛看不见 | 同树带，最后一行在叶尖之下 | — |
+| 栖鸟悬空 | 栖鸟按 `treeOff` 挂在枝尖，树没画出来 | 地平线上方 0.73~0.80H 处的孤立黑点 |
+| 竖棍颜色 | 远树色 α0.52 压在天空上 | 实测 (103,104,106) vs 理论 (98,102,108) |
+
+**修法**：
+① `BirdsFlockRenderer.drawBand` / `SnowCedarRenderer.drawBand` 改为 `nativeCanvas.translate(−off, y)`
+   **平移画布**（画完立刻反向平移还原）⇒ 着色器连同矩形一起落到带上沿，采样行 = tile 的 `0..dh`；
+   ⛔ 不用 `save`/`restore`、⛔ 不用 `setLocalMatrix`（E43 真机实测退化成 identity）；
+   **图元数不变**（E49 仍 11 op，E47 的带子图元数不变）。
+② E49 `treePad` `160s → 250s`（按枝尖几何上界 `(T−B·j)/2 + (T+B·j)·yf/2 + cos(a)·T·lf·0.85 + T·lf·0.26 ≈ 220`
+   推导）、`treeTileGroundPad` `0.16 → 0.20` 带高 —— 原值把最高那棵树的**上段主干与枝杈烘到 tile 之外**。
+③ E49 视差速度对齐：`vTreePx/vTuftPx` 是 **1600×900 设计 px 系数**，调用点补乘 `scale() = h/900`
+   （不乘时 1080p/1220p 上慢 20~36%）。E47 的 `windPx = wind * l.w` 本就随画幅缩放，⛔ 未动。
+
+**E47 侧的行为变化（owner 需重看）**：修好后阴云带 / 远景雾带 / 贴地吹雪带会**回到设计 y 位置**
+（旧写法按"位图行号"落位 ⇒ 内容比设计位置整体上移 `y`；i≥1 的云层与远/近面纱带更会整条退化成
+一条平横带），并且**真的开始横向滚动**。⛔ E47 是已发布效果（v2.38.11 段已冻结），本条只记在 v2.38.12。
+
+**门禁**：`BirdsFlockRenderSourceGateTest` 新增「带子定位必须平移画布而不是挪 topLeft」——
+**两个文件一起扫**（`BirdsFlockRenderer.kt` + `SnowCedarRenderer.kt`）+ 负向自证（旧写法样本必须判红）；
+该类例数 6 → **8**。
+
+**收据（2026-10-15）**：`assembleRelease` **BUILD SUCCESSFUL**（`compileReleaseKotlin` 实跑、R8 /
+`lintVitalRelease` / `packageRelease` 全过），APK `NASMusicTV-release-v2-38-12.apk` **25,666,044 字节**；
+`testDebugUnitTest --tests "*BirdsFlock*" --tests "*Snow*"` **BUILD SUCCESSFUL**，
+`BirdsFlockGateTest` 12 / `BirdsFlockRenderSourceGateTest` 8 / `SnowCedarBakeGateTest` 13 /
+`SnowCedarGoldenTest` 11 / `SnowFieldTest` 5 / `SnowPersonGateTest` 5 —— **0 失败 0 错误 0 跳过**。
+⛔ **未真机验证**（owner 明确要求不在电视上测，改由 owner 在手机上判读）。

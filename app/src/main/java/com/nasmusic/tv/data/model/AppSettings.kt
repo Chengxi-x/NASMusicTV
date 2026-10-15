@@ -110,7 +110,7 @@ data class AppSettings(
 )
 
 /**
- * 可视化效果主题（24 套手动效果，无自动导演档）。
+ * 可视化效果主题（25 套手动效果，无自动导演档）。
  *
  * [tier] 决定该效果在各画质档位下的可用性，见 [VisualQuality.supports]。
  *
@@ -313,6 +313,32 @@ enum class VisualizerTheme(
      * 纯 Canvas 2D，⛔ WebView/three.js（TV 上死）。分帧烘焙预算 [SnowCedarBakes.BAKE_BUDGET_MS] ms。
      */
     SNOW_CEDAR(R.string.visualizer_theme_snow_cedar, "雪松", Tier.ADV, "47", needsParticleBudget = false),
+
+    /**
+     * E49「鸟群 · 掠过荒野」（方案 `docs/e49-birds-flock-plan.md`，原型
+     * `docs/e49-birds-flock-preview.html` 已过视觉闭环 + harness 三档全绿）。
+     *
+     * 视觉：**天空压倒性**（鸟群是主体，画面本体在 3/4 画幅以上）、地面只占底部 1/5、
+     * **地平线固定**（只读锚点，⛔ 不受鸟群包围盒影响）+ 底部带**极缓慢横向视差**
+     * （树带 ≈6 px/s，"盯着看十秒才确认它在动"）。运动由 **Boids 模型**产生（Reynolds 1987）：
+     * 拓扑 top-7 邻居（Ballerini 2008，⛔ 不是半径判据）+ 三规则间接式 steering +
+     * curl 风场（无散度 ⇒ 读作风）+ 侧倾波（滚入:滚出 = 2:1，StarDisplay）；
+     * 鸟用**动态剪影**（4 个飞行深度层 + 1 个停栖层，同层同 α 同色），**部分鸟停树后再起飞**
+     *（停栖状态机：进近寻的 → 落栖 → 停够时长错峰起飞）。
+     *
+     * ## 归 [Tier.ADV] + `needsParticleBudget = false`（§十二）
+     * 档位上如实标注"比 BASIC 重"（11 层绘制 + 6 张程序化烘焙位图），但本效果**一个粒子都不画**、
+     * 鸟数只按档位表（LOW 200 / MEDIUM 400 / HIGH 600）调数量、⛔ 不读 `maxParticles` ⇒ 第 4 参是
+     * **可核对的事实**。[VisualQuality.supports] 的 `ADV -> !needsParticleBudget || maxParticles > 0`
+     * 因此恒为真，**三档全部可选**（含 LOW）。⚠️ 别误标 `true`；也别改挂 ULTRA —— 本效果**不用帧缓冲**。
+     *
+     * ⚠️ 若日后渲染器真的读取 `ctx.quality.maxParticles`（例如改用预算控数量），
+     * `ParticleBudgetGateTest` 的源码扫描会与本标注对撞 ⇒ 必须同步改成 `true`。
+     *
+     * `"48"` 由 E48「大漠」预留（若 E48 最终不落地，`"48"` 空置，与 E45 同款做法）；
+     * `"45"` 空置（E45 留空不占位）。合批：每深度层一条 Path 一次 fill，op 数与鸟数**无关**（§5.1）。
+     */
+    BIRDS_FLOCK(R.string.visualizer_theme_birds_flock, "鸟群", Tier.ADV, "49", needsParticleBudget = false),
     ;
 
     /** 效果分级：决定画质档位可用性 */

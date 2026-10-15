@@ -466,15 +466,23 @@ class SnowCedarRenderer : RendererFx() {
     }
 
     /**
-     * 一条平铺带 = **一次 Compose `drawRect`**。
+     * 一条平铺带 = **一次 Compose `drawRect`** + **一次画布平移**。
      *
-     * ⭐ **横向滚动只靠 `topLeft.x = −off`**：画笔是 `ShaderBrush(ImageShader(Repeated, Clamp))`
-     * ⇒ 图案按屏宽无缝平移，把矩形整体左移 `off` 就等于"风把云吹过去"。
+     * ⛔⛔ **必须平移画布，不能只挪 `topLeft`**（2026-10-15 真机返工，与 E49 鸟群 D3 同一条根因）：
+     * Compose 的 `drawRect(brush, topLeft, size)` **不会**把着色器挪到 `topLeft` ——
+     * `CanvasDrawScope.drawRect-AsUm42w` 把 `topLeft/size` 算成矩形后直接 `Canvas.drawRect(l,t,r,b,paint)`，
+     * `ShaderBrush.applyTo` 建着色器时**不带任何 local matrix**（`ui-graphics` 字节码核对过）
+     * ⇒ 着色器锚死在**画布原点**。旧写法（只挪 `topLeft`）的两个后果：
+     *  · `topLeft.y > 0` ⇒ 着色器按**画布 y** 采样，采到 tile 之外 ⇒ `TileMode.Clamp` 把 tile
+     *    **最后一行铺满整条带**（云层/面纱带会退化成一条平的横带）；
+     *  · `topLeft.x = −off` ⇒ 只改了矩形范围，**图案一点不动**（"风把云吹过去"从来没生效）。
+     * ⇒ 正确做法：`translate(−off, y)` 把**画布连同着色器**一起挪到带上沿，画完立刻反向平移还原。
      * ⛔⛔ **不用 `Shader.setLocalMatrix` / 任何 local matrix** —— E43 真机实测它在硬件画布上
      * **静默退化成 identity**（带子不动、无报错，画面读起来像"风停了"）；E46 的 `drawLinRect`
      * 因此也只用 `Canvas.concat`。本文件**一处 local matrix 都不许出现**。
      * ⛔ 不用 `clipPath` / `clip(Rect)` 去"裁一条带"：矩形本身画在 `[−off, −off+w+cw]`，
      * 出画幅的部分由画布自己裁掉（`off ∈ [0, cw)` ⇒ 必然盖满 `[0, w]`）。
+     * ⛔ 不用 `save`/`restore`：平移是**成对**的，画完立刻反向平移还原。
      *
      * @param speed 横向滚动速度（原型 `drawVeil` 的第 6 参；阴云层是 `0.35 + i·0.25`）
      * @param y     带上沿（像素）
@@ -486,13 +494,17 @@ class SnowCedarRenderer : RendererFx() {
         val cw = bmp.width
         val dh = bmp.height
         if (cw <= 0 || dh <= 0) return
-        val off = bandOff(speed, cw)
+        val off = bandOff(speed, cw).toFloat()
+        val yF = y.toFloat()
+        val cv = drawContext.canvas.nativeCanvas
+        cv.translate(-off, yF)
         drawRect(
             brush = brush,
-            topLeft = Offset((-off).toFloat(), y.toFloat()),
+            topLeft = Offset.Zero,
             size = Size(w + cw, dh.toFloat()),
             alpha = SnowCedarMath.clamp(alpha, 0.0, 1.0).toFloat(),
         )
+        cv.translate(off, -yF)
     }
 
     /**

@@ -422,8 +422,8 @@ class MoonlitAudioTest {
             it.name.endsWith(".kt") &&
                 stripComments(it.readText()).contains("override fun vignetteOverride")
         }.map { it.name }
-        assertEquals("只许 E44 / E46 / E47 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
-            listOf("MoonlitRenderer.kt", "SnowCedarRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
+        assertEquals("只许 E44 / E46 / E47 / E49 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
+            listOf("BirdsFlockRenderer.kt", "MoonlitRenderer.kt", "SnowCedarRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
         assertTrue("基类默认值必须是哨兵（不覆盖）",
             mainFileText("RendererFx.kt").contains("vignetteOverride(fx: FxFrame): Float = NO_VIGNETTE_OVERRIDE"))
     }

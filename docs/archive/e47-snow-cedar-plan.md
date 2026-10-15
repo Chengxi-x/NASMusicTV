@@ -9,6 +9,11 @@
 > 实测：`testDebugUnitTest --rerun-tasks` **2164 例 / 203 类 / 0 失败**、`lintDebug` **0 error**、
 > 原型 harness **12/12 全绿**（末态 `fill = 5.107394083165496`，与 §十 逐位相同）。
 > 落地实况、三处偏离与两处「初稿漏记的接线点」全部记在 `docs/technical-overview.md` **§10.233**。
+> ⚠️ **2026-10-15 真机返工（D3，与 E49 鸟群同一条根因）**：三条平铺带（阴云 / 远景雾 / 贴地吹雪）的
+> `drawBand` 只挪了 Compose `drawRect` 的 `topLeft`，而着色器锚在**画布原点**（`ShaderBrush` 不带
+> local matrix）⇒ 带子**从未滚动**，且 i≥1 的云层与远/近面纱带被 `TileMode.Clamp` 折成**一条平横带**。
+> 已改为 `nativeCanvas.translate(−off, y)` 平移画布（图元数不变）⇒ 带子回到设计 y 位置并开始滚动。
+> 权威记录见 `docs/technical-overview.md` **§10.236** 与 `CHANGELOG.md` v2.38.12。
 > 原型定稿帧：`output/e47_frames/under_tree.png`（MED，t=20.17 s，肩雪积满，整帧构图）+
 > 位相组 `a0…a5`（同档 MED，⛔ HIGH——位相组只判肩雪节奏，档位混进来看不出差异）+
 > 树冠判读块 `zoom_tree.png`（**3× 最近邻**裁 `tree`，第四轮沿枝雪脊的判读依据）+
