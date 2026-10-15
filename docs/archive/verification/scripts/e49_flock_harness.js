@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* ============================================================================
    E49「鸟群 · 掠过荒野」数值再生 harness —— §十 全部数字的唯一来源
-   纯 Node vm 沙箱驱动 docs/e49-birds-flock-preview.html 的真实页面代码：
+   纯 Node vm 沙箱驱动 docs/archive/e49-birds-flock-preview.html 的真实页面代码：
    无图形设备、无 Math.random（页面用 mulberry32 种子 RNG），同帧序必产同数字。
 
    用法：
@@ -26,7 +26,7 @@ const vm = require('vm');
 
 const HERE = path.dirname(process.argv[1]);
 const ROOT = path.resolve(HERE, '..', '..', '..', '..');
-const PAGE = path.join(ROOT, 'docs', 'e49-birds-flock-preview.html');
+const PAGE = path.join(ROOT, 'docs', 'archive', 'e49-birds-flock-preview.html');
 const FRAME_MS = 1000 / 60;                    // 页面 loop(ts) 靠 ts 差推进，喂固定 60fps 帧序即确定性
 
 /* ---- 参数 ---- */
@@ -210,7 +210,7 @@ console.log('\n──── 总判定：' + (allOk ? '✅ 全部门禁通过' : 
 if (OUT_FILE) {
   const outPath = path.isAbsolute(OUT_FILE) ? OUT_FILE : path.join(ROOT, OUT_FILE);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, JSON.stringify({ generatedBy: 'e49_flock_harness.js', page: 'docs/e49-birds-flock-preview.html', warmFrames: WARM_FRAMES, runFrames: RUN_FRAMES, results }, null, 2));
+  fs.writeFileSync(outPath, JSON.stringify({ generatedBy: 'e49_flock_harness.js', page: 'docs/archive/e49-birds-flock-preview.html', warmFrames: WARM_FRAMES, runFrames: RUN_FRAMES, results }, null, 2));
   console.log('黄金快照已写 ' + outPath);
 }
 process.exit(allOk ? 0 : 1);

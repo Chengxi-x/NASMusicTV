@@ -1,7 +1,20 @@
 # E49 鸟群 - 原型
-# 文件路径：docs/e49-birds-flock-preview.html
+# 文件路径：docs/archive/e49-birds-flock-preview.html
 # 作者：自动生成 - 2026-10-14
-# 状态：运行中
+# 状态：已归档（2026-10-15，第十一轮）—— 历史脚手架，**不要再运行**
+#
+# ⛔⛔ 本脚本是一次性脚手架：它只写出了原型最初的 HTML 骨架（约 3.5 KB）。
+#      真正的原型已在其上迭代到 58 KB（含 Boids 仿真、三条视差带、11 项自检门禁），
+#      并已随 v2.38.12 全量移植为 Kotlin（`BirdsFlockRenderer` 等 4 个文件）。
+#      **运行本脚本会用 3.5 KB 的骨架覆盖掉那份 58 KB 的原型** ⇒ 破坏性、不可逆。
+#      保留它只为追溯「原型是怎么起头的」。
+#
+# E49 现状（恢复/扩展本效果时先读这两份，不要读本脚本）：
+#   · 方案：docs/archive/e49-birds-flock-plan.md（§九 含 D1–D3 偏差记录）
+#   · 原型：docs/archive/e49-birds-flock-preview.html（§十 全部数字的唯一再生源，
+#           由 docs/archive/verification/scripts/e49_flock_harness.js 驱动）
+#   · 实现：app/src/main/java/com/nasmusic/tv/visualizer/renderers/BirdsFlock*.kt
+#   · 权威落码记录：docs/technical-overview.md §10.235–§10.236
 
 # 1. 基础结构
 content = '''<!DOCTYPE html>
@@ -55,6 +68,6 @@ canvas { position:fixed; inset:0; width:100%; height:100%; display:block; backgr
 </body>
 </html>
 '''
-with open('docs/e49-birds-flock-preview.html', 'w', encoding='utf-8') as f:
+with open('docs/archive/e49-birds-flock-preview.html', 'w', encoding='utf-8') as f:
     f.write(content)
 print("HTML structure written")

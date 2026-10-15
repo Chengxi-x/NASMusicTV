@@ -1,8 +1,12 @@
 # E49「鸟群 · 掠过荒野」视觉化效果开发方案
 
-> **状态**：**原型已验证（2026-10-14/15）、Kotlin 实现未开始。** 落地实况与实测口径见
-> `docs/technical-overview.md` §10.234。
-> + ✅ `docs/e49-birds-flock-preview.html` 已建成并多轮视觉闭环（11 项自检门禁全 PASS，MEDIUM 400 鸟 60fps/11 ops）
+> **状态**：**已落地并出货 —— v2.38.12 / `versionCode 181`（`f528249`，2026-10-15），第 25 套手动效果。**
+> K1–K7 全部闭合；D3 真机返工（三条平铺带整条画错）已修并复测通过，E47 雪松同款缺陷一并修。
+> ⚠️ **归档状态头（2026-10-15，第十一轮）**：原文此处写「原型已验证、Kotlin 实现未开始」，
+> 是**过期标记**（与 E47 归档时同一类问题），已被本行取代；正文其余部分**一字未删**。
+> 落地实况 = `docs/technical-overview.md` **§10.235**（K1–K7 闭合，K8 真机验收待所有者）；
+> D3 根因与视差速度对齐 = **§10.236**；浏览器原型 = **§10.234**。
+> + ✅ `docs/archive/e49-birds-flock-preview.html` 已建成并多轮视觉闭环（11 项自检门禁全 PASS，MEDIUM 400 鸟 60fps/11 ops）
 > + ✅ `docs/archive/verification/scripts/e49_flock_harness.js` 已建成（vm 沙箱驱动页面真实代码，
 >   G1–G5 五门禁 + **同帧序两遍逐字节确定性对账**，三档全绿）——**§十 的数字以它为唯一来源**
 >   ⇒ **2026-10-15 三档全量重跑（鸟数下调后）**：LOW 200 / MED 400 / HIGH 600 全部 G1–G5 通过、T1–T11 十一项自检全 PASS、
@@ -1116,7 +1120,7 @@ node docs/archive/verification/scripts/e49_flock_driver.mjs phases              
 
 ### 13.1 原型
 
-- **文件**：`docs/e49-birds-flock-preview.html`（纯 Canvas 2D，**1600×900** canvas，⛔ 无 WebView / three.js / OpenGL）。
+- **文件**：`docs/archive/e49-birds-flock-preview.html`（纯 Canvas 2D，**1600×900** canvas，⛔ 无 WebView / three.js / OpenGL）。
 - **门禁解锁**：点画面 ⇒ 出右栏与 HUD（照 E47/E48 的同款交互）。
 - **控制台命名空间**：`window.__E49`，内含 `P`（参数表，**唯一真值来源**）、`TIERS`（档位表）、
   `SLIDERS`（滑杆表）、`B`（烘焙位图）、`L`（布局量）、`layout()` / `rebuildLayout()` / `resetFlock()`、

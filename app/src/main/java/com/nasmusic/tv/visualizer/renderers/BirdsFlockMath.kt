@@ -11,10 +11,10 @@ import kotlin.math.sqrt
 
 /*
  * ============================================================================
- *  E49「鸟群」纯数学层（K2）—— 方案 docs/e49-birds-flock-plan.md §四 / §11.1
+ *  E49「鸟群」纯数学层（K2）—— 方案 docs/archive/e49-birds-flock-plan.md §四 / §11.1
  *
  *  ⛔ 零 Compose / Android 依赖（`BirdsFlockMathTest` 的结构前提）。
- *  阈值与常量的唯一来源 = 浏览器原型 `docs/e49-birds-flock-preview.html`
+ *  阈值与常量的唯一来源 = 浏览器原型 `docs/archive/e49-birds-flock-preview.html`
  *  的 harness 实测（§10.2 归档），⛔ 不从方案正文抄数。
  * ==========================================================================
  */

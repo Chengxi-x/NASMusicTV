@@ -34,8 +34,8 @@ import kotlin.math.sqrt
 /*
  * ============================================================================
  *  E49「鸟群 · 掠过荒野」绘制侧（K5）
- *  方案：docs/e49-birds-flock-plan.md §五 / §5.5；原型：
- *  docs/e49-birds-flock-preview.html 的 `render()`（图层序就是契约）。
+ *  方案：docs/archive/e49-birds-flock-plan.md §五 / §5.5；原型：
+ *  docs/archive/e49-birds-flock-preview.html 的 `render()`（图层序就是契约）。
  *
  *  ## 逐帧结构（§5.5，11 op，与鸟数无关——§5.1 的全部意义）
  *  sky(1) → ground(1) → farTrees(1) → trees(1) → flock L0..L3(4) →

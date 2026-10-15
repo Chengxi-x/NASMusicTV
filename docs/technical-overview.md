@@ -15217,7 +15217,7 @@ lint **0 error / 136 warning**（既有基线不动），`logs_temp/karaoke_fix3
 
 ### 10.234 E49「鸟群」浏览器原型：视觉重修 + 三处模拟缺陷根因修复（2026-10-14，全部实测验证）
 
-交付物 `docs/e49-birds-flock-preview.html`（方案 `docs/e49-birds-flock-plan.md`）。MEDIUM 档 800 鸟，
+交付物 `docs/archive/e49-birds-flock-preview.html`（方案 `docs/archive/e49-birds-flock-plan.md`）。MEDIUM 档 800 鸟，
 60fps / 16.7ms，图元 11 ops ≤13，11 项自检门禁全 PASS。§十 要求的再生脚本**同日晚些时候已补建**
 （见下文 §四）：`e49_flock_harness.js`（vm 沙箱确定性对账）+ `e49_flock_driver.mjs`（真浏览器截图驱动）。
 后续轮次的数字**以 harness 为唯一来源**，页面内探针 `window.__E49.stats(n)` / `perchDebug()` 仅供调试。

@@ -315,8 +315,8 @@ enum class VisualizerTheme(
     SNOW_CEDAR(R.string.visualizer_theme_snow_cedar, "雪松", Tier.ADV, "47", needsParticleBudget = false),
 
     /**
-     * E49「鸟群 · 掠过荒野」（方案 `docs/e49-birds-flock-plan.md`，原型
-     * `docs/e49-birds-flock-preview.html` 已过视觉闭环 + harness 三档全绿）。
+     * E49「鸟群 · 掠过荒野」（方案 `docs/archive/e49-birds-flock-plan.md`，原型
+     * `docs/archive/e49-birds-flock-preview.html` 已过视觉闭环 + harness 三档全绿）。
      *
      * 视觉：**天空压倒性**（鸟群是主体，画面本体在 3/4 画幅以上）、地面只占底部 1/5、
      * **地平线固定**（只读锚点，⛔ 不受鸟群包围盒影响）+ 底部带**极缓慢横向视差**

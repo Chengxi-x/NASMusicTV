@@ -459,8 +459,34 @@
 > ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记；
 > 代码事实已在 `## [v2.38.10]` 段内（该段随 tag 冻结，后续缺陷只能开 `[v2.38.11]`）。
 > `docs/` 根在本轮之后**入库的 Markdown = 3 篇**（`technical-overview.md`、`conventions-adaptive-ui.md`、
-> `visualizer-effects-list.md`）；另有另一在办会话新增、**尚未入库**的 `blackhole-*` / `e45-orbital-*` /
-> `e47-*` 方案与原型，计数以 `git ls-files docs | grep -E '^docs/[^/]+\.md$'` 实测为准。
+> `visualizer-effects-list.md`）；另有另一在办会话新增、当时**尚未入库**的 `blackhole-*` / `e45-orbital-*` /
+> `e47-*` 方案与原型。
+> ⚠️ **2026-10-15 更正**：本段「尚未入库」的表述已过期 —— `blackhole-*` / `e45-orbital-*` /
+> `e48-desert-smoke-*` 早在 `14b4079`（Bump version to 2.38.11）即已入库，`e47-*` 已在第四轮归档。
+> `docs/` 根的最新计数与逐项判据见**第十一轮**（保留本段原文只为留痕，不改写历史轮次）。
+
+## 第十一轮（2026-10-15，3 个）—— 已落地并出货 v2.38.12，E49 三条真机缺陷已修
+
+| 文档 | 判定依据 |
+|---|---|
+| `e49-birds-flock-plan.md` | ✅ **已落地**：§九 的 D1–D3 已全量移植为 Kotlin（`BirdsFlockRenderer.kt` + `BirdsFlock{Bakes,Flock,Math}.kt`），随 **v2.38.12 / `versionCode 181`** 提交（`f528249`，2026-10-15 17:00）。真机三条缺陷（① 近树与草丛**整条消失**、② 远树成一排等高竖棍、③ 栖鸟悬空）已修并由 owner 复测通过；**E47 雪松同款缺陷一并修**（D3 = 滚动带的 `ShaderBrush` 锚在画布原点，`drawRect` 的 `topLeft` 挪不动着色器 ⇒ 带子从未滚动、且 `TileMode.Clamp` 把 i≥1 的层折成一条平横带）。移动方式 = **`git mv`**，正文 §一～§十五 **一字未删**，只在顶部加归档状态头（⚠️ 原状态头「原型已验证、Kotlin 实现未开始」是**过期标记**，已替换） |
+| `e49-birds-flock-preview.html` | 同一功能的 **K0 浏览器原型**（纯 Canvas 2D，11 项自检门禁 T1–T11 + 三档全绿）。⚠️ **它不是"历史草案"：它是本方案 §十 全部数字的唯一再生源** —— 由 `docs/archive/verification/scripts/e49_flock_harness.js` 在 `vm` 沙箱里驱动页面真实代码跑出，权威输出 = `docs/archive/verification/results/e49_flock_harness_final.txt`。改过被对账的数学 ⇒ 重跑该脚本并提交再生结果。移动方式 = **`git mv`** |
+| `build_e49.py` | ⛔ **一次性脚手架（归档内唯一"哑弹"）**：它只写出了原型最初的 HTML 骨架（约 3.5 KB），真原型已在其上迭代到 **58 KB**。**运行本脚本会用 3.5 KB 的骨架覆盖掉那份 58 KB 的原型** ⇒ 破坏性、不可逆。已在文件头加「⛔⛔ 不要再运行」警告 + 指向方案/原型/实现/§10.235–§10.236 的导航。保留它只为追溯「原型是怎么起头的」 |
+
+**归档时仍未闭合的事项**（⛔ 逐条留痕，归档 ≠ 已解决）：
+
+1. ⏳ **K8 真机验收未走完**：§10.235 标题即写明「K1–K7 闭合，**K8 真机验收待所有者执行**」。本次 owner 复测覆盖的是**三条已报缺陷**（树/远树/栖鸟）与 E47 同款带子，**不等于 K8 全表通过**。若后续出现「某档鸟群偏稀/偏挤」「栖鸟位置怪」一类反馈，先查 §10.235 的 K8 清单。
+2. ⛔ **`build_e49.py` 是归档内的可运行哑弹**（见上表）。它的写入目标已被 `doc_archive.py` 的机械改写同步成了 `docs/archive/e49-birds-flock-preview.html` ⇒ **从仓库根跑它就会覆盖归档里的 58 KB 原型**。⛔ 任何"批量重跑脚手架 / 清理归档"的自动化都要**显式跳过 `build_e49.py`**（`doc_archive.py` 的 `SKIP_DIR_PARTS` 只按**目录**排除，挡不住这个文件级特例）。
+3. ⏳ **E48「大漠」未落地**：`docs/e48-desert-smoke-plan.md` 与 `-preview.html` 在工作区有**未提交改动**，本轮归档**刻意未纳入**（避免与另一在办会话的改动混提交）。
+4. ⏳ **`.gitignore` 的 `__pycache__/` 一行仍未提交**（属 E48 线新增的 `.py` 校验脚本所需，与本次文档移动无关）。
+
+> ⚠️ **归档 ≠ 权威转移**：本篇仍是 E49 的**唯一方案依据**（§十 全部数字的唯一再生源），`app/src/**` 里 4 处 `docs/archive/e49-birds-flock-*` 的 KDoc 引用、`AppSettings.kt` 的主题定义、§10.234/§10.235/§10.236 都指向它。⛔ 不要因为"已归档"就当历史草案处置。
+>
+> 引用改写 **9 个文件 / 15 处 `docs/` 前缀文本**：4 个 Kotlin（`AppSettings.kt` ×2、`BirdsFlockFlock.kt` ×1、`BirdsFlockMath.kt` ×2、`BirdsFlockRenderer.kt` ×2）、`docs/technical-overview.md` ×2、被移动文档自身互引（方案 ×2 / 原型 ×1）、`build_e49.py` ×2、`docs/archive/verification/results/e49_e47_device_verdict_2026-10-15.md` ×1。
+> ⚠️ 另有 **6 处脚本路径常量必须手改**（`doc_archive.py` 看不见）：`e49_flock_driver.mjs` ×2、`e49_flock_harness.js` ×3（脚本把路径写成 `path.join(ROOT, 'docs', 'e49-…')` 的**三段字面量**，把扩展名列表放宽也匹配不到）、`e49_flock_harness_final.txt` ×1（harness 自身写出的 JSON `page` 字段）。⛔ `harness.js` 里的 `filename: 'e49-birds-flock-preview.html:script'` 是 **vm 栈标签**、非路径，按原样保留（与 E46 同一先例）。
+> ⛔ 死链自检：`doc_archive.py verify` 报 **72 处**，逐条核对 `git show HEAD:<file> | grep` 后确认**全部为改动前既有**（`.workbuddy*/memory/*`、`CHANGELOG.md`、`.superpowers/`、`docs/archive/` 内的老文档），**E49 相关 0 处**（`grep -ci "e49"` = 0）。`docs/archive/README.md` 的 `starry-sky-*` 引用改动前后均为 6 处 ⇒ 未被本次移动波及。
+> ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.12]` 段内。
+> `docs/` 根在本轮之后**入库的 Markdown = 6 篇**（`git ls-tree --name-only HEAD docs/` 实测：`technical-overview.md` 活文档、`conventions-adaptive-ui.md`、`visualizer-effects-list.md` 现役名册、外加 `blackhole-visualizer-plan.md` / `e45-orbital-plan.md` / `e48-desert-smoke-plan.md` 三篇在办方案）；**入库的原型 html = 3 份**（`blackhole-preview.html` / `e45-orbital-preview.html` / `e48-desert-smoke-preview.html`）。⚠️ 与第十轮尾部的「3 篇 Markdown / 尚未入库」表述不一致，以本轮实测为准（该段已加更正说明）。
 
 ## 回滚
 

@@ -9,7 +9,7 @@
 （左上关闭按钮两张都是 x[0.073..0.085] y[0.067..0.093]）⇒ 同一台机、同一个页面、同一套布局。
 
 判读方法：把两个原型 HTML 按**设备内容尺寸**离线渲染
-（`docs/e49-birds-flock-preview.html` → 2595×1220；`docs/archive/e47-snow-cedar-preview.html`
+（`docs/archive/e49-birds-flock-preview.html` → 2595×1220；`docs/archive/e47-snow-cedar-preview.html`
 → 1837×863），再与真机截图做同尺寸像素对齐比较。
 
 ---

@@ -21,7 +21,7 @@ import kotlin.math.sqrt
 /*
  * ============================================================================
  *  E49「鸟群」仿真状态层（K3）—— 方案 §四 / §5.7 / §5.8 的原型逐字移植
- *  （原型：docs/e49-birds-flock-preview.html，种子 / 系数以 §10.2 harness 归档为准）
+ *  （原型：docs/archive/e49-birds-flock-preview.html，种子 / 系数以 §10.2 harness 归档为准）
  *
  *  ⛔ 红线（§5.7）：热循环零分配 —— soa 全 `FloatArray` 字段、邻居表 `IntArray`、
  *  空间哈希 `IntArray`；`steerBoids / findNeighbors / windAt / updatePerch / step`

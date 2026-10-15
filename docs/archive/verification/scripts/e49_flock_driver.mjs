@@ -1,4 +1,4 @@
-// E49「鸟群」原型的**真截图驱动**：headless Edge + CDP 打开 docs/e49-birds-flock-preview.html，
+// E49「鸟群」原型的**真截图驱动**：headless Edge + CDP 打开 docs/archive/e49-birds-flock-preview.html，
 // 真实 rAF 跑指定秒数后截整帧给所有者判读观感，并回读 selfTest/perchDebug 门禁原文。
 //
 // ⚠️ 数值对账（自检 + 五门禁 + 确定性对账）不走这里，走 e49_flock_harness.js（纯 vm 沙箱）。
@@ -20,7 +20,7 @@ const HERE = dirname(process.argv[1]);
 const ROOT = resolve(HERE, '..', '..', '..', '..');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9349;                                   // ⛔ 方案指定；别和 seaside(9333)/moonlit(9334)/fog(9336)/snow(9337)/desert(9338) 撞
-const PAGE = resolve(ROOT, 'docs', 'e49-birds-flock-preview.html');
+const PAGE = resolve(ROOT, 'docs', 'archive', 'e49-birds-flock-preview.html');
 const URL_STR = 'file:///' + PAGE.replace(/\\/g, '/');
 const OUT = resolve(ROOT, 'output', 'e49_frames');
 const SHOT_W = 1600, SHOT_H = 900;                   // 原型画布原生 1600×900，视口即画布
