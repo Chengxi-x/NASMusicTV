@@ -477,8 +477,9 @@
 
 1. ⏳ **K8 真机验收未走完**：§10.235 标题即写明「K1–K7 闭合，**K8 真机验收待所有者执行**」。本次 owner 复测覆盖的是**三条已报缺陷**（树/远树/栖鸟）与 E47 同款带子，**不等于 K8 全表通过**。若后续出现「某档鸟群偏稀/偏挤」「栖鸟位置怪」一类反馈，先查 §10.235 的 K8 清单。
 2. ⛔ **`build_e49.py` 是归档内的可运行哑弹**（见上表）。它的写入目标已被 `doc_archive.py` 的机械改写同步成了 `docs/archive/e49-birds-flock-preview.html` ⇒ **从仓库根跑它就会覆盖归档里的 58 KB 原型**。⛔ 任何"批量重跑脚手架 / 清理归档"的自动化都要**显式跳过 `build_e49.py`**（`doc_archive.py` 的 `SKIP_DIR_PARTS` 只按**目录**排除，挡不住这个文件级特例）。
-3. ⏳ **E48「大漠」未落地**：`docs/e48-desert-smoke-plan.md` 与 `-preview.html` 在工作区有**未提交改动**，本轮归档**刻意未纳入**（避免与另一在办会话的改动混提交）。
-4. ⏳ **`.gitignore` 的 `__pycache__/` 一行仍未提交**（属 E48 线新增的 `.py` 校验脚本所需，与本次文档移动无关）。
+3. ✅ **E48「大漠 · 孤烟」已归档（本段更新于 2026-10-16，随 v2.38.13 提交）**：`docs/archive/e48-desert-smoke-plan.md` 与 `docs/archive/e48-desert-smoke-preview.html` 随 **v2.38.13 / `versionCode 182`** 一并入库（移动方式同为 `git mv`，正文一字未删，仅顶部加归档状态头）。落地实况 = `docs/technical-overview.md` **§10.241**（K1–K7 闭合 + 真机黑屏根因与修复）与 **§10.242**（复测通过与收尾）。引用同步：方案自身互引 ×2、`docs/technical-overview.md` ×2、`memory/e48-desert-smoke-preview-status.md` ×1、四个校验脚本的路径常量与注释（`e48_smoke_harness.js` ×2、`e48_visual_driver.mjs` ×2、`e48_trace_camel.py` ×2、`e48_ref_camel.py` ×1；⛔ `harness.js` 里的 `filename: 'e48-desert-smoke-preview.html:script'` 是 **vm 栈标签**、非路径，按原样保留 —— 与 E49 同一先例）。
+   ⏳ 遗留：方案文首**四项悬置**（`occl = 0.345` / `softK = 1.06` / 判读位 readout 口径 / `idle0`·`idle1` 空窗偏长）仍按定稿现值冻结，未经所有者重新裁决不得改动。
+4. ✅ **`.gitignore` 的 `__pycache__/` 已随 v2.38.13 提交**（同批还有会话级工具状态目录 `/.dumate/` 与 `/.tmp/`）。E48 线新增的 `.py` 校验脚本从此不会再往工作区吐未跟踪字节码。
 
 > ⚠️ **归档 ≠ 权威转移**：本篇仍是 E49 的**唯一方案依据**（§十 全部数字的唯一再生源），`app/src/**` 里 4 处 `docs/archive/e49-birds-flock-*` 的 KDoc 引用、`AppSettings.kt` 的主题定义、§10.234/§10.235/§10.236 都指向它。⛔ 不要因为"已归档"就当历史草案处置。
 >
@@ -486,7 +487,23 @@
 > ⚠️ 另有 **6 处脚本路径常量必须手改**（`doc_archive.py` 看不见）：`e49_flock_driver.mjs` ×2、`e49_flock_harness.js` ×3（脚本把路径写成 `path.join(ROOT, 'docs', 'e49-…')` 的**三段字面量**，把扩展名列表放宽也匹配不到）、`e49_flock_harness_final.txt` ×1（harness 自身写出的 JSON `page` 字段）。⛔ `harness.js` 里的 `filename: 'e49-birds-flock-preview.html:script'` 是 **vm 栈标签**、非路径，按原样保留（与 E46 同一先例）。
 > ⛔ 死链自检：`doc_archive.py verify` 报 **72 处**，逐条核对 `git show HEAD:<file> | grep` 后确认**全部为改动前既有**（`.workbuddy*/memory/*`、`CHANGELOG.md`、`.superpowers/`、`docs/archive/` 内的老文档），**E49 相关 0 处**（`grep -ci "e49"` = 0）。`docs/archive/README.md` 的 `starry-sky-*` 引用改动前后均为 6 处 ⇒ 未被本次移动波及。
 > ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.12]` 段内。
-> `docs/` 根在本轮之后**入库的 Markdown = 6 篇**（`git ls-tree --name-only HEAD docs/` 实测：`technical-overview.md` 活文档、`conventions-adaptive-ui.md`、`visualizer-effects-list.md` 现役名册、外加 `blackhole-visualizer-plan.md` / `e45-orbital-plan.md` / `e48-desert-smoke-plan.md` 三篇在办方案）；**入库的原型 html = 3 份**（`blackhole-preview.html` / `e45-orbital-preview.html` / `e48-desert-smoke-preview.html`）。⚠️ 与第十轮尾部的「3 篇 Markdown / 尚未入库」表述不一致，以本轮实测为准（该段已加更正说明）。
+> `docs/` 根当前**入库的 Markdown = 5 篇**（`git ls-tree --name-only HEAD docs/` 实测口径：`technical-overview.md` 活文档、`conventions-adaptive-ui.md`、`visualizer-effects-list.md` 现役名册、外加 `blackhole-visualizer-plan.md` / `e45-orbital-plan.md` 两篇在办方案）；**入库的原型 html = 2 份**（`blackhole-preview.html` / `e45-orbital-preview.html`）。⚠️ E48 的方案与原型已于 **2026-10-16 随 v2.38.13 归档**（`git mv` 至 `docs/archive/`）⇒ 上文两句的数字已由「6 篇 / 3 份」改为「5 篇 / 2 份」，与第十轮尾部的旧表述不同，以本段实测为准。
+
+## 第十二轮（2026-10-16，2 个）—— E48「大漠 · 孤烟」已落地并出货 v2.38.13，真机黑屏根因已定案
+
+| 文档 | 判定依据 | 被谁引用（已改写） | 挂起决策 |
+|---|---|---|---|
+| `e48-desert-smoke-plan.md` + `.html` | ✅ **已落地并出货**：K1–K7 闭合，随 **v2.38.13 / `versionCode 182`** 提交（`f319e0a`，2026-10-16）。真机三条缺陷全修（① 烟团半径误把画幅宽当画幅高 ② 进入效果黑屏一下 = 逐行烘焙下标越界、整帧被丢 ③ 首帧空白 = 缺天幕兜底），所有者复测**无黑屏**、`E48 #1 2595x1220 HIGH sky=1 q-done 0ms`；release APK **25.69 MB** 已装机（`lastUpdateTime 14:21:42`） | `AppSettings.kt` 主题 KDoc（本来就按 archive 路径写，未被波及）、`docs/technical-overview.md` §10.237 / §10.241 / §10.242、`memory/e48-desert-smoke-preview-status.md` ×1 | ⏳ 方案文首**四项悬置**仍按定稿现值冻结（`occl = 0.345` / `softK = 1.06` / 判读位 readout 口径 / `idle0`·`idle1` 空窗偏长）⇒ ⛔ 未经所有者重新裁决不得改动 |
+
+> ⚠️ **归档 ≠ 权威转移**：本篇仍是 E48 的**唯一方案依据**（§十 全部数字的唯一再生源 = `docs/archive/verification/scripts/e48_smoke_harness.js`，权威输出 = `results/e48_harness_final.txt`）。改过被对账的数学 ⇒ 重跑该脚本并提交再生结果。驼形两档（贴图 / 程序几何）的解剖对账源 = `e48_ref_camel.py` + `e48_camel_vs_ref.py`，真截图驱动 = `e48_visual_driver.mjs`。
+>
+> 移动方式 = **`git mv`**，但⚠️ 方案正文**不是纯移动**：开发各轮（2026-10-14 ~ 10-16）累计了大量未提交增补（HEAD 版 **1267** 行 → 归档版 **2437** 行，`git diff --name-status` 实测相似度 **R038** ⇒ 默认 `-M50%` 不认它是改名，`-M30%` 才认；原型 **R067**，默认阈值即可认）。本次提交把**最终版**整体带入，仅在顶部加归档状态头，正文一字未删。
+>
+> 引用改写 **8 个文件 / 12 处 `docs/` 前缀文本**：`docs/technical-overview.md` ×2、方案自身互引 ×2、`memory/e48-desert-smoke-preview-status.md` ×1、四个校验脚本的路径常量与注释（`e48_smoke_harness.js` ×2、`e48_visual_driver.mjs` ×2、`e48_trace_camel.py` ×2、`e48_ref_camel.py` ×1）。⛔ `harness.js` 里的 `filename: 'e48-desert-smoke-preview.html:script'` 是 **vm 栈标签**、非路径，按原样保留（与 E46 / E49 同一先例）。
+>
+> ⛔ 死链自检：`grep -rn "docs/e48-desert-smoke" .` 排除 `logs_temp/` / `.workbuddy-ai/` / `app/build/` 后**残留 0 处** ⇒ 全仓再无指向旧路径的活引用（`app/src/**` 的 KDoc 一开始就按 archive 路径写，未被本次移动波及）。
+>
+> ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.13]` 段内。
 
 ## 回滚
 

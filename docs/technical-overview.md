@@ -15390,8 +15390,8 @@ Compose 的 `drawRect(brush, topLeft, size)` **不会**把着色器挪到 `topLe
 
 ### 10.237 v2.38.13 — E48「大漠孤烟」Kotlin 落地：第 26 套可视化效果（K1–K7 闭合，K8 真机验收待所有者执行）
 
-**范围**：按 `docs/e48-desert-smoke-plan.md` §11.3 的 K1–K8 与 §12 接线清单执行。
-原型 = `docs/e48-desert-smoke-preview.html`（纯 Canvas 2D，自带 T1–T14 自检）⇒ 逐字移植成
+**范围**：按 `docs/archive/e48-desert-smoke-plan.md` §11.3 的 K1–K8 与 §12 接线清单执行。
+原型 = `docs/archive/e48-desert-smoke-preview.html`（纯 Canvas 2D，自带 T1–T14 自检）⇒ 逐字移植成
 **纯 Canvas 2D Kotlin**（⛔ 不用 WebView / three.js），五文件：
 
 | 文件 | 内容 |

@@ -7,7 +7,7 @@ metadata:
 
 # E48「大漠·孤烟」原型交付状态
 
-**交付物**：`docs/e48-desert-smoke-preview.html`（纯 Canvas 2D，零 Kotlin）+ `e48_smoke_harness.js` + `e48_visual_driver.mjs`。
+**交付物**：`docs/archive/e48-desert-smoke-preview.html`（纯 Canvas 2D，零 Kotlin）+ `e48_smoke_harness.js` + `e48_visual_driver.mjs`。
 
 **验收结果**（2026-10-14）：
 - harness **14/14 全绿**，NaN/Inf=0，HIGH 94.4 ops / 3.94 屏（低于 E44 已验收的 4.21）。
