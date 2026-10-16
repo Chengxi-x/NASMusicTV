@@ -15821,3 +15821,49 @@ slow frame 136ms / 89ms / 58ms / 50ms / 91ms …
 **遗留（非本轮）**：进入效果后画幅仍会从竖屏变横屏一次（`1220x2712 -> 2595x1220`，
 Activity 转屏所致）⇒ 首次进入仍是「竖屏兜底天幕 → 横屏全量重建」。兜底机制保证它**不会黑**，
 但会多一次重建；若想彻底免掉，只能在进入可视化前就锁定横屏（改 Manifest，影响面大 ⇒ 本轮不动）。
+
+### 10.243 仓库瘦身 6.2G → 818M + 新建 `scripts/` 收纳活脚本（2026-10-16）
+
+**起因**：项目目录涨到 6.2G，几乎全是历轮真机验证留下的一次性产物。核对口径先做了一步
+`git ls-files output logs_temp` = **0**，确认候选全部在 `.gitignore` 内、无跟踪件，才动删除。
+
+**清理（按目录）**：`output/` 4.6G / 30195 个帧截图与散装 PNG（E43 海边、E44 明月、E46 迷雾、
+E47 雪松、E48 大漠、E49 鸟群的 `*_frames*` 与 `*_profile`）⇒ 清空；`logs_temp/` 734M（`ablate_profile`
+470M、两份 48M APK、`ci-release` 26M、`nodecheck` 23M、两份 16M/9.5M 真机日志）⇒ 清空；
+`app/build/` 474M 与根 `build/` 128K ⇒ 删除；根目录散落的 `build_k1/k2/k4compile/test.log`、
+`build_test_result.txt`、`build_k2_result.txt`（3 B，仅一个 BOM）、`build_k4compile_result.txt`（60 B）、
+`.orientation_icon_preview.png.artifact.json`（22 B 图片工具占位）⇒ 删除。**保留**（所有者裁决不动）：
+`.codegraph/` 130M、`.gradle/` 65M、`.opencode/node_modules` 60M、`.git/` 151M。
+
+**⚠️ 可复用的教训**：`rm -rf ... 2>&1 | head -20` 会让 `head` 读满 20 行就退出，`rm` 随即收到
+**SIGPIPE 被中途杀死** —— 首轮只删掉 2.4G 却打印 `EXIT=0`（那是 `head` 的退出码，不是 `rm` 的）。
+批量删除**必须把 stderr 重定向到文件**再看行数，不要接管道。
+
+**115 个文件删不掉**：`output/e49_frames_profile` 是 E49 那轮 `*_visual_driver.mjs` 起的
+**Edge `--user-data-dir`**，驱动脚本（PID 8140）已退出、浏览器树成孤儿，句柄仍占用。
+先用 `Get-CimInstance Win32_Process` 按 `e49_frames_profile` 过滤出 9 个 PID 并确认
+`ppid` 全挂 26480，再 `taskkill /PID 26480 /T /F`（⛔ 只杀该 profile，日常 Edge 用的是
+`AppData\...\Edge\User Data`，不受影响），随后删除成功、`output/` 归零。
+
+**结构变更**：新建 `scripts/` 存放**可复用**审计脚本，`audit_small_touch_target.py` 与
+`check_chinese.py` 以 `git mv` 迁入；根目录自此只留构建配置 / 文档 / 签名文件。
+两者的默认路径都是 **CWD 相对**（`os.path.join("app","src","main","java")` 与硬编码
+`app/src/...`）⇒ **移动不需要改代码**，但必须从项目根运行（`python scripts/xxx.py`），
+这一约束已写进脚本头部、`AGENTS.md` 的仓库根卫生表与 `docs/conventions-adaptive-ui.md` §8 的
+可运行命令行。`patch_artists.py` 自评「一次性补丁」且硬编码本机绝对路径、目标 `ArtistSplitter`
+早已出货 ⇒ `git mv` 到 `docs/archive/`，登记于 `docs/archive/README.md` 第十三轮。
+
+**验证**：`python scripts/audit_small_touch_target.py --selftest` **7/7 PASS**，实跑
+**454 个 `.kt` / 0 处违规**（活文档里旧的「347 文件」是过期数，已就地更正）；
+`:app:assembleRelease --no-daemon -Pkotlin.compiler.execution.strategy=in-process`
+**BUILD SUCCESSFUL in 6m 19s**，APK `NASMusicTV-release-v2-38-13.apk` 25,694,476 B，
+`apksigner verify` V2 证书 `CN=NASMusicTV`（`SHA-1 7c23463a…40b7`）⇒ 独立 release key 无误。
+
+**同轮修复**：`scripts/check_chinese.py` 有一个**与本次移动无关的既有缺陷** —— 它的 `try` 把
+`open/read` **和 `print` 一起包住**，Windows 控制台代码页 CP936 在打印 `RemoteControlHtml.kt`
+里的 `✕`（U+2715）时抛 `UnicodeEncodeError`，被同一个 `except Exception` 误报成
+`Error reading …`（文件其实已读成功，**报告的是假故障**）。修法两条都做：输出流
+`sys.stdout.reconfigure(encoding='utf-8', errors='replace')`（`hasattr` 守卫）+ `try` 收窄到只做 IO
+（`except OSError` 后 `continue`）。复验：从项目根实跑三个文件全部扫出结果（13 / 19 / 10 条），
+`✕` 正常打印、`EXIT=0`、无 `Error reading`；负向自证故意在 `/tmp` 跑 ⇒ 三条都报
+`No such file or directory` 并逐文件继续，**没有崩、也没有把 IO 失败伪装成命中**。

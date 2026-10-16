@@ -505,6 +505,20 @@
 >
 > ⚠️ 未进 `CHANGELOG.md`：本轮是**纯文档移动 + 归档登记**，按本仓规矩（文档改动不入 CHANGELOG）不登记；代码事实已在 `## [v2.38.13]` 段内。
 
+## 第十三轮（2026-10-16，1 个）—— 仓库根清理顺带归档一次性补丁脚本
+
+| 文档 / 文件 | 判定依据 | 被谁引用（已改写） | 挂起决策 |
+|---|---|---|---|
+| `patch_artists.py` | ❌ **使命已完成**：文件头自称「一次性补丁：艺术家同名合并 + 合唱艺术家拆分生效」，且把 `ROOT` 硬编码成本机绝对路径。目标实现 `util/ArtistSplitter.kt` 早已出货，补丁无从再打；全仓唯一入向引用是 `AGENTS.md` 的「根目录辅助脚本白名单」那句 | `AGENTS.md`（白名单从「three tracked helper scripts」改为「two」，并注明本篇去向与日期） | 无 |
+
+> 移动方式 = **`git mv`**，内容一字未改（含那条过期的硬编码路径 —— 它是历史记录，改了反而失真）。落点选 `docs/archive/` 根而非 `verification/scripts/`：后者按本仓约定专放**浏览器原型验证脚本**，本篇是源码迁移补丁，不是验证工具；同层先例 = `build_e49.py`（同为一次性脚本）。
+>
+> ⚠️ 同轮还清理了**仓库根散件**（`.gitignore` 内、无引用、直接删除不入本表）：`build_k2_result.txt`（3 字节，仅一个 BOM）、`build_k4compile_result.txt`（60 字节，一行 `BUILD SUCCESSFUL` 残留）、`.orientation_icon_preview.png.artifact.json`（22 字节，图片工具占位，真正的 PNG 早已被清）。
+>
+> ⛔ 同轮清理中**保留**的 `audit_small_touch_target.py` / `check_chinese.py` **不是遗留**：两者仍被 `docs/conventions-adaptive-ui.md` 与 `docs/technical-overview.md` 引用，前者是活的无障碍尺寸护栏（正则会空转，它处理表达式尺寸），后者的三个 `net/*.kt` 目标文件全部存在。二者已于 **2026-10-16** 一并迁入 `scripts/`（根目录只留构建配置 / 文档 / 签名文件），移动后从项目根实跑复验：`--selftest` **7/7 PASS**、实跑 **454 个 `.kt` / 0 处违规**。
+>
+> ⚠️ 未进 `CHANGELOG.md`：纯文档移动 + 清理，按本仓规矩不登记。
+
 ## 回滚
 
 归档为**纯移动**（`git mv`，历史保留），未删除任何内容。整体回滚：

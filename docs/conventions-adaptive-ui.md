@@ -241,8 +241,9 @@ Modifier.height(44.dp) // 竖屏只有 36.1 物理 dp —— 注释里写「44dp
    补同行判定后**必须同时排除整行注释**，否则 KDoc 里举例的
    `` `Box(Modifier.size(8.dp).clickable { })` `` 会被误报。
 
-> 📌 **扫描脚本已入库**：项目根目录 `audit_small_touch_target.py`
-> （与 `check_chinese.py` 同级），**必须先跑 `--selftest` 再实跑** ——
+> 📌 **扫描脚本已入库**：`scripts/audit_small_touch_target.py`
+> （与 `check_chinese.py` 同级；2026-10-16 由项目根迁入 `scripts/`），
+> **必须先跑 `--selftest` 再实跑** ——
 > 这就是本条的教训：**源码扫描型护栏不自证，就无法区分"真干净"和"空转"**。
 > 判定规则：取 `size(` 括号配对内容 → 抽出全部 `.dp` 字面量 → 全部 < 40dp 才候选
 > （无字面量则跳过；`portraitTouchTarget(44.dp)` 因含 44 而被豁免，属受认可写法）；
@@ -321,9 +322,9 @@ grep -rn "import androidx.compose.material3" app/src/main/java | wc -l   # 期�
 grep -rnE "\.(size|height|width)\((\s*)([0-3][0-9]|4[0-9]|5[0-3])\.dp\)" app/src/main/java/com/nasmusic/tv/ui \
   | grep -vE "Karaoke|MvPlayback|VisualEqualizer|Shimmer|Cover|cover|favicon|Spacer"
 # ⚠️ 上面这条对「尺寸是表达式」的写法无能为力（size(if (a) 8.dp else 6.dp)）→
-#    改用下面这个脚本（已入库，与 check_chinese.py 同级；自带负向自证）
-python audit_small_touch_target.py --selftest   # 先自证脚本有效（7 用例）
-python audit_small_touch_target.py              # 再实跑，期望 0 处（当前 347 文件 / 0 处）
+#    改用下面这个脚本（已入库 scripts/，与 check_chinese.py 同级；自带负向自证）
+python scripts/audit_small_touch_target.py --selftest   # 先自证脚本有效（7 用例）
+python scripts/audit_small_touch_target.py              # 从项目根实跑，期望 0 处（2026-10-16 实测 454 文件 / 0 处）
 # ⚠️ 手工兜底：任何小尺寸（图标 / 圆点 / 进度条）直接挂 clickable 都属违规，
 #    应改为「外层 size(portraitTouchTarget(...)) 承担热区 + 内层只做视觉」（§6.5）
 # 📌 同规则的单测门禁：SmallTouchTargetScanTest（跑 testDebugUnitTest 即生效，无需记得跑脚本）

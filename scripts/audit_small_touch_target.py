@@ -32,11 +32,12 @@ r"""
 
 ## 用法
 
-    python audit_small_touch_target.py [源码根目录]      # 默认 app/src/main/java
-    python audit_small_touch_target.py --selftest        # 负向自证（务必先跑）
+    python scripts/audit_small_touch_target.py [源码根目录]   # 默认 app/src/main/java
+    python scripts/audit_small_touch_target.py --selftest     # 负向自证（务必先跑）
 
-本脚本**入库于项目根目录**（与 `check_chinese.py` 同级），供
+本脚本**入库于 `scripts/`**（与 `check_chinese.py` 同级），供
 `docs/conventions-adaptive-ui.md` §6.5 / §8 引用，保证"可复现"。
+⚠️ 路径参数是 **CWD 相对**的 ⇒ 必须从**项目根**运行（不是 `cd scripts`）。
 """
 import os
 import re

@@ -173,12 +173,14 @@ See `docs/archive/README.md` for all three 2026-09-20 passes (60 files moved out
 | Agent-produced images / previews (screenshots, icon renders, verify shots) | **`output/`** |
 | Gradle build output | `build/` (Gradle-managed) |
 | Agent runtime internal state (task registry, scratch) | `.box-agent/` |
+| **Reusable** audit / gate / measurement scripts (cited by living docs) | **`scripts/`** — run them from the **repo root** (`python scripts/xxx.py`), because their default paths are CWD-relative |
 
 - The repo root holds **only** tracked project files: build config (`build.gradle.kts`,
   `settings.gradle.kts`, `gradle.properties`, `gradlew*`), docs (`README.md`, `CHANGELOG.md`,
   `AGENTS.md`), `.gitignore` / `.gitattributes`, signing files (`keystore.properties*`,
-  `release-key.jks`, `local.properties`), and the three tracked helper scripts
-  (`audit_small_touch_target.py`, `check_chinese.py`, `patch_artists.py`).
+  `release-key.jks`, `local.properties`). Helper scripts do **not** belong in the root any more —
+  `audit_small_touch_target.py` and `check_chinese.py` moved to `scripts/` on 2026-10-16, and the
+  one-shot `patch_artists.py` went to `docs/archive/`.
 - When redirecting build output, **target `logs_temp/`** — e.g.
   `./gradlew.bat assembleRelease *> logs_temp/release_build.log` — never the bare root.
 - ⚠️ `.gitignore` has a `# CI / debug leftovers` block (`build_*.log`, `diag.txt`, `defex.txt`,
