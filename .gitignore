@@ -86,6 +86,13 @@ image48294fcc-0da3-4613-8282-68ab5cc6e499.png
 .workbuddy-ai/
 .joycode/
 .box-agent/
+# 会话级工具状态目录（2026-10-16 追加）：由 agent 运行时在**项目根**自动创建，与上面同族。
+#   .dumate/ = 交付清单 + 收件箱 + 会话流（deliveries / inbox / ses_*）
+#   .tmp/    = 一次性渲染/运行临时文件（dv-render-* / dv-run）
+# ⚠️ 是**工具自己的状态目录**，⛔ 不要手动删（删了会话状态会丢）。
+# ⚠️ 用 `/` 前缀只挡**根目录**同名项 ⇒ 将来源码树里若出现合法嵌套 `.tmp/` 不会被误挡。
+/.dumate/
+/.tmp/
 
 # WorkBuddy 设计文件（*.miora）与其导出素材
 docs/*.miora
@@ -96,6 +103,8 @@ logs_temp/
 output/
 # Node 依赖（downlevel_libs.mjs 转译 ES5 产物时临时安装）
 node_modules/
+# Python 校验脚本（docs/archive/verification/scripts/*.py）被 import 时的字节码缓存
+__pycache__/
 # ⛔ Node 依赖绝不能出现在 app/src/main/assets/ 下：**assets 会被 mergeDebugAssets
 #    原样打进 APK** —— 2026-10-06 实测一次就多出 23 MB。
 #    2026-10-07 起 downlevel_libs.mjs 已连同上游原件移出到 app/src/globe-upstream/，
