@@ -15867,3 +15867,40 @@ E47 雪松、E48 大漠、E49 鸟群的 `*_frames*` 与 `*_profile`）⇒ 清空
 （`except OSError` 后 `continue`）。复验：从项目根实跑三个文件全部扫出结果（13 / 19 / 10 条），
 `✕` 正常打印、`EXIT=0`、无 `Error reading`；负向自证故意在 `/tmp` 跑 ⇒ 三条都报
 `No such file or directory` 并逐文件继续，**没有崩、也没有把 IO 失败伪装成命中**。
+
+### 10.244 `ProviderMirrorTest` CI 抖动的**根因**：无 handler 的 scope 把「收集器已死」伪装成「慢」（2026-10-16）
+
+**现象**：CI 上 `ProviderMirrorTest > write lyrics kugou url then mirror updates within 1s` 又挂了一次，
+报的是**没有 cause 的裸 `TimeoutCancellationException`**。本类此前已两次靠**扩窗口**治它
+（1s→3s `3f76033`、3s→10s `2e82eb7`），两次都没治到根 —— 因为原写法**分不出**「镜像真的慢」和
+「镜像收集器已经静默死掉」。
+
+**根因**：`CoroutineScope(SupervisorJob() + Dispatchers.IO)` **没有 `CoroutineExceptionHandler`**。
+收集器抛异常时走 kotlinx 默认处理器（只打 stderr），该键的 `@Volatile` 镜像**从此永不更新**；
+测试侧 `withTimeout` 到点炸出的超时**不带 cause**，真实原因被完全掩盖 ⇒ 后人只能继续猜「机器慢」。
+叠加因素：`Dispatchers.IO` 是被整包 Robolectric 用例共享的池，收集器的启动本身要抢线程。
+
+**本次两处修根因**（⛔ **不是第三次扩窗**，窗口保持 10s 且降级为安全网）：
+
+1. **镜像独占一条线程**（`Executors.newSingleThreadExecutor` + `asCoroutineDispatcher`），
+   线程名 `provider-mirror-test`、daemon。⚠️ 诚实边界：`collect` 的**恢复点**仍在 DataStore 自己的
+   内部 scope 上（生产语义如此，⛔ 不为测试改生产代码）⇒ 这条只**降低**调度压力，不承诺消除抖动。
+2. **挂 `CoroutineExceptionHandler` 记录首个失败**（`@Volatile mirrorFailure`，跨线程写必须 volatile），
+   超时归因集中到 `awaitMirror()`：若收集器已死 ⇒ 报「收集器已死（真实原因见 cause）」并把真实异常
+   **挂成 cause**；否则报「Nms 内未收敛：当前值 / 期望值」。收敛成功也再断言一次 `mirrorFailure == null`
+   （值可能是死前最后一次发射留下的）。⛔ 各用例不再各自复制 `withTimeout` + `while`（复制必然漂移）。
+   另：`tearDown` 两处 `::x.isInitialized` 守卫 —— `@Before` 半途失败时 JUnit 仍会调 `@After`，
+   未初始化就 cancel 会抛二次异常、把真正的 setup 失败掩掉。
+3. **负向自证**（项目惯例：护栏必须证明自己**会**失败）：新增 `unreachable mirror value fails with
+   attributable assertion error`，用 200ms 短窗口等一个永不到达的值，断言①以 `AssertionError` 失败
+   （而非裸超时）②消息里同时带**期望值与当前值**。
+
+**验证**：`./gradlew.bat testDebugUnitTest --tests "*ProviderMirrorTest" --no-daemon
+-Pkotlin.compiler.execution.strategy=in-process` ⇒ **BUILD SUCCESSFUL in 3m 22s**，结果 XML
+**tests=7 / failures=0 / errors=0 / skipped=0**（含该负向自证用例），日志在 `logs_temp/providermirror_test.log`。
+
+**⛔ 复用结论**：① **任何自建 `CoroutineScope` 都必须带 `CoroutineExceptionHandler`** —— 生产侧同理，
+否则一条收集的死亡只会伪装成「功能变慢」（与 `AGENTS.md` 里 `applicationScope` 那次
+`UncaughtExceptionsBeforeTest` 同源，见 §10.234 前后的诊断手段）；② **超时/阈值类判据失败时，先问
+「这个报错能不能区分它声称的两种原因」**，不能区分就⛔不要调数字，前两次扩窗就是反面教材；
+③ 本机跑法照旧加 `--no-daemon -Pkotlin.compiler.execution.strategy=in-process`。
