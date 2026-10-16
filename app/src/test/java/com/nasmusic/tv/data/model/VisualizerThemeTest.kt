@@ -48,14 +48,14 @@ class VisualizerThemeTest {
 
     @Test
     fun `theme library is all concrete effects, no auto mode`() {
-        assertEquals(25, VisualizerTheme.entries.size)
+        assertEquals(26, VisualizerTheme.entries.size)
     }
 
     @Test
     fun `selectable list contains every theme when the photo wall is available`() {
         val selectable = VisualizerTheme.selectable(photoWallAvailable = true)
-        assertEquals(25, selectable.size)
-        assertEquals(25, selectable.distinct().size)
+        assertEquals(26, selectable.size)
+        assertEquals(26, selectable.distinct().size)
         assertTrue(selectable.contains(VisualizerTheme.PHOTO_WALL))
     }
 
@@ -86,21 +86,21 @@ class VisualizerThemeTest {
             listOf(VisualizerTheme.PHOTO_WALL),
             on.filter { it !in off.toSet() }
         )
-        assertEquals(24, off.size)
-        assertEquals(25, on.size)
+        assertEquals(25, off.size)
+        assertEquals(26, on.size)
     }
 
     @Test
     fun `ordinal labels are unique`() {
         val labels = VisualizerTheme.entries.map { it.ordinalLabel }
-        assertEquals(25, labels.distinct().size)
+        assertEquals(26, labels.distinct().size)
     }
 
     @Test
     fun `display names are non blank and unique`() {
         val names = VisualizerTheme.entries.map { it.displayName }
         assertTrue(names.none { it.isBlank() })
-        assertEquals(25, names.distinct().size)
+        assertEquals(26, names.distinct().size)
     }
 
     @Test
@@ -176,6 +176,20 @@ class VisualizerThemeTest {
             VisualQuality.LOW.supports(VisualizerTheme.BEAT_FIREWORK)
         )
         assertFalse(VisualQuality.LOW.supports(VisualizerTheme.MILKDROP_FEEDBACK))
+    }
+
+    @Test
+    fun `desert smoke is offered on every tier`() {
+        // E48「大漠孤烟」与 E47/E49 同款：档位标 ADV（如实承认"比 BASIC 重"），
+        // 但一个粒子都不画（12 张贴图 blit + 1 op/带的 ImageShader）⇒ 三档全可选。
+        assertEquals(VisualizerTheme.Tier.ADV, VisualizerTheme.DESERT_SMOKE.tier)
+        assertFalse(VisualizerTheme.DESERT_SMOKE.needsParticleBudget)
+        assertTrue("LOW 档也应提供大漠孤烟", VisualQuality.LOW.supports(VisualizerTheme.DESERT_SMOKE))
+        assertTrue(VisualQuality.MEDIUM.supports(VisualizerTheme.DESERT_SMOKE))
+        assertTrue(VisualQuality.HIGH.supports(VisualizerTheme.DESERT_SMOKE))
+        // 编号 `"48"` 由 E48 占用，而 E49 之后才落地 ⇒ 次序上 48 应在 47 与 49 之间
+        assertEquals("48", VisualizerTheme.DESERT_SMOKE.ordinalLabel)
+        assertTrue(VisualizerTheme.DESERT_SMOKE.ordinal > VisualizerTheme.BIRDS_FLOCK.ordinal)
     }
 
     @Test

@@ -1,0 +1,73 @@
+E48 骆驼解剖量 —— **同一份脚本、同一个墨口径**量两边（第九轮起）。⛔ 数字手抄，改几何必须重跑本文件。
+# ══ 第十一轮（2026-10-15 重跑）：驼形**出货档 = `TEX`**（所有者裁决「就选用全贴图，腿不动的方式。
+#    程序画的腿实在是不好看」）；`PROC` 降为**回退/对照档**，第三档 `TEXLEGS`（贴图躯干 + 程序腿）已删除。══
+# 命令①（参考图那一边）：python docs/archive/verification/scripts/e48_ref_camel.py logs_temp/e48_ref_camel.png
+# 命令②（两档精灵 + 页内 anatomy，钉在归档烘焙格 hH=68）：
+#   node docs/archive/verification/scripts/e48_visual_driver.mjs camelcmp MED 8
+#     ⇒ 落 output/e48_frames/e48_camel_TEX_f0.png（贴图档只有 1 张独立位图，6 帧复用同一只）
+#     ⇒ 落 output/e48_frames/e48_camel_PROC_f0…f5.png（步态档 6 帧互不相同）
+#   python docs/archive/verification/scripts/e48_ref_camel.py output/e48_frames/e48_camel_TEX_f0.png
+#   python docs/archive/verification/scripts/e48_ref_camel.py output/e48_frames/e48_camel_PROC_f0.png
+# ⚠️ 跑在**烘焙格**（h=68 px = 显示 34 × CAMEL_SS）上；命令③是同一个精灵的另一套实现，两边差 1 px 就是量化下限。
+# ⚠️ 「腿宽」在 68 px 格上会把**同侧两腿并成一个游程** ⇒ 每段 ≈ 2 条腿，⛔ 直接当"我们的腿比参考图粗一倍"。
+# ⭐ 第十轮新增的口径 = **峰心距 ÷ 全高**：由两行「左峰顶(x=)」「右峰顶(x=)」的 x 相减再除 highPx。
+#    本轮：`TEX` = 37−28 = 9 px ÷ 47 = **0.191**；`PROC` = 39−29 = 10 px ÷ 48 = **0.208**；参考图 = 96 ÷ 452 = **0.212**。
+
+══ 命令①：参考图（所有者第八/九/十轮同一张剪影，sha256 92526f9d3bbb2be9…，本轮实测过）══
+墨口径：剪影 alpha>128 且均值<160
+logs_temp/e48_ref_camel.png  (512×512)
+  外接框 x=25–486  y=30–481
+  lenPx=462 highPx=452  长/高=1.022
+  左峰顶=行33(x=117)  右峰顶=行30(x=213)  肩凹=行106  腹线=行307  蹄=行481
+  humpRisePx=76  bodyDepthPx=201  **峰/体深=0.378**
+  legPx=174  腿/全高=0.385
+  ── 峰宽（天际线半峰高交叉，与 anatomy() 同口径）──
+  左峰 rise=73  半峰高=行69.5  左肩=25 右肩=51 ⇒ 峰宽=76  **宽/高=1.041**  宽/全高=0.168
+  右峰 rise=76  半峰高=行68.0  左肩=33 右肩=45 ⇒ 峰宽=78  **宽/高=1.026**  宽/全高=0.173
+  ── 头/峰高低（与 anatomy() 的 headRow / headBelowFrontPx 同口径）──
+  颈背相接=外接框内列300  头顶=行53  右峰顶=行30 ⇒ **头顶低于前峰 23 px** = 峰高的 0.30 倍
+  躯干跨（腹线行）x=45–374 = 330 px ⇒ 躯干长/全高=0.730
+  腿行 y=394 游程 [23, 18, 21, 19] ⇒ 腿宽/全高 = ['0.051', '0.040', '0.046', '0.042']（均值 0.045）
+
+══ 命令②·出货档 `TEX`（所有者贴图整只，烘焙格 76×71，SS=2 / 显示 h=34；贴图 ink 高钉在 h·48/68）══
+墨口径：剪影 alpha>128 且均值<160
+output/e48_frames/e48_camel_TEX_f0.png  (76×71)
+  外接框 x=19–67  y=24–70
+  lenPx=49 highPx=47  长/高=1.043
+  左峰顶=行24(x=28)  右峰顶=行24(x=37)  肩凹=行31  腹线=行52  蹄=行70
+  humpRisePx=7  bodyDepthPx=21  **峰/体深=0.333**
+  legPx=18  腿/全高=0.383
+  ── 峰宽（天际线半峰高交叉，与 anatomy() 同口径）──
+  左峰 rise=7  半峰高=行27.5  左肩=2 右肩=5 ⇒ 峰宽=7  **宽/高=1.000**  宽/全高=0.149
+  右峰 rise=7  半峰高=行27.5  左肩=2 右肩=6 ⇒ 峰宽=8  **宽/高=1.143**  宽/全高=0.170
+  ── 头/峰高低（与 anatomy() 的 headRow / headBelowFrontPx 同口径）──
+  颈背相接=外接框内列31  头顶=行26  右峰顶=行24 ⇒ **头顶低于前峰 2 px** = 峰高的 0.29 倍
+  躯干跨（腹线行）x=21–56 = 36 px ⇒ 躯干长/全高=0.766
+  腿行 y=61 游程 [3] ⇒ 腿宽/全高 = ['0.064']（均值 0.064）
+
+══ 命令②·回退档 `PROC`（第十轮解析几何，humpK=0.38 / lenK=0.92 / 峰距系数 0.084+0.089）══
+墨口径：剪影 alpha>128 且均值<160
+output/e48_frames/e48_camel_PROC_f0.png  (76×71)
+  外接框 x=13–62  y=22–69
+  lenPx=50 highPx=48  长/高=1.042
+  左峰顶=行22(x=29)  右峰顶=行23(x=39)  肩凹=行27  腹线=行42  蹄=行69
+  humpRisePx=5  bodyDepthPx=15  **峰/体深=0.333**
+  legPx=27  腿/全高=0.562
+  ── 峰宽（天际线半峰高交叉，与 anatomy() 同口径）──
+  左峰 rise=5  半峰高=行24.5  左肩=2 右肩=3 ⇒ 峰宽=5  **宽/高=1.000**  宽/全高=0.104
+  右峰 rise=4  半峰高=行25.0  左肩=1 右肩=3 ⇒ 峰宽=4  **宽/高=1.000**  宽/全高=0.083
+  ── 头/峰高低（与 anatomy() 的 headRow / headBelowFrontPx 同口径）──
+  颈背相接=外接框内列38  头顶=行24  右峰顶=行23 ⇒ **头顶低于前峰 1 px** = 峰高的 0.20 倍
+  躯干跨（腹线行）x=14–50 = 37 px ⇒ 躯干长/全高=0.771
+  腿行 y=55 游程 [4, 5] ⇒ 腿宽/全高 = ['0.083', '0.104']（均值 0.094）
+
+══ 命令③：页内 anatomy() 对账（归档格 hH=68，两档各一行；第十一轮新增 `sadCol` 字段）══
+  ── TEX  精灵 76×71 帧 6（独立位图 1） 归档格 hH=68px@H=895 ──
+    {"hH":68,"sprite":"76×71","lenPx":49,"highPx":47,"lenHigh":1.04,"saddleRow":31,"sadCol":34,"bodyDepthPx":20,"bellyRow":51,"legPx":19,"legOverHigh":0.4,"rearRow":24,"frontRow":24,"headRow":26,"headX":57,"rearRisePx":7,"frontRisePx":7,"humpRisePx":7,"humpOverDepth":0.35,"rearHumpW":7,"frontHumpW":8,"rearWOverRise":1,"frontWOverRise":1.14,"humpWOverRise":1.07,"humpWOverHigh":0.16,"skyRow":24,"skyX":28,"peakIsHigh":true,"headBelowFrontPx":2,"humpK":0.38,"lenK":0.92,"tex":"TEX"}
+  ── PROC  精灵 76×71 帧 6（独立位图 6） 归档格 hH=68px@H=895 ──
+    {"hH":68,"sprite":"76×71","lenPx":50,"highPx":48,"lenHigh":1.04,"saddleRow":27,"sadCol":34,"bodyDepthPx":16,"bellyRow":43,"legPx":26,"legOverHigh":0.54,"rearRow":22,"frontRow":23,"headRow":24,"headX":56,"rearRisePx":5,"frontRisePx":4,"humpRisePx":5,"humpOverDepth":0.31,"rearHumpW":5,"frontHumpW":4,"rearWOverRise":1,"frontWOverRise":1,"humpWOverRise":1,"humpWOverHigh":0.09,"skyRow":22,"skyX":29,"peakIsHigh":true,"headBelowFrontPx":1,"humpK":0.38,"lenK":0.92,"tex":"PROC"}
+
+══ 命令②附：屏上格 1280×720（hH=54，⛔ 与归档格互比 —— 行量化不同，裁块里的数是这一段）══
+    TEX  {"hH":54,"sprite":"61×56","lenPx":38,"highPx":38,"lenHigh":1,"saddleRow":24,"sadCol":27,"bodyDepthPx":16,"bellyRow":40,"legPx":15,"legOverHigh":0.39,"rearRow":19,"frontRow":18,"headRow":21,"headX":45,"rearRisePx":5,"frontRisePx":6,"humpRisePx":6,"humpOverDepth":0.38,"rearHumpW":5,"frontHumpW":5,"rearWOverRise":1,"frontWOverRise":0.83,"humpWOverRise":0.92,"humpWOverHigh":0.13,"skyRow":18,"skyX":30,"peakIsHigh":true,"headBelowFrontPx":3,"humpK":0.38,"lenK":0.92,"tex":"TEX"}
+    PROC {"hH":54,"sprite":"61×56","lenPx":39,"highPx":38,"lenHigh":1.03,"saddleRow":21,"sadCol":27,"bodyDepthPx":12,"bellyRow":33,"legPx":21,"legOverHigh":0.55,"rearRow":17,"frontRow":17,"headRow":19,"headX":44,"rearRisePx":4,"frontRisePx":4,"humpRisePx":4,"humpOverDepth":0.33,"rearHumpW":3,"frontHumpW":2,"rearWOverRise":0.75,"frontWOverRise":0.5,"humpWOverRise":0.63,"humpWOverHigh":0.07,"skyRow":17,"skyX":23,"peakIsHigh":true,"headBelowFrontPx":2,"humpK":0.38,"lenK":0.92,"tex":"PROC"}
+输出目录：D:\hxzhang\MyGithubSoftware\NasAudio\NASMusicTV\output\e48_frames

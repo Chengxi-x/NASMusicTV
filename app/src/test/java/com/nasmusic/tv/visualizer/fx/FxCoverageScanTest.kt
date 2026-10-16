@@ -65,6 +65,7 @@ class FxCoverageScanTest {
         //    （字面量留着 + `vignetteOverride` 恒 0）——**别再让它退回 NONE**。
         "SnowCedarRenderer",           // E47 雪松（暗角+颗粒烘进 grade 位图 = 1 图元/1.000 屏；字面量 0.34f 为门禁证据与 needsDamageCoalescer 的账，绘制由 vignetteOverride 恒 0 关断）
         "BirdsFlockRenderer",          // E49 鸟群（暗角+分色烘进 grade 位图 = 1 图元/1.000 屏；字面量 0.24f 与烘焙边缘 α 同数，绘制由 vignetteOverride 恒 0 关断，三段式与 E46/E47 同形）
+        "DesertSmokeRenderer",         // E48 大漠孤烟（暗角+颗粒烘进同一张 grade 位图 = 1 图元/1.000 屏；字面量 0.10f，绘制由 vignetteOverride 恒 0 关断，三段式与 E46/E47/E49 同形。⛔ 退回 PostFx.NONE 会让 needsDamageCoalescer 在 LITE/FULL 也为真 ⇒ 每帧白补一次整画布 drawRect）
     )
 
     // ── 豁免名单：阶段推进时逐条移入 covered（理由必须写明，便于复核） ──
@@ -267,7 +268,7 @@ class FxCoverageScanTest {
     fun `在册渲染器全部有归属 名单无重叠无遗漏`() {
         val decls = rendererDecls()
         assertTrue("扫描到的渲染器类应 > 0（空转自证）", decls.isNotEmpty())
-        assertTrue("渲染器类数应 ≥ 25（2026-10-05 删 9 个效果后 22；M11 修复（2026-10-06）再删死代码 WorldRenderer → 21；2026-10-08 新增 E44 明月 → 22；2026-10-13 新增 E46 迷雾之战 → 23；2026-10-14 新增 E47 雪松 → 24；2026-10-15 新增 E49 鸟群 → 25），实测 ${decls.size}", decls.size >= 25)
+        assertTrue("渲染器类数应 ≥ 26（2026-10-05 删 9 个效果后 22；M11 修复（2026-10-06）再删死代码 WorldRenderer → 21；2026-10-08 新增 E44 明月 → 22；2026-10-13 新增 E46 迷雾之战 → 23；2026-10-14 新增 E47 雪松 → 24；2026-10-15 新增 E49 鸟群 → 25；同日新增 E48 大漠孤烟 → 26），实测 ${decls.size}", decls.size >= 26)
         // ⛔ 解析器自证：多行构造参数的两个类必须被解析到，否则是"静默漏类"
         // ⚠️ 2026-10-05：原样本 `WaterfallRenderer` 随效果删除 ⇒ 只摘它一个，保留其余样本。
         for (n in listOf("MoleculeRenderer", "HypnoticFunctionRenderer", "PhotoRenderer")) {

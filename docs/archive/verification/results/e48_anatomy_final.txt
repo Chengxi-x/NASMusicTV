@@ -1,0 +1,26 @@
+# E48 驼队精灵解剖量（页内 `anatomy()` 口径）—— 第十一轮（2026-10-15 重跑，驼形**出货档 = `TEX`**）。
+# 命令：node docs/archive/verification/scripts/e48_visual_driver.mjs camelcmp MED 8
+#   ⇒ 精灵钉在 §十 归档烘焙格 hH=68（= 显示 34 × CAMEL_SS），由 `P.caravan.h` 反解 H=895 并当场断言 hH===68。
+#   ⇒ 屏上格（1280×720 ⇒ hH=54）那两行⛔ 与归档格互比：行量化随格高变（D21）。
+# ⚠️ 第十一轮 `anatomy()` 改了**肩凹口径**（旧写法 `saddle = top[cx]` 在贴图档被打穿：肩凹是个 1 列宽的 V，
+#   `ox` 的半像素相位一挪就读到 V 的肩而不是谷底 ⇒ 页内 0.13 / 脚本 0.333，差 2.6 倍）。
+#   新口径 = 两峰心之间天际线的最低 ink 行（与 `e48_ref_camel.py` 的 `max(top[a..b])` 同一条定义），并新增 `sadCol`。
+# ⚠️ `TEX_INK_OVER_H = 48/68` 钉的是**下面 PROC 行**的 highPx/hH（= 第十轮实测），刻意不动 ⇒ 两档共用同一张画布与 blit 尺寸。
+
+── 出货档 TEX（所有者贴图整只；独立位图 1 张复用 6 帧 ⇒ 腿不动，第五轮"不是静止的"由行进 + bob 承担）──
+{"hH":68,"sprite":"76×71","lenPx":49,"highPx":47,"lenHigh":1.04,"saddleRow":31,"sadCol":34,"bodyDepthPx":20,"bellyRow":51,"legPx":19,"legOverHigh":0.4,"rearRow":24,"frontRow":24,"headRow":26,"headX":57,"rearRisePx":7,"frontRisePx":7,"humpRisePx":7,"humpOverDepth":0.35,"rearHumpW":7,"frontHumpW":8,"rearWOverRise":1,"frontWOverRise":1.14,"humpWOverRise":1.07,"humpWOverHigh":0.16,"skyRow":24,"skyX":28,"peakIsHigh":true,"headBelowFrontPx":2,"humpK":0.38,"lenK":0.92,"tex":"TEX"}
+
+── 回退档 PROC（第十轮解析几何；独立位图 6 张 = 会走的步态）──
+{"hH":68,"sprite":"76×71","lenPx":50,"highPx":48,"lenHigh":1.04,"saddleRow":27,"sadCol":34,"bodyDepthPx":16,"bellyRow":43,"legPx":26,"legOverHigh":0.54,"rearRow":22,"frontRow":23,"headRow":24,"headX":56,"rearRisePx":5,"frontRisePx":4,"humpRisePx":5,"humpOverDepth":0.31,"rearHumpW":5,"frontHumpW":4,"rearWOverRise":1,"frontWOverRise":1,"humpWOverRise":1,"humpWOverHigh":0.09,"skyRow":22,"skyX":29,"peakIsHigh":true,"headBelowFrontPx":1,"humpK":0.38,"lenK":0.92,"tex":"PROC"}
+
+── 屏上格 1280×720（hH=54，裁块/整帧里的数是这一档，⛔ 拿来与上面互比）──
+TEX  {"hH":54,"sprite":"61×56","lenPx":38,"highPx":38,"lenHigh":1,"saddleRow":24,"sadCol":27,"bodyDepthPx":16,"bellyRow":40,"legPx":15,"legOverHigh":0.39,"rearRow":19,"frontRow":18,"headRow":21,"headX":45,"rearRisePx":5,"frontRisePx":6,"humpRisePx":6,"humpOverDepth":0.38,"rearHumpW":5,"frontHumpW":5,"rearWOverRise":1,"frontWOverRise":0.83,"humpWOverRise":0.92,"humpWOverHigh":0.13,"skyRow":18,"skyX":30,"peakIsHigh":true,"headBelowFrontPx":3,"humpK":0.38,"lenK":0.92,"tex":"TEX"}
+PROC {"hH":54,"sprite":"61×56","lenPx":39,"highPx":38,"lenHigh":1.03,"saddleRow":21,"sadCol":27,"bodyDepthPx":12,"bellyRow":33,"legPx":21,"legOverHigh":0.55,"rearRow":17,"frontRow":17,"headRow":19,"headX":44,"rearRisePx":4,"frontRisePx":4,"humpRisePx":4,"humpOverDepth":0.33,"rearHumpW":3,"frontHumpW":2,"rearWOverRise":0.75,"frontWOverRise":0.5,"humpWOverRise":0.63,"humpWOverHigh":0.07,"skyRow":17,"skyX":23,"peakIsHigh":true,"headBelowFrontPx":2,"humpK":0.38,"lenK":0.92,"tex":"PROC"}
+
+── 对照：参考图同口径脚本量（`e48_ref_camel.py logs_temp/e48_ref_camel.png`，全文见 e48_ref_camel_final.txt）──
+  长/高 1.022 · 峰/体深 0.378（脚本口径）· 腿/全高 0.385 · 峰宽/峰高 1.041/1.026 · 头顶低于前峰 0.30×峰高 · 躯干长/全高 0.730
+  ⇒ `TEX`（贴图）：长/高 1.043 · 峰/体深 0.333 · **腿/全高 0.383**（PROC 0.562 ⇒ 贴图把这根欠了几轮的轴带回来了）
+     · 峰宽/峰高 1.000/1.143 · 头顶低于前峰 0.29 · 躯干长/全高 0.766
+⚠️ 待所有者裁的参数：默认 `caravan.occl = 0.345` 下，贴图那 18 px 腿（占 ink 高 38%）几乎**整条被沙丘吃掉**
+   （实测：脚线在 carLayer 脊线下 7~9 px ⇒ 归档格腿段行 56–70 全埋，只剩行 52–56 一小截）。
+   降 `occl` 是 T9 露出比判据的入参 ⇒ ⛔ 不擅动，留给所有者。

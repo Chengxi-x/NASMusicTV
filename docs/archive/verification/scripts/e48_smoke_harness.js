@@ -1,5 +1,5 @@
 // E48「大漠·孤烟」原型的**可重跑验证脚本**：在 Node 的 vm 沙箱里桩掉 DOM/canvas，
-// 载入 `docs/e48-desert-smoke-preview.html`的**原文脚本**，跑 T1–T14 自检 + B1–B3 预算上限
+// 载入 `docs/archive/e48-desert-smoke-preview.html`的**原文脚本**，跑 T1–T14 自检 + B1–B3 预算上限
 // + 三档图元/铺屏计量 + 绘制调用对账。
 //
 // ⛔ **方案文档 §十 的 ops/fill 数字只能由本脚本再生**，不许手抄（E44 偏差 D24 的成因）。
@@ -23,7 +23,7 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..', '..', '..', '..');
-const htmlPath = path.join(root, 'docs', 'e48-desert-smoke-preview.html');
+const htmlPath = path.join(root, 'docs', 'archive', 'e48-desert-smoke-preview.html');
 const html = fs.readFileSync(htmlPath, 'utf8');
 
 const sm = html.indexOf('<script>');
@@ -178,7 +178,7 @@ console.log('载入 + boot()：' + ((Date.now() - t0) / 1000).toFixed(1) + ' s�
   // ⚠️ 沙丘画布名是**按画布索引**生成的（`dune0..dune{nG-1}`，nG 随档位变 5/7/9）
   //    ⇒ ⛔ 在此写死一份名单：写死的那份和页面实际烘的层数一旦分叉，本检查就变成恒绿的空壳。
   //    ⚠️ E48 三轮分组后 `DUNES` 是**脊线**表（R = nG × sub），逐帧 blit 的是画布 ⇒ 必须按 nG 数。
-  const need = ['sky', 'veil', 'grade', 'wisp', 'wispWarm', 'camel'];
+  const need = ['sky', 'veil', 'grade', 'sun', 'wisp', 'wispWarm', 'camel'];
   const nG = E.DUNES.length ? E.DUNES[0].nG : 0;
   for (let i = 0; i < nG; i++) need.push('dune' + i);
   const miss = need.filter((k) => !E.B[k]);

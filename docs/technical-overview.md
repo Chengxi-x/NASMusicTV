@@ -15387,3 +15387,437 @@ Compose 的 `drawRect(brush, topLeft, size)` **不会**把着色器挪到 `topLe
 `BirdsFlockGateTest` 12 / `BirdsFlockRenderSourceGateTest` 8 / `SnowCedarBakeGateTest` 13 /
 `SnowCedarGoldenTest` 11 / `SnowFieldTest` 5 / `SnowPersonGateTest` 5 —— **0 失败 0 错误 0 跳过**。
 ⛔ **未真机验证**（owner 明确要求不在电视上测，改由 owner 在手机上判读）。
+
+### 10.237 v2.38.13 — E48「大漠孤烟」Kotlin 落地：第 26 套可视化效果（K1–K7 闭合，K8 真机验收待所有者执行）
+
+**范围**：按 `docs/e48-desert-smoke-plan.md` §11.3 的 K1–K8 与 §12 接线清单执行。
+原型 = `docs/e48-desert-smoke-preview.html`（纯 Canvas 2D，自带 T1–T14 自检）⇒ 逐字移植成
+**纯 Canvas 2D Kotlin**（⛔ 不用 WebView / three.js），五文件：
+
+| 文件 | 内容 |
+|---|---|
+| `renderers/DesertSmokeCrest.kt`（694 行） | `DesertMath`（mulberry32 / hash2 / vnoise / fbm / hex 混色）+ `P` 参数表 + `TIERS` + `buildDunes` 整张脊线表 + `layout()` 派生量 + `crest/groupTopCrest/layerOf/duneExposures/sunCutFraction` 这条**六处共用的脊线口径** |
+| `renderers/DesertSmokeBakes.kt`（784 行） | **14 类**无状态烘焙画笔（sky / sun / 沙丘×nG / wisp×6 / wispWarm×6 / camel / veil / grade）+ 分帧队列（`UNIT_PX_CAP 24000` / `BAKE_BUDGET_MS 24L`，倒序 `nG−1 → 0`、`grade` 最后） |
+| `renderers/SmokeChain.kt`（259 行） | 烟丝链常驻 flat 数组（`u/ph/of/lap/vr`）+ 回绕守恒 + 行波 `swayRaw` + `puffR/puffTilt/smokeAlpha/minOverlap/maxTiltDeg/fpOf` |
+| `renderers/Caravan.kt`（277 行） | `CAMEL_TEX` 点表（1 环 / 113 顶点 / 归一格 131×128）+ 时刻表 `starts[]` + `caravanAt` 二分 + `camelFootY/camelVisible` |
+| `renderers/DesertSmokeRenderer.kt`（913 行） | `RendererFx` 基类 + `drawContent` 首帧建图 + `bakeStep()` 预算推进 + `renderFrame` 图层序 + `DesertWorldState` / `DesertAudio` |
+
+**K1 接线（四件套）**：`AppSettings.kt` 新增
+`DESERT_SMOKE(R.string.visualizer_theme_desert_smoke, "大漠孤烟", Tier.ADV, "48", needsParticleBudget = false)`；
+`VisualizerRendererFactory.kt` 新增工厂分支；`res/values/strings.xml` + `values-en/strings.xml` 双语键
+（「大漠孤烟」/「Lone Smoke over the Dunes」）；`VisualizerThemeTest.kt` **7 处** 25→26 并新增一条
+「三档全可用」断言；`FxCoverageScanTest.kt` 阈值 `>= 25 → >= 26` 且把新渲染器加入 covered；
+`StarrySkyTest.kt` 的 `entries.size` 25→26。
+⇒ **`VisualizerTheme` 25 → 26 套**（`docs/visualizer-effects-list.md` 同步：ADV 13 → 15、补 E47/E48/E49 三行）。
+
+**本轮修掉的七处真实缺陷**，分两批：
+
+**（a）免 Gradle 独立 JVM 通道抓出的三处**（K2–K6 自查）：
+
+1. ⭐ **`Caravan.kt` 驼队状态构造少传第 6 参** `next` ⇒ **生产源码编译不过**。修：活跃分支补 `0.0`
+   （与原型"只在 `p >= 1` 分支返回下一波等待"一致）。
+2. ⭐ **`pow(d.t, e)` 写法不成立**：`kotlin.math.pow` 是**扩展函数**（`Double.pow(x: Double)`），
+   ⛔ 没有两参顶层函数 ⇒ 必须写 `d.t.pow(e)`。修完与 `v.pow(p)` / `t.pow(0.85)` 同式。
+3. ⭐⭐ **`minOverlap` 把画幅宽当画幅高传给 `puffR`**（原型 `puffR` 闭包吃的是 `H`）⇒ 烟团半径整体
+   **1.78×**。后果有两条：① 生产逐帧 puff 半径同样偏大（`drawSmoke` 的调用点也传了 `lay.w`，一并修）；
+   ② T4「不断珠」闸门虚高到 **4.22**（原型 2.28），而负样本（粒数砍 0.55×）只落到 **2.52 > 1.8**
+   ⇒ **闸门失去牙齿**。修后实测 **2.37 / 负样本 1.42**，与原型量级对齐。
+
+**（b）真实 `:app:assembleRelease` 编译抓出的四处 —— 免 Gradle 通道 100% 看不见**：
+
+4. ⭐⭐ **KDoc 里的 `**/` 把块注释提前闭合**（`DesertSmokeRenderer.kt:504`，原文
+   ``…**一次 Compose `drawRect` + 一次画布平移**/带。``）：Kotlin 词法把 `**/` 的**末两字符**当成块注释
+   结束符 `*/` ⇒ 从 505 行起 **11 行注释变成裸代码**，编译器吐出 **100+ 条
+   `Expecting member declaration`**（报错位置全落在注释正文里，极易误判成"注释写错了"）。
+   修：改写为「（逐带）」。⚠️ 全仓五源码 + 三门禁只此一处。
+5. ⭐ **`import com.nasmusic.tv.visualizer.fx.FxFrame` 包名写错**：`FxFrame` 定义在
+   `renderers/RendererFx.kt:217`（包 `…visualizer.renderers`）⇒ 与渲染器**同包、本来无需 import**。
+   修：删该行。（`FxLevel` 确实在 `visualizer/fx/`，那条 import 是对的，保留。）
+6. ⭐ **工厂漏 import**：`VisualizerRendererFactory.kt` 在包 `…visualizer`，且用的是**逐条具名 import**
+   （⛔ 无通配）⇒ 只加了 `when` 分支、没加 `import …renderers.DesertSmokeRenderer`
+   ⇒ `Unresolved reference 'DesertSmokeRenderer'`。修：补 import。
+7. ⭐ **`DesertSmokeBakes.kt:197` 的 `RadialGradient` 是 9 参（JS 两圆式）**：Android 的
+   `RadialGradient` **没有内半径**（⛔ JS 的 `createRadialGradient(x0,y0,r0,x1,y1,r1)` 才有），
+   只有 6 参单圆重载 ⇒ 报 `actual type is 'IntArray', but 'LongArray' was expected`
+   （重载解析挑不到候选、报在数组实参上，也极易误判成"数组类型写错"）。修：照抄**同文件
+   `buildHaloShaders()` 的既成折算** —— 把起坡半径折进 stop 表（`stp[0] = 0.94R / Re`，
+   `CLAMP` 把内盘整段填成首个 α），改成 6 参调用。
+
+> ⭐⭐ **本轮最重要的教训（覆盖盲区）**：`logs_temp/e48kv/gen/` 只编了
+> `DesertSmokeCrest.kt` / `SmokeChain.kt` / `Caravan.kt` 三个文件（另加 `AudioSmoother.kt`）——
+> `DesertSmokeRenderer.kt` / `DesertSmokeBakes.kt`（合计 **1697 行**）依赖 Compose + `RendererFx`
+> 基类、桩不出来 ⇒ **这两个文件的编译正确性此前从未被任何通道验证过**，上面 4/5/7 三条正落在其中。
+> ⇒ **免 Gradle 通道能证明"纯逻辑层自洽"，⛔ 绝不能当成"编译通过"**；
+> 而 `assemble*` **不编译 test 源码** ⇒ 门禁测试同样**只**能靠 `testDebugUnitTest` 验证。
+
+**新增三道门禁（17 例）**：
+
+- `DesertSmokeGateTest`（**12 例**）：T1 逐位复现 / T2 摆动有界且达峰 / T3 烟丝守恒 / T4 相邻重叠率 /
+  T5 各向异性 + 倾角 ≤6° / T6 变体多样性 / T7 浓度包络 / T8 暖边朝日侧且只下半段 / T11 无声零漂移但画面不死 /
+  T12 远脊切日盘 8–45% / T14 每层露出 ≥0.012H + **K2 脊线口径唯一性源码闸门**（`ridgeAt(` 只允许
+  1 定义 + `ridgeMix` 里 2 次调用；六个消费者各自体内都读共享 `crest`/`groupTopCrest`；
+  驼队脚线 ⛔ 不许走单条脊）。
+- `CaravanOcclusionGateTest`（**4 例**）：T9 露出比 ∈[0.40, 0.85] / T10 驼队偶发性（1800 s 内 12–20 波、
+  空窗 ∈[40, 80] s）/ **D4 结构闸门**（`cp.h = 0` 时 `footY` 恒等于 `groupTopCrest(carLayer, x)` 且
+  **≠** 单条脊，实测差 47 px）/ **§八之二 ⓒ** `carLayer < nG−1 && srcLayer < nG−1`（实测 3 / 4 < 6）+
+  `footY` ⛔ 不入 `Params` 的源码断言。
+- `DesertSmokeLayerOrderGateTest`（**1 例**）：`renderFrame` 的九个图层序标记**逐字存在 + 严格递增 +
+  两个条件分支必须在组循环体内**（D4 遮挡语义），带"分支挪到 `drawDune` 之后""调色提前"两条负样本。
+
+**判据来源与边界（⛔ 必读）**：本轮的数值判据**不是**在 Gradle 里跑出来的，而是用
+`kotlin-compiler-embeddable` 把**真实生产源文件**编到独立 JVM 直调生产函数（免 Gradle 通道）——
+原型 T1–T12/T14 **13/13 全绿**、三道门禁 **17/17 通过**、并把 7 个故意改坏生产码的变异逐个验证
+**全部被对应门禁咬住**（删末段收 → T7 红；脚线改单条脊 → K2/footY 红；去掉透视幂 → T14 红；
+puffR 高度通胀 16/9 → T4 红；图层序换序 → 图层序红；`duneExposures` 里另写取样 → K2 红；
+`camelVisible` 放开上界 → T9 红）。
+⚠️ **这只能证明纯逻辑层自洽**（且如上面「覆盖盲区」所述，它连 5 个文件里的 2 个都没编到）
+⇒ ⛔ 不等于 Gradle 编译通过、⛔ 不等于真机通过。
+
+**⭐ 2026-10-15 当日补记：真实 Gradle 实跑结果（所有者指示「编译 release」）**：
+
+| 步骤 | 结果 |
+|---|---|
+| `:app:assembleRelease`（第 1 次） | ❌ FAILED —— 100+ 条语法错 + 3 条类型/引用错（即上面 (b) 的 4 条） |
+| 修完 (b) 4 条后重跑 | ❌ FAILED —— 只剩工厂 `Unresolved reference`（第 6 条，第 1 次被语法错淹没） |
+| 补工厂 import 后重跑 | ✅ **BUILD SUCCESSFUL in 8m 45s** ⇒ 产物 `NASMusicTV-release-v2-38-13.apk`（**24.5 MB**） |
+| `:app:testDebugUnitTest`（限定 E48 相关 4 类） | ✅ **BUILD SUCCESSFUL** ⇒ **6 类 / 92 例 / 0 失败 0 错误 0 跳过**：<br>`DesertSmokeGateTest` 12 / `CaravanOcclusionGateTest` 4 / `DesertSmokeLayerOrderGateTest` 1（**新门禁 17 例全绿**）+ `VisualizerThemeTest` 14 + `StarrySkyTest` 58 + `VisualizerThemeStringsGateTest` 3 |
+
+⇒ 本效果**已确认可编译、新门禁已确认可运行且全绿**；K8 真机判读仍待所有者。
+⚠️ 全量套件（未加 `--tests` 过滤）本轮**未跑**，故 §10.237 的「1467 例 / 140 类」仍是**预期值**而非实测值。
+
+**T13 为何不移植**：原型 T13「计量自洽（ΣPROF≡OPS、Σfill≡FILL）」判的是**原型自带的性能计数器账本**，
+方案 P21 已明文它**只保证两套账自洽**、⛔ 不保证两侧口径一致；那套计数器对生产渲染器是**调试
+instrumentation**（会变成逐帧真开销）⇒ **无生产对应物，⛔ 不在单测里伪造一条**。
+
+**T7 的负样本为何与原型不同**：原型 P23 的负样本 `noTop = 0.30` 是**写死字面量**、从不调 `smokeAlpha`
+⇒ **永远不会红**（空壳，方案 §八之二ⓔ 已记）。Kotlin 侧改用**同一份谓词**做判别自证：
+`α(u) ≤ 1e-9` 在 `u = 0.5 / 0.81` 上必须判红（末段收一旦被删，`α(1)` 从 0 跳到 ≈0.119 ⇒ 立刻越界）。
+
+**门禁基线**：现有基线 **1449 例 / 137 类** ⇒ 本轮 **+18 例 / +3 类**
+（`DesertSmokeGateTest` 12 + `CaravanOcclusionGateTest` 4 + `DesertSmokeLayerOrderGateTest` 1 +
+`VisualizerThemeTest` 新增 1）= **预期 1467 例 / 140 类 / 0 失败**。
+⚠️ 已实测的是**限定 4 类的子集**（6 类 / 92 例 / 0 失败，见上表）；全量 1467/140 **尚未实测**。
+
+**所有者待执行**：① 全量单测（`./gradlew :app:testDebugUnitTest`，验证 1467/140 这个预期）；
+② **K8 真机判读 11.2 的十一项**（⭐ 含 8b「盘缘柔化在电视上读成什么」，`softK = 1.06` ⇒
+过渡宽 0.119R ≈ 12% 盘半径，而参考图是锐边 ⇒ 这条偏差是**故意的**，⛔ 别说"对上了参考图"）；
+③ 文首四个悬置项（含 D25「腿不动」是否就是想要的画面、`occl` 是否降、`idle0/idle1` 空窗是否偏长）
+需在真机判读时重新提给所有者裁决。
+（`:app:assembleRelease` 已于 2026-10-15 由本轮实跑通过、产物已出，⛔ 不必重跑。）
+
+
+### 10.238 v2.38.13 — E48「大漠孤烟」进入效果黑屏一下：`boot()` 从首帧推到次帧 + 同源兜底天幕（2026-10-16）
+
+**症状（所有者真机报障原话）**：「打开 大漠 效果，开始加载一部分内容，但会**黑屏一下**，
+然后才会出完整画面」。
+
+**根因（推理链完整，⚠️ 设备端未实测）**：E48 的 `drawContent` 首帧要做两件**软件渲染**的重活 ——
+① `boot()` 分配 **14 类位图**（手机竖屏 1080×2400 下 ≈ 33 MB）；② 紧随其后的 `bakeStep()`
+0 号单元 `SKY` 要做 **3 次全屏 `drawRect`**（1 次 `LinearGradient` + 2 次 `RadialGradient` 散射）。
+⚠️ `Canvas(Bitmap)` 是**软件画布** ⇒ 那 3 次是 **CPU 逐像素**（≈ 7.8 Mpx）。
+量级可对照 §10.211：E43 那 **1.12 Mpx** 的逐像素烘焙实测是**秒**级。
+这期间 Compose 的 draw 一次都没提交，而 `VisualizerStage` 的 `Box.background(Color.Black)`
+已经铺满屏幕 ⇒ 用户看到的就是**黑屏一下**。
+
+⚠️ **同一个闸门覆盖三条重建路径**：`dirty` 由 ① 首帧 `!booted`、② 档位变化、③ 画幅变化
+（手机旋转 / `MainActivity` 全屏页的系统栏显隐 —— Manifest 声明了
+`configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"`
+⇒ 旋转**不重建 Activity**，但舞台 `fillMaxSize()` 的实际尺寸会变）任一触发
+⇒ 原来三条都会**先 `releaseBitmaps()` 把已经烘好的整幅画面清空、再从头重烘**。
+
+**与 E46（§10.231）的关系**：E46 是「首帧全量同步烘焙 ⇒ 黑屏」，修法是**预算制分帧**
+（E48 已沿用）。E48 多出来的是**第二层**：分帧解决的是「一帧烘太多」，没解决
+「`boot()` 那一帧本身就很重」。E46 之所以不受影响，是它的位图尺寸与画幅**无关**
+（`:2253-2260` 画幅变化只 `prepareGrade`、`if (!booted) boot(...)`），
+而 E48 的 `bSky` / `bGrade` / `bDune` **全部绑定画幅**。
+
+**修法（两段式帧头 + 同源兜底天幕）**：
+1. `dirty` 的那一帧**只画兜底天幕**（`drawSkyFallback`）后 `return`，`boot()` 推到下一帧；
+2. 兜底天幕的着色器由新增的 `DesertSmokeBakes.skyGradient(bot)` 产出 —— 与烘焙路径
+   **共用同一个构造**（stop 表 `SKY_HEX` / `SKY_POS` / `SKY_COLORS` 提升为 companion 常量）。
+   ⛔ 两处各写一份必然漂移，而漂移的后果是「兜底帧 → 真天幕」之间闪一次色差
+   （兜底只活 1 帧，肉眼正好抓住）；
+3. 兜底走**原生 `Canvas`**（`drawContext.canvas.nativeCanvas`，与 `renderFrame` / `drawVeils`
+   同一条出口），⛔ 不用 `DrawScope.drawRect(brush = …)` —— 因为 `Brush.verticalGradient`
+   只吃 `List<Color>`（**均匀**分布），会把非均匀的 `0/.25/.60/.85/1` 色带位置整体挪掉；
+4. 着色器按 `bot` 缓存（`skyFallbackShader` / `skyFallbackEndY`）⇒ 兜底路径**逐帧零分配**；
+   `bootPending` 由 `releaseAll()` 复位，⛔ 不跨渲染器实例残留。
+
+**效果**：帧 1 = 兜底天幕（GPU 渐变，≈1 ms）⇒ **立即可见**；帧 2 = `boot()` + `bakeStep()`
+（仍然阻塞，但屏幕上是帧 1 的天幕）⇒ **不黑**；帧 3 起逐帧长齐。
+⚠️ **画幅变化仍会丢失已烘素材**（要重新长齐），但不再有全黑帧 —— 要彻底消除得照 E46 做
+「画幅变化只重排、不重建」，而那要求素材尺寸与画幅解耦（E48 现状不是）。
+
+**免 Gradle 自查**：⛔ 这两个文件（`DesertSmokeRenderer.kt` + `DesertSmokeBakes.kt`）
+**依赖 Compose，独立 JVM 通道编不了**（§10.237「覆盖盲区」同族）⇒ 本轮只做了机械检查
+（括号平衡 / `**/` 注释陷阱 / 行尾 LF / 无未用 import）+ 逐处人工复核。
+
+**✅ 编译已通过**（2026-10-16 实跑）：`:app:assembleRelease` **BUILD SUCCESSFUL in 11m 26s**，
+`54 actionable tasks: 11 executed, 43 up-to-date`；产物 `NASMusicTV-release-v2-38-13.apk`
+（**25,694,216 B / 24.5 MB**，versionCode 182 / versionName 2.38.13）。
+⚠️ 相比改动前的同版本产物（25,693,955 B）**只多 261 B** ⇒ 与「新增一条兜底分支 + 三个常量」相称。
+⚠️ 唯一的 Desert 相关警告 `DesertSmokeRenderer.kt:734:47 Redundant call of conversion method`
+**是既有的** —— 上次构建落在同一函数（`buildHaloShaders`）的 `:658:47`，行号位移恰好等于本次新增的行数
+⇒ ⛔ 与本次改动无关，本轮**未动它**（改它属于「顺手改无关代码」，且可能碰到扫描该函数文本的门禁）。
+**待真机验证**：进入「大漠孤烟」时那一下黑屏是否真的没了。
+
+### 10.239 v2.38.13 — E48 黑屏**第二轮**：真机复测仍黑 ⇒ 修掉第一轮引入的「重建被吞」+ 定位到「档位在进入后才落定」（2026-10-16）
+
+**真机复测结果**：所有者装上 §10.238 的包后报「**大漠效果加载时还有黑屏，没有改善**」
+⇒ §10.238 的修法**无效**，必须承认那一步的根因判断不完整。
+
+**第一轮修法自身的两个缺陷（本轮修掉）**：
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| A | `dirty` 的判据只有 `!booted \|\| 档位变 \|\| 画幅变`，**没把 `bootPending` 算进去** | 两段式的**次帧**里 `booted` 已为 `true`、且 `laidW/laidH` 在**首帧**就被更新成新值 ⇒ `dirty` 恒为 `false` ⇒ **`boot()` 永远不执行**、`bootPending` 永久停在 `true` ⇒ 「重建」被静默吞掉 |
+| B | 兜底帧画完天幕就 `return` | 那一帧只剩一条天幕，**丢掉沙丘 / 烟 / 驼队** —— 用户看到的正是「画面被清空一下」，只是换了个样子 |
+
+**新增的根因候选（待日志确证）**：`VisualizerViewModel.kt:107` 的 `_quality` 初值是
+`VisualQuality.Default`（`AppSettings.kt:477` ⇒ **`MEDIUM`**），而用户设置是**之后**才从存储读入
+（`VisualizerViewModel.kt:394 _quality.value = s.visualizerQuality`）⇒ 若用户把画质设成 `HIGH` 或
+`LOW`，`quality` 会在进入效果后**变化一次** ⇒ `FxBudget.of(quality)` 变 ⇒ `fx.level` 变 ⇒
+`desertLevelOf` 变 ⇒ `dirty` ⇒ **全量重建**（`releaseBitmaps()` + 14 类位图重分配 + 全屏 CPU 渐变重烘）。
+⭐ 这与「先看到一部分内容（`Default` 档烘的）→ 黑 → 完整画面（重烘完成）」的时序**完全吻合**。
+
+**本轮修法**：
+1. **`var dirty = !booted || bootPending`** —— `bootPending` 并入判据（修缺陷 A）；
+2. **画幅 / 档位变化那一帧不再 `return`**，而是**照常往下画旧位图**：`blitFull` 的 `dstRect` 宽取的是
+   **当前画幅宽** ⇒ 旧位图被拉伸铺满（形变，但覆盖全屏）⇒ **重建过程一帧都不会失去画面**（修缺陷 B）；
+3. **`boot()` 里新天幕建成后先铺满**（`createBitmap` 出来是全透明的）：画幅变化 ⇒ **旧天幕拉伸**
+   （画面连续）；首次进入 ⇒ `eraseColor(SKY_COLORS[1])` 铺暖红底 ⇒ 任何 `boot()` 帧的
+   `blitFull(bSky)` 都**不可能**是「什么都没画」；
+4. **诊断日志**（`Log.i`，TAG = `DesertSmoke`）—— ⚠️ 关键前提：`app/proguard-rules.pro:38` 的
+   `-assumenosideeffects class android.util.Log` **只覆盖 `d()` / `v()`** ⇒ `Log.i` 在 release 包里
+   **仍然输出**。打点：`resize`（画幅变化）、`level`（档位变化）、`boot`（含 `first=` / `prevSky=` /
+   `units=` / `took=…ms`）、`fallback sky`、`slow frame ≥50ms`。
+
+**日志判读（下一轮定案依据）**：
+
+| 现象 | 结论 |
+|---|---|
+| `resize` 出现 **>1 次** | 黑帧来自**全量重建**（画幅在进入后变过：旋转 / 系统栏显隐） |
+| `level` 出现 **>1 次** | 档位在进入后才落定 ⇒ 即上面那条根因候选（把画质设成 HIGH/LOW 才会出现） |
+| `slow frame` 频繁、而 `resize`/`level` 各只有 1 次 | 问题在**烘焙耗时**（`boot()` + `SKY` 的软件渐变在设备上要几百 ms），与重建清空无关 |
+
+⚠️ **诊断日志是临时的**，真机确证后连同 3 处 `Log.i` 与 `TAG` 常量一并移除。
+
+**抓日志**：`adb logcat -s DesertSmoke`（进入「大漠孤烟」前后各截一段）。
+
+**免 Gradle 自查**：同 §10.238（这两个文件依赖 Compose，独立 JVM 通道编不了）⇒ 只做机械检查
+（括号平衡 / `**/` 注释陷阱 / 行尾 LF）+ 逐处人工复核。
+
+**✅ 编译已通过**（2026-10-16 实跑）：`:app:assembleRelease` **BUILD SUCCESSFUL in 14m 1s**
+（`54 actionable tasks: 12 executed, 42 up-to-date`）；产物 `NASMusicTV-release-v2-38-13.apk`
+**25,694,956 B / 24.5 MB**（versionCode 182 / versionName 2.38.13）。
+⚠️ 相比第一轮的 25,694,216 B **只多 740 B** ⇒ 与「两段式分支 + 兜底铺满 + 5 处日志」相称。
+⚠️ Desert 相关警告只有 1 条 `DesertSmokeRenderer.kt:796:47 Redundant call of conversion method`，
+**仍是既有的**（第一轮在 `:734:47`、原版在 `:658:47`，行号位移恒等于新增行数）⇒ 未动它。
+
+**待真机验证**：进入「大漠孤烟」时那一下黑屏是否真的没了；若仍在，请附 `adb logcat -s DesertSmoke` 输出。
+
+### 10.240 v2.38.13 — E48 黑屏**第三轮**：真机给出「画质 HIGH」⇒ 定位到「档位在进入后必然变一次」+ 天幕复用（2026-10-16）
+
+**真机第二轮复测反馈（所有者原话）**：「还是有黑屏」「画质设置是 HIGH」「效果是横屏」
+「黑屏之后是完整的」⇒ §10.239 的修法**仍无效**，但**「画质 HIGH」这一条把根因钉死了**。
+
+**根因（本轮确证）**：
+1. `VisualizerViewModel.kt:107` 的 `_quality` 初值是 `VisualQuality.Default`，而
+   `AppSettings.kt:477` 定义 `Default = MEDIUM`；真实设置**之后**才从存储读入（`:394`）。
+2. ⇒ 画质 = **HIGH** 的用户，进入效果后 `quality` **必然**从 `MEDIUM` 变到 `HIGH`
+   ⇒ `FxBudget.of(quality)` 变 ⇒ `fx.level` 变 ⇒ `desertLevelOf` 变 ⇒ `dirty` ⇒ **全量重建**。
+3. 而 `applyLevel` 会改 `dune.n`（**5 / 7 / 9**）⇒ `bDune` 数组大小变 ⇒ 沙丘**必须重建**；
+   老代码连 `bSky` 一起 `releaseBitmaps()` 清掉 ⇒ 重建后头几帧 `blitFull(bSky)` 画的是
+   **全透明** ⇒ 露出 `VisualizerStage` 的深色背景层（`palette.background.copy(alpha = 0.72f)`）
+   ⇒ 用户看到的就是**黑屏一下**。
+
+**为什么「黑屏之后是完整的」**：重建只清空一次、烘完即完整 ⇒ 与「一部分内容 → 黑 → 完整」
+吻合（中间「逐帧长齐」在设备上很快，被感知为「黑一下之后就好了」）。
+
+**本轮修法**：
+1. **天幕复用**：`boot(w, h, reuseSky)` 新增参数 —— 画幅**没变**时传 `true` ⇒ 天幕位图
+   **原样复用**（`reuse` 还要复核 `prevSky` 的尺寸与 `isRecycled`）。依据：`applyLevel` 改的是
+   `dune.n` 等参数，而 `bakes.sky()` 只读 `lay` 与 `fx.skyTex`，**`skyTex` 不在 `applyLevel` 里**
+   ⇒ **天幕内容与档位完全无关**，档位变化根本不需要重烘天幕。
+   ⛔ 这一条是「黑屏一下」的正解：档位变化时天幕**一直在**，画面永远不会是空的。
+2. **天幕保底**：新增 `skyBaked` 标志（在 `runBakeUnit(SKY)` 里置位、`releaseAll()` 复位）——
+   帧尾在 `renderFrame` **之前**判一次，未烘就先用 `drawSkyFallback` 铺底
+   ⇒ 效果层**永远不会是「全透明」**。
+3. **临时屏幕诊断**（⚠️ 确证后必须移除）：左上角画一行
+   `E48 #boot次数 画幅 档位 sky=0/1 q=done/run 上一帧耗时ms`，
+   让所有者**不需要 adb** 就能读出关键状态。
+   ⚠️ 用 `Canvas.drawText(String, …)`（API 1 起就有；本项目 `minSdk = 22`，
+   且 `AdvancedRenderers` / `HypnoticFunctionRenderer` / `LyricsDotMatrixRenderer` / `MoleculeRenderer`
+   已有同款先例 ⇒ 无兼容风险）。
+
+**判读（给下一轮）**：黑屏那一下若 `sky=0` 或 `#` 增加 ⇒ 仍是**重建清空**；
+若 `#` 不变而 `ms` 很大 ⇒ 是**卡顿**（重建耗时），与清空无关。
+
+**通用教训（已同步 `MEMORY.md`）**：`_quality` 的「初值 `Default` + 真实值后到」会让**任何**
+「位图 / 缓冲尺寸绑定档位」的渲染器在进入效果后多走一次重建 —— 目前 E47 / E48 / E49 同构。
+新增这类效果时，要么让位图与档位解耦，要么像本轮一样**复用与档位无关的那部分位图**。
+
+**✅ 编译已通过**（2026-10-16 实跑）：`:app:assembleRelease` **BUILD SUCCESSFUL in 12m 32s**
+（`54 actionable tasks: 12 executed, 42 up-to-date`）；产物 `NASMusicTV-release-v2-38-13.apk`
+**25,695,639 B / 24.5 MB**（versionCode 182 / versionName 2.38.13）。
+⚠️ Desert 相关警告仍只有 1 条 `DesertSmokeRenderer.kt:868:47 Redundant call of conversion method`，
+**依旧是既有的**（行号位移恒等于新增行数）⇒ 未动它。
+
+**⏳ 待真机验证**：装上后看左上角的诊断行，并确认黑屏是否消失。
+
+> ⛔ **本节结论已被 §10.241 推翻**：真机日志证明真凶是 `veilRows` / `gradeRows` 的**下标越界**，
+> 与「档位变化 / 天幕被清空」无关。本节的 `reuseSky` / `skyBaked` 改动**保留**（本身正确，是有价值的防御）。
+
+### 10.241 v2.38.13 — E48 黑屏**定案**：真机日志抓到 `ArrayIndexOutOfBoundsException`，前三轮全部误判（2026-10-16）
+
+**⚠️ 本节推翻 §10.238 / §10.239 / §10.240 的全部根因判断。** 那三轮押的「重建清空位图 /
+档位变化 / 画幅变化」**都不是**主因；真凶是一个**与画幅、档位、生命周期全都无关**的索引 BUG。
+
+#### 抓取方式（首次走通 adb 通道）
+
+- `adb` 全路径：`C:/Users/hxzha/AppData/Local/Android/Sdk/platform-tools/adb.exe`
+  ⛔ git-bash 里 `adb` **不在 PATH**（`command not found`），必须全路径调用。
+- 设备：`91846823 / 22081212C`（Redmi，状态 `device` = 已授权）。
+- ⭐ **抓日志前必须先核对「手机上装的到底是哪一轮的包」**：
+  `adb shell dumpsys package com.nasmusic.tv | grep -i lastUpdateTime`
+  —— 本次 `lastUpdateTime = 11:47:06`，而第三轮包 `12:06:34` 才构建 ⇒ 手机上跑的是**第二轮包**。
+  ⛔ 不核对就会拿旧包的日志当新包结论。
+- 抓法：`adb logcat -c && adb logcat -v time > <file>`，由所有者操作手机复现。
+- ⭐ **前提**：`app/proguard-rules.pro:38` 只 `-assumenosideeffects` 掉 `Log.d` / `Log.v`
+  ⇒ **`Log.i/w/e` 在 release 包里照常输出**。这是全部真机诊断的基础。
+
+#### 真机日志（场景 A：冷启动 App 后直接进可视化）
+
+```
+13:02:34.829 I/DesertSmoke: level null -> HIGH
+13:02:34.829 I/DesertSmoke: resize -1x-1 -> 1220x2712 (level=HIGH)
+13:02:34.907 I/DesertSmoke: fallback sky 1220x2712 bot=1136.3297
+13:02:34.966 I/DesertSmoke: resize 1220x2712 -> 2595x1220 (level=HIGH)
+13:02:34.988 I/DesertSmoke: boot 2595x1220 first=true prevSky=false units=174 took=22ms
+13:02:35.102 I/DesertSmoke: slow frame 136ms
+13:02:35.279 I/DesertSmoke: slow frame 104ms
+13:02:35.352 I/DesertSmoke: slow frame 63ms
+13:02:35.603 W/VisualizerStage: renderer draw failed, skipped frame: DesertSmokeRenderer
+13:02:35.603 W/VisualizerStage: java.lang.ArrayIndexOutOfBoundsException: length=24000; index=24000
+13:02:35.603 W/VisualizerStage: 	at ...DesertSmokeBakes.veilRows(...:202)
+13:02:35.603 W/VisualizerStage: 	at ...DesertSmokeRenderer.runBakeUnit(...:133)
+13:02:35.603 W/VisualizerStage: 	at ...DesertSmokeRenderer.bakeStep(...:30)
+13:02:35.603 W/VisualizerStage: 	at ...DesertSmokeRenderer.drawContent(...:194)
+```
+
+**三条被日志直接否掉的旧假设**：
+
+1. ❌ **「档位在进入后必然变一次」** —— 日志是 `level null -> HIGH`，**一次到位**，
+   **根本没有** `MEDIUM -> HIGH`。
+   ⇒ `_quality` 初值 `VisualQuality.Default = MEDIUM`（`VisualizerViewModel.kt:107` +
+   `AppSettings.kt:477`）这个设计瑕疵**真实存在**，但 `VisualizerViewModel` 是
+   `MainViewModel.kt:780` 的**普通字段**、`MainActivity.kt:66` 用 `by viewModels()`
+   ⇒ Activity `onCreate` 即构造，DataStore 首次读取（几十 ms）远早于进入可视化（数秒～数十秒）
+   ⇒ **常规路径下档位不会变**。它是「理论隐患」，不是本 bug 成因。
+2. ❌ **「画幅变化触发全量重建 ⇒ 黑屏」** —— 画幅**确实**变了（竖屏 1220×2712 → 横屏 2595×1220，
+   转屏所致），`boot` 也**确实**执行了（`first=true`、174 单元），但 `boot` 本身只建队列、
+   耗时仅 **22ms**；真正的黑屏发生在 **0.6 秒之后**的烘焙期 ⇒ 与重建本身无关。
+3. ❌ **「`releaseBitmaps()` 连天幕一起清掉」** —— `prevSky=false` 是首帧的正常值，
+   且 `fallback sky 1220x2712` 已按预期画出来了 ⇒ 兜底机制**工作正常**。
+
+#### 真根因：`DesertSmokeBakes` 两处行块函数多写了一次自增
+
+```kotlin
+// veilRows（:653 起）与 gradeRows（:689 起）同款
+var i = 0
+var o = (j - ys) * w
+while (i < w) {
+    ...
+    px[o + i] = ...      // 下标 = o + i
+    i++
+    o++                  // ⛔ 多写的一行：o 也自增 ⇒ o + i 每轮 +2
+}
+```
+
+- 实际最大下标 ≈ `(rows + 1) * w`，而 `rowBuf(slot, rows * bmp.width)`（`DesertSmokeRenderer.kt:975`）
+  只保证 `max(rows * w, UNIT_PX_CAP)` ⇒ 当 `rows * w < 24000` 时缓冲就是 **24000**，
+  实际需要 `(rows + 1) * w`（横屏 `w ≈ 2336`、`rows = 10` ⇒ 需 **25696**）⇒ **必然越界**。
+- `length=24000` 恰好 == `UNIT_PX_CAP`（`DesertSmokeBakes.kt:734`）⇒ **铁证**。
+- ⭐ **对照**：E49 `SnowCedarBakes.bandRows` / `gradeRows` 写法**正确**（只有 `i++`，`o` 不动）
+  ⇒ E48 是从 E49 移植时**抄多了一行**。
+- ⭐ **影响面已核查**：全 `renderers/` 目录只有这两处；其余 `o++` 都是 `while (o < oct)` 的倍频计数器。
+
+#### 为什么表现成「黑」而不是「卡」
+
+1. `veilRows` 抛 ⇒ `runBakeUnit` → `bakeStep` → `drawContent` → `RendererFx.draw` 一路抛出。
+2. `VisualizerStage.kt:404-412` catch 住并**跳过整帧** ⇒ 该帧效果层**一个像素都不画**。
+3. 露出的正是 `VisualizerStage.kt:264-267` 的 `.background(Color.Black)` ⇒ **纯黑**。
+4. 队列里 **14 个 VEIL 单元 + 14 个 GRADE 单元逐个都会抛** ⇒ 连续 ~0.5 s 以上全黑。
+5. ⭐ 日志里只有 **1 条** `renderer draw failed`，是因为 `:407` 的 `if (!rendererFailed.value)`
+   是**一次性告警标志** —— 异常其实**每帧都在抛**。
+   ⛔ 别被「只报一次」骗成「只发生一次」。
+
+#### 修复
+
+`DesertSmokeBakes.kt`：`veilRows` / `gradeRows` 各删一行 `o++`，并把 `var o` 收紧为 `val o`
+（让编译器保证「行基址不再被改」），附守卫注释指向本次真机异常。
+
+#### 护栏（新增）
+
+`logs_temp/guard_rowidx.py` —— 静态检测「**同一循环体内** `arr[a + b]` 且 **a、b 都自增**」：
+
+- 判据严格：只有 `b` 自增（`px[o + i]` + `i++`，即**正确**写法）**不报**；
+  单索引 `arr[o]`（倍频计数器）**不报**。
+- `--selftest`：正夹具报 1、两个负夹具报 0，**喂同一份谓词**。
+- **真实负夹具**：从当前文件反向还原 `o++`（`logs_temp/_mk_neg_fixture.py` ⇒ `_neg_bakes.kt`）
+  ⇒ 报 **2 处**，退出码 1；修复后全目录 **58 文件 / 764 循环体 / 0 处**，退出码 0。
+
+#### 前几轮改动如何处置
+
+- ✅ **保留** `drawSkyFallback` + `skyGradient`（第一轮）：日志证明它**确实执行了**
+  （`fallback sky 1220x2712`），首帧不再空白 —— 有效防御。
+- ✅ **保留** `bootPending` 两段式（第二轮）：延迟重建本身正确。
+- ✅ **保留** `skyBaked` 帧尾天幕保底 + `reuseSky`（第三轮）：与档位解耦是**正确**的优化。
+- ⏳ **待移除**：`drawDiag` 屏幕诊断行 + 4 处 `Log.i` + `TAG` / `DIAG_COLOR` / `bootCount` /
+  `lastFrameMs` / `ptDiag` —— 真机复测确认黑屏消失后一并清掉。
+
+#### 待验证
+
+重新编译 release ⇒ 装机 ⇒ 确认三件事：① 黑屏消失；② 左上角诊断行 `q=done`（烘焙跑完）；
+③ `logcat -s DesertSmoke` 里**不再出现** `renderer draw failed`。
+
+### 10.242 v2.38.13 — E48 真机复测**通过** + 诊断代码已清理（2026-10-16）
+
+**复测（场景 A：冷启动直接进可视化，日志里共 5 次完整进出）**：
+
+```
+level null -> HIGH                      ← 档位一次到位（依旧）
+resize -1x-1 -> 1220x2712 → 2595x1220
+fallback sky 1220x2712
+boot 2595x1220 first=true reuse=false prevSky=false units=174 took=35ms / 9ms
+slow frame 136ms / 89ms / 58ms / 50ms / 91ms …
+```
+
+| 判据 | 修复前 | 修复后 |
+|---|---|---|
+| 黑屏 | 每次必现 | **消失** |
+| `ArrayIndexOutOfBoundsException` | 每次必现 | **0 次** |
+| `renderer draw failed` | 每帧抛 | **0 次** |
+| 屏幕诊断行 | — | `sky=1 q=done 0ms` |
+
+所有者原话：「没有黑屏」「E48 #1 2595x1220 HIGH sky=1 q=done 0ms」。
+日志存档 `logs_temp/desert_fixverified_2026-10-16.log`。
+
+**诊断代码清理**：确证后把 `DesertSmokeRenderer.kt` 的临时诊断**全部移除**
+（`logs_temp/_strip_diag.py`：10 处文本替换 + 1 处 Edit，每处预校验「命中数 == 1」才动盘）：
+`import android.util.Log`、`bootCount` / `lastFrameMs` / `ptDiag` 三个字段、`drawDiag()` 及其调用点、
+5 处 `Log.i`、`TAG` / `DIAG_COLOR`；连带删掉**只为诊断存在**的 `tFrame` / `tBoot` / `wasBooted`。
+
+- ⚠️ `import android.graphics.Paint` **保留**（除 `ptDiag` 外还有 5 处在用）。
+- ✅ 自证：残留诊断符号 **0**；括号全平衡；`guard_rowidx` 58 文件 / 764 循环体 / **0 违规**。
+- ⛔ `skyBaked` / `bootPending` / `drawSkyFallback` / `skyGradient` / `reuseSky` 是**功能代码**
+  （前几轮的真机日志证明它们真的在工作），**全部保留**。
+
+**最终产物**：`:app:assembleRelease` **BUILD SUCCESSFUL in 11m 35s**，Kotlin **0 错误**，
+唯一 Desert 警告仍是既有的 `DesertSmokeRenderer.kt:815:47 Redundant call of conversion method`
+（原 `:868:47`，行号位移 == 删除行数 ⇒ 同一条，非新增）。APK **25,694,467 B**
+（比含诊断的上一版少 1,172 B），已装机（`lastUpdateTime 2026-10-16 13:45:39`）。
+
+**遗留（非本轮）**：进入效果后画幅仍会从竖屏变横屏一次（`1220x2712 -> 2595x1220`，
+Activity 转屏所致）⇒ 首次进入仍是「竖屏兜底天幕 → 横屏全量重建」。兜底机制保证它**不会黑**，
+但会多一次重建；若想彻底免掉，只能在进入可视化前就锁定横屏（改 Manifest，影响面大 ⇒ 本轮不动）。

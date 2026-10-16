@@ -110,7 +110,7 @@ data class AppSettings(
 )
 
 /**
- * 可视化效果主题（25 套手动效果，无自动导演档）。
+ * 可视化效果主题（26 套手动效果，无自动导演档）。
  *
  * [tier] 决定该效果在各画质档位下的可用性，见 [VisualQuality.supports]。
  *
@@ -335,10 +335,37 @@ enum class VisualizerTheme(
      * ⚠️ 若日后渲染器真的读取 `ctx.quality.maxParticles`（例如改用预算控数量），
      * `ParticleBudgetGateTest` 的源码扫描会与本标注对撞 ⇒ 必须同步改成 `true`。
      *
-     * `"48"` 由 E48「大漠」预留（若 E48 最终不落地，`"48"` 空置，与 E45 同款做法）；
+     * `"48"` 已由 E48「大漠 · 孤烟」占用（见 [DESERT_SMOKE]）；
      * `"45"` 空置（E45 留空不占位）。合批：每深度层一条 Path 一次 fill，op 数与鸟数**无关**（§5.1）。
      */
     BIRDS_FLOCK(R.string.visualizer_theme_birds_flock, "鸟群", Tier.ADV, "49", needsParticleBudget = false),
+
+    /**
+     * E48「大漠 · 孤烟」（方案 `docs/archive/e48-desert-smoke-plan.md`，原型
+     * `docs/archive/e48-desert-smoke-preview.html` 已过视觉闭环）。
+     *
+     * 视觉：暖红天幕（⭐ 天顶不是最亮）+ 一枚被最远一道沙脊切掉的落日 + **很多沙丘重叠**
+     * （5/7/9 张画布按 `fx.level` 分档，组内遮挡发生在**烘焙期** ⇒ 逐帧每组 1 次 blit）
+     * + 一柱**直上**的孤烟（`puffR`/`smokeAlpha` 是 `u` 的纯函数 ⇒ T4/T5 判据可直调）
+     * + 一队**从右到左横穿**的骆驼（脚线压在中景沙丘脊线之下 ⇒ 后画的沙丘把腿吃掉，
+     * 遮挡**只**由图层顺序产生，⛔ 没有专门的裁切/遮罩代码）。
+     *
+     * ## 归 [Tier.ADV] + `needsParticleBudget = false`（§2.2）
+     * 档位上如实标注"比 BASIC 重"（14 类一次性位图 + 全屏逐像素 `grade`），但本效果
+     * **一个粒子都不画**：烟丝是 12 张贴图的 blit、驼队是 1 张贴图的 blit、浮沙带是
+     * `ImageShader(Repeat)` 的 1 op/带，数量只按档位表调、⛔ 不读 `maxParticles`
+     * ⇒ 第 4 参是**可核对的事实**。[VisualQuality.supports] 的
+     * `ADV -> !needsParticleBudget || maxParticles > 0` 因此恒为真，**三档全部可选**（含 LOW）。
+     * ⚠️ 别误标 `true`；也别改挂 ULTRA —— 本效果**不用帧缓冲**（`grade` 是普通位图，
+     * 不是 `RenderNode`/离屏层）。
+     *
+     * ⚠️ 若日后渲染器真的读取 `ctx.quality.maxParticles`，`ParticleBudgetGateTest` 的源码扫描
+     * 会与本标注对撞 ⇒ 必须同步改成 `true`。
+     *
+     * `"48"` 是 E48 的预留编号（自 E49 立项起即为它留着）；`"45"` 空置（E45 留空不占位）。
+     * 分帧烘焙预算 [DesertSmokeBakes.BAKE_BUDGET_MS] ms，`grade` **最后**烘（覆盖层，缺失画面仍完整）。
+     */
+    DESERT_SMOKE(R.string.visualizer_theme_desert_smoke, "大漠孤烟", Tier.ADV, "48", needsParticleBudget = false),
     ;
 
     /** 效果分级：决定画质档位可用性 */

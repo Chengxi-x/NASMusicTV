@@ -62,8 +62,13 @@ class MoonlitAudioTest {
         //    同一个根因：把 60fps 写死在系数里，掉帧时三条包络的推进量就与真实时间脱钩。
         //    ⛔ 判据形态不变（全仓**恰好这几个文件**，`sorted()` 只抹掉 listFiles 的顺序依赖）：
         //    下一个效果要进名单得先像这里一样写明理由。
-        assertEquals("生产侧只许 E44 / E46 / E47 用 dt 变体（⛔ 定率式 update() 的隐含 60fps 就是 M10 的根因）",
-            listOf("MoonlitRenderer.kt", "SnowWorld.kt", "TripodFogRenderer.kt"), callers.sorted())
+        // ⭐ 名单于 2026-10-16 加入 E48：`DesertSmokeRenderer` 的**五个**包络
+        //    （bass / mid / treble / energy / section）同样必须走 dt 变体。理由同 E47 ——
+        //    定率式 `update()` 把 60fps 写死在系数里，掉帧时包络的推进量就与真实时间脱钩。
+        //    ⚠️ E48 是本条**第一个被全量单测抓到的漏登**：E48 落地的三轮真机修复期间只跑过
+        //    `--tests` 过滤的 6 类，全量门禁到 2026-10-16 才第一次跑 ⇒ 一跑就红。
+        assertEquals("生产侧只许 E44 / E46 / E47 / E48 用 dt 变体（⛔ 定率式 update() 的隐含 60fps 就是 M10 的根因）",
+            listOf("DesertSmokeRenderer.kt", "MoonlitRenderer.kt", "SnowWorld.kt", "TripodFogRenderer.kt"), callers.sorted())
 
         val src = rendererSource()
         assertEquals("四个频段各推进一次 ⇒ 全文恰好 4 个调用点",
@@ -422,8 +427,12 @@ class MoonlitAudioTest {
             it.name.endsWith(".kt") &&
                 stripComments(it.readText()).contains("override fun vignetteOverride")
         }.map { it.name }
-        assertEquals("只许 E44 / E46 / E47 / E49 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
-            listOf("BirdsFlockRenderer.kt", "MoonlitRenderer.kt", "SnowCedarRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
+        // ⭐ 2026-10-16 加入 E48：形制与理由**逐字同 E46/E47/E49** —— E48 的暗角 + 颗粒已烘进
+        //    同一张 grade 位图（`DesertSmokeBakes.gradeRows`，1 图元 / 1.000 屏）⇒ 基类那一次
+        //    全屏 drawRect 必须用钩子关掉；`postFx` 的 `vignette` 字面量保留（覆盖门禁与
+        //    `needsDamageCoalescer` 两个下游读它）。同样是全量单测首次跑才抓到的漏登。
+        assertEquals("只许 E44 / E46 / E47 / E48 / E49 覆写暗角钩子（其余效果的暗角必须仍是 postFx 字面量）",
+            listOf("BirdsFlockRenderer.kt", "DesertSmokeRenderer.kt", "MoonlitRenderer.kt", "SnowCedarRenderer.kt", "TripodFogRenderer.kt"), overriders.sorted())
         assertTrue("基类默认值必须是哨兵（不覆盖）",
             mainFileText("RendererFx.kt").contains("vignetteOverride(fx: FxFrame): Float = NO_VIGNETTE_OVERRIDE"))
     }

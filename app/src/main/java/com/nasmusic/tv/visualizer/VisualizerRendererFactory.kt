@@ -7,6 +7,7 @@ import com.nasmusic.tv.visualizer.renderers.BeatFireworkRenderer
 import com.nasmusic.tv.visualizer.renderers.BirdsFlockRenderer
 import com.nasmusic.tv.visualizer.renderers.CircularRingRenderer
 import com.nasmusic.tv.visualizer.renderers.ConstellationRenderer
+import com.nasmusic.tv.visualizer.renderers.DesertSmokeRenderer
 import com.nasmusic.tv.visualizer.renderers.LiquidGridRenderer
 import com.nasmusic.tv.visualizer.renderers.LiquidRippleRenderer
 import com.nasmusic.tv.visualizer.renderers.MatrixRainRenderer
@@ -75,6 +76,8 @@ object VisualizerRendererFactory {
         VisualizerTheme.SNOW_CEDAR -> SnowCedarRenderer()
         // E49「鸟群」零外部资产（6 类位图全在首帧 boot 程序化烘焙）⇒ ⛔ 不收 Context。
         VisualizerTheme.BIRDS_FLOCK -> BirdsFlockRenderer()
+        // E48「大漠孤烟」零外部资产（14 类位图全在首帧 boot 程序化烘焙）⇒ ⛔ 不收 Context。
+        VisualizerTheme.DESERT_SMOKE -> DesertSmokeRenderer()
     }
 
     /**
