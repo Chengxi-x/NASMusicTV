@@ -16107,3 +16107,19 @@ XML `tests="5" skipped="0" failures="0" errors="0"`（含 G4 两组自证，证�
 （创维 5.1.1）给 `startProviderMirrors` 首次回填打一条日志、跑一次即可，⛔ 不再回到 CI 断言。
 是否需要，等所有者发话。
 
+**补记（本机全量 + CI 复跑，同日）**：
+
+- 本机：先 `rm -rf app/build/test-results/testDebugUnitTest`（删声明输出 ⇒ 任务必然重新执行，
+  与 `--rerun-tasks` 同效且更省）再跑 `testDebugUnitTest lintDebug --no-daemon
+  -Pkotlin.compiler.execution.strategy=in-process` ⇒ `> Task :app:testDebugUnitTest`、
+  `> Task :app:lintDebug` 均**实际执行**（日志无 UP-TO-DATE），`BUILD SUCCESSFUL in 5m 31s`；
+  test XML 汇总 **211 类 / 2218 例 / 0 失败 / 0 错误 / 0 跳过**，lint 报告 **0 errors, 145 warnings**。
+- 提交 `5997380` 已 push（无 tag）。CI run `39035480581` **三 Job 全绿**：
+  `Unit tests` 13:15:54Z（`compileDebugUnitTestKotlin` 13:14:42 → `testDebugUnitTest` 13:15:12 →
+  `BUILD SUCCESSFUL in 4m 42s`），`Lint` 与 `build` 亦 success；
+  新的 `Dump test failure messages` 步骤打印了 `=== <failure> 完整消息 ===` 且**其后为空**（无失败元素）。
+  ⛔ 日志里**不再有 `mirror-timing`**——计时留痕随用例一起退役，符合预期。
+- ⚠️ 该步骤的 `|| echo "(no failures)"` 是**死分支**：`grep … | head -200` 的退出码取自 `head`，
+  grep 无命中时整条仍返回 0。行为无害（无失败本就应打印空），但下次动这段 YAML 时把回显改成
+  `if ! grep -q "<failure" …` 的显式判定，别把它当成"CI 已经会报告没失败"的依据。
+
