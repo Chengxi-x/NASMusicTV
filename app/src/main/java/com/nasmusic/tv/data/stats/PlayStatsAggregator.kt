@@ -1,6 +1,7 @@
 package com.nasmusic.tv.data.stats
 
 import com.nasmusic.tv.data.model.Song
+import com.nasmusic.tv.util.ArtistSplitter
 
 /**
  * 播放统计聚合结果模型（F2-1）
@@ -31,13 +32,17 @@ data class StatsBundle(
  *
  * 输入：月度 songId 次数表 + Song 元数据来源（recentSongObjects / PlayRecord 历史等）。
  * 聚合策略（见 docs/archive/feature-dev-plan-2026-09.md §1.6）：
- * - artist 按精确字符串匹配归并（GBK mojibake 变体不强行归并，设计取舍）
+ * - artist 先用 [ArtistSplitter] 拆分再归并：合唱曲目（"林忆莲/李宗盛"）同时记给每位歌手，
+ *   与歌库歌手列表 [com.nasmusic.tv.ui.screens.library.browse.ArtistList] 同口径，
+ *   否则统计页会出现 "A/B" 这类合并名，点不进任何歌手
+ * - 归并键走 [ArtistSplitter.normalizeKey]（NFKC + trim + 折叠空白 + 小写），
+ *   GBK mojibake 变体不强行归并，设计取舍
  * - genre 为 null/blank 归入"未分类"
- * - 不区分大小写的歌手名归并（"Jay Chou" == "jay chou"）
  */
 object PlayStatsAggregator {
 
     private const val UNTAGGED_GENRE = "未分类"
+    private const val UNTAGGED_ARTIST = "未知歌手"
 
     fun aggregate(
         month: String,
@@ -49,8 +54,13 @@ object PlayStatsAggregator {
         val metaById = songMeta.associateBy { it.id }
         var totalPlays = 0
 
-        // artist 归并（小写 key）
-        data class ArtistAcc(var plays: Int, var songs: MutableSet<String>, var cover: String?)
+        // artist 归并（归一化 key → 展示名取首次命中的写法）
+        data class ArtistAcc(
+            var plays: Int,
+            var songs: MutableSet<String>,
+            var cover: String?,
+            var display: String
+        )
         val artistAcc = mutableMapOf<String, ArtistAcc>()
         // genre 归并
         data class GenreAcc(var plays: Int, var songs: MutableSet<String>)
@@ -62,10 +72,14 @@ object PlayStatsAggregator {
             val song = metaById[songId] ?: continue
             countedSongIds.add(songId)
 
-            val artistKey = song.artist.trim().lowercase().ifBlank { "未知歌手" }
-            artistAcc.getOrPut(artistKey) { ArtistAcc(0, mutableSetOf(), song.coverUrl) }.apply {
-                plays += count
-                songs.add(songId)
+            val names = ArtistSplitter.split(song.artist).ifEmpty { listOf(UNTAGGED_ARTIST) }
+            for (name in names) {
+                val artistKey = ArtistSplitter.normalizeKey(name).ifBlank { UNTAGGED_ARTIST }
+                artistAcc.getOrPut(artistKey) { ArtistAcc(0, mutableSetOf(), song.coverUrl, name) }
+                    .apply {
+                        plays += count
+                        songs.add(songId)
+                    }
             }
 
             val genreKey = song.genre?.trim()?.ifBlank { null } ?: UNTAGGED_GENRE
@@ -80,7 +94,7 @@ object PlayStatsAggregator {
             .take(topArtistLimit)
             .map { (_, acc) ->
                 ArtistStat(
-                    artist = restoreArtistName(songMeta, acc.songs),
+                    artist = acc.display,
                     playCount = acc.plays,
                     songCount = acc.songs.size,
                     coverUrl = acc.cover
@@ -100,8 +114,4 @@ object PlayStatsAggregator {
             genreDistribution = genres
         )
     }
-
-    /** 从命中的歌曲里恢复原始大小写的歌手名（取 songMeta 顺序首个命中；注释原称「播放量最高的那首」与实现不符，此处修正注释口径） */
-    private fun restoreArtistName(songMeta: List<Song>, songIds: Set<String>): String =
-        songMeta.firstOrNull { it.id in songIds }?.artist?.trim() ?: "未知歌手"
 }

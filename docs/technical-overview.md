@@ -15904,3 +15904,44 @@ E47 雪松、E48 大漠、E49 鸟群的 `*_frames*` 与 `*_profile`）⇒ 清空
 `UncaughtExceptionsBeforeTest` 同源，见 §10.234 前后的诊断手段）；② **超时/阈值类判据失败时，先问
 「这个报错能不能区分它声称的两种原因」**，不能区分就⛔不要调数字，前两次扩窗就是反面教材；
 ③ 本机跑法照旧加 `--no-daemon -Pkotlin.compiler.execution.strategy=in-process`。
+
+### 10.245 v2.38.14 — 播放统计：合唱曲目按歌手拆分计数（2026-10-17）
+
+**需求**：设置 → 数据管理 → 播放统计 的「最爱歌手」把 `"林忆莲/李宗盛"` 当成一个歌手统计，
+既显示成合并名、又各算各的。要拆成两位歌手、同一首合唱歌给两人**各 +1**。
+
+**定位**：全 app 只有 `PlayStatsAggregator.aggregate()` 这一处做歌手归并（本月 / 累计两个 Tab 共用），
+键取 `song.artist.trim().lowercase()` —— 整串原样入库。而歌库歌手列表
+`ui/screens/library/browse/ArtistList.kt` 早就走 `ArtistSplitter`，两处口径不一致才是根因，
+所以这不是「加功能」是「补漏」：统计页出现的 `"A/B"` 合并名点不进任何歌手页。
+
+**改法**（`data/stats/PlayStatsAggregator.kt`）：
+1. 每首歌先 `ArtistSplitter.split(song.artist)`，对**每个**拆分名各累加一次 `plays += count`、
+   `songs += songId`（⚠️ `totalPlays` / `distinctSongs` 仍在拆分**之外**累加，
+   否则 KPI 会按合唱人数翻倍 —— 这是本次唯一的全局不变量）。
+2. 归并键由「小写 trim」升级为 `ArtistSplitter.normalizeKey()`（NFKC + 折叠空白 + 小写 + 去零宽），
+   与歌库同名判定同口径；展示名改为**记账时首次命中的那个拆分名**（存进 `ArtistAcc.display`），
+   删掉原来的 `restoreArtistName()` —— 它按整串 `song.artist` 回查，拆分后必然把 `"林忆莲/李宗盛"`
+   重新带回榜单。
+3. 空歌手名落 `未知歌手`（`split()` 对 blank 返回空表，走 `ifEmpty`）；只含零宽字符的名字
+   `normalizeKey` 会归化成空串，故键再 `ifBlank` 兜一次，避免榜单出现空条目。
+4. `coverUrl` 沿用「该歌手首次命中那首歌的封面」，未改。
+
+**未动的相邻代码**：`PlayHistoryViewModel.refreshPlayStatistics()` 也按整串 `it.artist` groupBy，
+但它产出的 `PlayStatistics` **全仓库无 UI 消费方**（只有自身 StateFlow），属死路径 ⇒ 本次不改，
+也别在那里"顺手加拆分"。`PlayStatsRepository` 的月度/按天存储键是 `songId`，与歌手无关，同样不动。
+
+**已知边界**（既有取舍，非本次引入）：歌手榜的元数据只有 `recentSongObjects`（最近 50 首），
+更早播放过的歌没有 artist 可查 ⇒ 只计入 `totalPlays` 不进歌手榜（既有测试用例
+`song id without metadata still counts total but not artist` 锁的就是这个行为）。
+真机若出现「合唱歌没进榜」先怀疑这条，而不是拆分逻辑。
+
+**验证**：`PlayStatsAggregatorTest` 由 6 例增至 9 例，新增三例覆盖
+①`multi artist song is split and credited to each artist`（1 首合唱 → 2 个条目、各 plays=3、
+并断言榜单**不含** `/`）②`duet merges into the same artist as solo tracks`（独唱与合唱归并到同一人，
+`songCount` 分别 2/2、`totalPlays=7`、`distinctSongs=3` 不翻倍）③`blank artist falls into unknown bucket`。
+⚠️ 写①时先踩了自己的坑：`assertEquals(listOf("林忆莲","李宗盛"), …sorted())` 红了 —— `sorted()` 按
+Unicode 码点，「李」U+674E 在「林」U+6797 **之前**，中文序断言根本不该用 `sorted()`，改用 `toSet()` 比。
+`./gradlew.bat testDebugUnitTest --tests "*PlayStatsAggregatorTest" --no-daemon
+-Pkotlin.compiler.execution.strategy=in-process` ⇒ **BUILD SUCCESSFUL**，结果 XML
+**tests=9 / failures=0 / errors=0 / skipped=0**。

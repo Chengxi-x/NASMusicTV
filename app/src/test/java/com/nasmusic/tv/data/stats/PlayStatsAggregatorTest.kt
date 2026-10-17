@@ -13,7 +13,8 @@ import java.util.Locale
 /**
  * PlayStatsAggregator 聚合逻辑单测（F2-1）
  *
- * 覆盖：空数据 / 重复歌手归并（大小写） / genre null 归"未分类" /
+ * 覆盖：空数据 / 重复歌手归并（大小写） / 合唱歌曲拆分为多位歌手并各自计数 /
+ * 空歌手名归"未知歌手" / genre null 归"未分类" /
  * 播放量排序 / songCount 统计 / 元数据缺失 songId 容错。
  */
 class PlayStatsAggregatorTest {
@@ -46,6 +47,51 @@ class PlayStatsAggregatorTest {
         assertEquals(1, b.topArtists.size)
         assertEquals(6, b.topArtists[0].playCount)
         assertEquals(3, b.topArtists[0].songCount)
+    }
+
+    @Test
+    fun `multi artist song is split and credited to each artist`() {
+        val meta = listOf(song("s1", artist = "林忆莲/李宗盛"))
+        val b = PlayStatsAggregator.aggregate("2026-09", mapOf("s1" to 3), meta)
+        assertEquals(2, b.topArtists.size)
+        assertEquals(setOf("林忆莲", "李宗盛"), b.topArtists.map { it.artist }.toSet())
+        b.topArtists.forEach {
+            assertEquals(3, it.playCount)
+            assertEquals(1, it.songCount)
+        }
+        // 一首合唱歌不该在歌手榜上留下 "林忆莲/李宗盛" 这种合并名
+        assertTrue(b.topArtists.none { it.artist.contains("/") })
+    }
+
+    @Test
+    fun `duet merges into the same artist as solo tracks`() {
+        val meta = listOf(
+            song("s1", artist = "李宗盛"),
+            song("s2", artist = "林忆莲 & 李宗盛"),
+            song("s3", artist = "林忆莲")
+        )
+        val counts = mapOf("s1" to 2, "s2" to 1, "s3" to 4)
+        val b = PlayStatsAggregator.aggregate("2026-09", counts, meta)
+        val lz = b.topArtists.first { it.artist == "李宗盛" }
+        assertEquals(3, lz.playCount)
+        assertEquals(2, lz.songCount)
+        val lyl = b.topArtists.first { it.artist == "林忆莲" }
+        assertEquals(5, lyl.playCount)
+        assertEquals(2, lyl.songCount)
+        // KPI 不受拆分影响：总次数仍是真实播放次数，不去重也不翻倍
+        assertEquals(7, b.totalPlays)
+        assertEquals(3, b.distinctSongs)
+    }
+
+    @Test
+    fun `blank artist falls into unknown bucket`() {
+        val b = PlayStatsAggregator.aggregate(
+            "2026-09",
+            mapOf("s1" to 2),
+            listOf(song("s1", artist = "  "))
+        )
+        assertEquals(listOf("未知歌手"), b.topArtists.map { it.artist })
+        assertEquals(2, b.topArtists[0].playCount)
     }
 
     @Test
