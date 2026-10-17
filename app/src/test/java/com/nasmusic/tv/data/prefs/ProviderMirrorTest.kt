@@ -87,6 +87,12 @@ class ProviderMirrorTest {
      *
      * ⛔ 不要靠调用方各自 `withTimeout` + `while` 复制这段逻辑（复制必然漂移）；
      * 统一的失败归因也集中在这里：**超时 ≠ 收集器死亡**，两者必须报成不同的样子。
+     *
+     * ⚠️ **取证留痕**（2026-10-17）：每次等待都会 `println` 一行实测耗时与轮询次数。
+     * 本机 `ProviderMirrorTest` 7/7 全绿、每键收敛 ~30ms，而 CI 同一条 commit 连红两次
+     * （一次 200ms 探针没等到、一次 10s 都没等到）——**光看行号无法区分「发射根本没来」
+     * 与「线程被饿死/调度不到」**。这行输出会进 Gradle 的 test-results XML
+     * （`<system-out>`，210/210 个类都有），CI 的取证步骤把它整份打出来 ⇒ **绿也能拿到耗时分布**。
      */
     private fun awaitMirror(
         key: String,
@@ -94,25 +100,58 @@ class ProviderMirrorTest {
         actual: () -> String,
         timeoutMs: Long = MIRROR_TIMEOUT_MS,
     ) {
+        val startNs = System.nanoTime()
+        var polls = 0
         try {
             runBlocking {
                 withTimeout(timeoutMs) {
-                    while (actual() != expected) delay(POLL_MS)
+                    while (actual() != expected) {
+                        polls++
+                        delay(POLL_MS)
+                    }
                 }
             }
         } catch (e: TimeoutCancellationException) {
             val dead = mirrorFailure
             val current = actual()
+            val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+            println(
+                "mirror-timing key=$key RESULT=timeout elapsed=${elapsedMs}ms polls=$polls " +
+                    "budget=${timeoutMs}ms current='$current' expected='$expected' collectorDead=${dead != null}",
+            )
+            // 超时那一刻的**线程现场**：这条才能一锤定音区分两种成因——
+            // 镜像线程 BLOCKED/WAITING（发射根本没来）还是 RUNNABLE 卡在别处（线程被饿死）。
+            println("mirror-threads key=$key\n${threadSnapshot()}")
             val message = if (dead != null) {
                 "$key 镜像收集器已死（真实原因见 cause）：当前='$current' 期望='$expected'"
             } else {
                 "$key 镜像 ${timeoutMs}ms 内未收敛：当前='$current' 期望='$expected'"
             }
-            throw AssertionError(message, dead ?: e)
+            throw AssertionError("$message [elapsed=${elapsedMs}ms polls=$polls]", dead ?: e)
         }
+        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+        println("mirror-timing key=$key RESULT=converged elapsed=${elapsedMs}ms polls=$polls")
         // 镜像值对上了，也要确认**没有收集器悄悄死掉**（值可能是死前最后一次发射留下的）
         assertEquals("$key 镜像收集器不应有未捕获异常", null, mirrorFailure)
     }
+
+    /**
+     * 超时时抓一份线程现场：本用例的镜像线程（`provider-mirror-test`，独占单线程）+
+     * DataStore / kotlinx 调度线程。栈只取前 4 帧，够定位「卡在哪个调用」又不刷屏。
+     */
+    private fun threadSnapshot(): String =
+        Thread.getAllStackTraces().entries
+            .filter { (t, _) ->
+                val n = t.name
+                n.contains("provider-mirror") || n.contains("datastore", ignoreCase = true) ||
+                    n.startsWith("DefaultDispatcher") || n.startsWith("main")
+            }
+            .sortedBy { it.key.name }
+            .take(14)
+            .joinToString("\n") { (t, st) ->
+                "  ${t.name} state=${t.state} :: " +
+                    st.take(4).joinToString(" <- ") { f -> "${f.className}.${f.methodName}" }
+            }
 
     @Test
     fun `write meting url then mirror updates within 1s`() {

@@ -16013,3 +16013,44 @@ H2 recordError 与 detail 双字段 / H3 `clearHqError` 不得清详情 / H4 五
 首版测试曾把「答案只回标签、吞掉实参」写成桩，于是断言实参内容的 4 例全红 —— 桩必须把实参也渲染出来。
 `assembleDebug` + `lintDebug` ⇒ **0 errors**（145 warnings，既有多为 alpha TV Compose）；
 两个新测试类 12 例全绿。
+
+### 10.247 CI 取证链路 —— 让单测「为什么红」在日志里可见（2026-10-17）
+
+**触发**：`v2.38.15`（`84fe53e`）的 tag run `39027904328` 单测 job 两次红、两次都只挂
+`ProviderMirrorTest` 一条，且**挂的不是同一条用例**（attempt 1 = 负向自证 `:174`；
+attempt 2 = `write meting url…` `:111`，`Caused by: TimeoutCancellationException` ⇒
+按 `:104-111` 的归因设计可确定 `mirrorFailure == null`，**收集器活着、发射没在窗口内到达**）。
+同一 commit 的 main push run `39027895325` 却全绿；本机全量 `--rerun-tasks`
+**211 类 / 2218 例 / 0 失败**，本类 7/7，实测收敛 **26–36ms（polls=1）**。
+本机与 CI 差 300 倍以上，这不是「CI 机器慢」能解释的量级 ⇒ 所有者裁决**先取证再改**，
+⛔ 不许第三次动 `MIRROR_TIMEOUT_MS`。
+
+**关键障碍**：Gradle 的 `testLogging.exceptionFormat` 默认 `SHORT`，控制台只印
+`java.lang.AssertionError at ProviderMirrorTest.kt:111` + 一层 `Caused by`，
+**断言自己写的「当前值/期望值/耗时」一个字都不显示**，CI 又不上传 test-results XML
+（只有 lint-report 与 APK 两个 artifact）。于是那条本可以一锤定音的消息被格式吃掉了 ——
+这跟 §10.245 之前那次「suppressed 不渲染」是同一类**观测缺失**，不是同一类 bug。
+
+**本轮三处改动（全是取证，不改任何判定）**：
+1. `app/build.gradle.kts` 末尾 `tasks.withType<Test> { testLogging { exceptionFormat = FULL } }`。
+   验证方式=造一条注定失败的临时探针（跑完即删）：控制台如实打出
+   `java.lang.AssertionError: 取证探针 期望='…' 当前='…'`。
+2. `ProviderMirrorTest.awaitMirror` 每次等待都 `println` 一行 `mirror-timing`
+   （key / RESULT=converged|timeout / elapsed ms / polls / budget / current / expected / collectorDead），
+   超时时**另印一份线程现场** `mirror-threads`（`provider-mirror-test` 独占线程 + DataStore +
+   `DefaultDispatcher` + main 的 state 与栈前 4 帧）。
+   ⚠️ 走 `println` 而非 `showStandardStreams`：Gradle 无论成败都会把 stdout 收进 test-results XML 的
+   `<system-out>`（本机 210/210 个 XML 均有该节点），**绿的那次同样留下耗时分布**，
+   而全局开 `showStandardStreams` 会被 Robolectric 的 `ShadowLog` 刷屏。
+3. `.github/workflows/build.yml` 的 test job 加两步：
+   `if: always()` 把 XML 里的 `mirror-timing` / `mirror-threads` / `<failure>` 整段打进日志；
+   `if: failure()` 上传全部 XML 为 artifact（留存 14 天）。
+
+**顺带记下一条实测事实**：本机 `metingApiBaseUrl` 出现过 `elapsed=0ms polls=0` ——
+即写 `runBlocking` 返回时镜像**已经**收敛。说明这条护栏正常情况下根本不需要轮询，
+CI 上那次 10s 空等是**异常路径**，不是「窗口刚好不够」。
+
+**遗留**：根因未定。下一次 CI 的判读口径：
+`RESULT=timeout` 且 `current` 仍是默认值 + 镜像线程 `WAITING/BLOCKED` ⇒ 发射链路问题；
+线程 `RUNNABLE` 卡在别处或 `polls` 远小于 10s/20ms ⇒ 线程被饿死（调度/内存压力）。
+拿到判读结果前，⛔ 不做独占 filesDir、不做单独 JVM、不碰窗口。

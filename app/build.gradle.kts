@@ -297,3 +297,18 @@ dependencies {
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
+
+/**
+ * 单测失败时把**完整断言文案 + 全栈**打进 CI 控制台。
+ *
+ * Gradle 默认是 `SHORT`，控制台只印 `java.lang.AssertionError at XxxTest.kt:111` 加一层
+ * `Caused by`，**断言自己写的消息一个字都不显示**。2026-10-17 `ProviderMirrorTest` 在 CI
+ * 连红两次（本地 7/7 全绿），两次都只能看到行号、看不到「当前值/期望值/耗时」——而那条
+ * 超时消息里的当前值正是唯一能区分「镜像没发射」与「线程被饿死」的证据。
+ * CI 不上传 test-results XML，所以只能靠控制台输出留痕。
+ */
+tasks.withType<Test>().configureEach {
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}

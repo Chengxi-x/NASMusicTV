@@ -221,6 +221,34 @@ jobs:
             gradle-robolectric-${{ runner.os }}-
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
+      # ── 取证步骤（2026-10-17，所有者裁决「先取证再改」）──────────────────────────
+      # 背景：`ProviderMirrorTest` 在同一条 commit 上 CI 连红两次（一次 200ms 探针、一次 10s 安全网），
+      # 本地全量 2218 例却 7/7 绿、每键收敛 ~30ms。Gradle 默认只打「类名 at 文件:行」，
+      # 断言自带的「当前值/期望值」和被 `withTimeout` 掩盖的线程现场**一律看不见**，
+      # 于是只能靠猜（本项目已经猜错过两次并三次扩窗）。
+      # 这两步**不改任何判定**，只是把 test-results XML 里已有的证据搬到日志与存档：
+      #   · `<system-out>` 里的 `mirror-timing` 行 —— **绿的那次也有耗时分布**，
+      #   · `<failure>` 块 —— 完整断言消息 + 全栈 + `mirror-threads` 线程现场。
+      - name: Dump test evidence (mirror timing + failure messages)
+        if: always()
+        run: |
+          RES=app/build/test-results/testDebugUnitTest
+          if [ ! -d "$RES" ]; then echo "no test-results dir (task did not run)"; exit 0; fi
+          echo "=== mirror-timing（含通过用例的耗时分布）==="
+          grep -h -o "mirror-timing[^<]*" $RES/*.xml | tail -80 || echo "(none)"
+          echo "=== mirror-threads 线程现场（仅超时会打印）==="
+          grep -h -o "mirror-threads[^<]*" $RES/*.xml | head -40 || echo "(none — 本轮无超时)"
+          grep -h -A 1 "^  [a-zA-Z].*state=" $RES/*.xml | head -120 || true
+          echo "=== <failure> 完整消息 ==="
+          grep -h -B 1 -A 15 "<failure" $RES/*.xml | head -200 || echo "(no failures)"
+      - name: Upload unit test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
   # 静态检查（新增）：项目此前未配置 lint，先以"非阻塞 + 上传报告"方式引入，
   # 积累一段时间的告警清单、清理后再改为阻塞（去掉 continue-on-error）。
