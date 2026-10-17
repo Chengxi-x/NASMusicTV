@@ -57,6 +57,8 @@ data class PlayerSettingsState(
     val qualityTier: Int = 0,
     // T1.6.4（§十三 裁决项 9=A）：可视化画质档位（此前无 UI 入口 ⇒ 恒 MEDIUM，ULTRA 三套不可达）
     val visualizerQuality: VisualQuality = VisualQuality.Default,
+    // 高质量分离失败详情（含设备型号/内存/位宽诊断），设置页长期留存供用户截图回传
+    val hqErrorDetail: String? = null,
 )
 
 /** 播放设置分区动作 */
@@ -371,6 +373,29 @@ internal fun PlayerSettingsSection(
             state.modelDownloadError?.let { err ->
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = err, color = NasMusicColors.Danger, fontSize = FontSize.small())
+            }
+        }
+        // ── 高质量分离失败详情（本轮长期留存，供用户对着屏幕截图回传）──
+        state.hqErrorDetail?.let { detail ->
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.settings_hq_failure_detail_title),
+                color = NasMusicColors.Danger,
+                fontSize = FontSize.body()
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(NasMusicColors.SurfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = detail,
+                    color = NasMusicColors.TextPrimary,
+                    fontSize = FontSize.small()
+                )
             }
         }
         // ── 封面滤镜分组 ──

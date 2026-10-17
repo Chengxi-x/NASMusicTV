@@ -114,6 +114,8 @@ class VocalSeparationViewModel(
     val separationProgress: StateFlow<Pair<Float, String>> = playerManager.separationProgress
     /** 高质量分离错误信息（非空表示最近一次失败，UI 应提示用户） */
     val hqError: StateFlow<String?> = playerManager.hqError
+    /** 高质量分离失败的完整诊断详情（设置页长期留存，供用户截图回传） */
+    val hqErrorDetail: StateFlow<String?> = playerManager.hqErrorDetail
     /** 高质量分离成功信息（非空表示最近一次成功，UI 应提示用户） */
     val hqSuccess: StateFlow<String?> = playerManager.hqSuccess
 

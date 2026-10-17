@@ -78,6 +78,7 @@ internal fun SettingsBranch(
                     val modelSizeMB by viewModel.downloadVM.modelSizeMB.collectAsState()
                     val modelDownloadError by viewModel.downloadVM.modelDownloadError.collectAsState()
                     val modelPath by viewModel.downloadVM.modelPath.collectAsState()
+                    val hqErrorDetail by viewModel.vocalVM.hqErrorDetail.collectAsState()
                     // 进入设置页时刷新模型状态（检查文件是否已下载）和下载统计
                     LaunchedEffect(Unit) {
                         viewModel.downloadVM.refreshModelStatus()
@@ -248,6 +249,7 @@ internal fun SettingsBranch(
                     modelSizeMB = modelSizeMB,
                     modelDownloadError = modelDownloadError,
                     modelPath = modelPath,
+                    hqErrorDetail = hqErrorDetail,
                     onDownloadModel = { viewModel.downloadVM.downloadModel() },
                     onDeleteModel = { viewModel.deleteModel() },
                     onRefreshModelStatus = { viewModel.downloadVM.refreshModelStatus() },

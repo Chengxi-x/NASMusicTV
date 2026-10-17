@@ -207,6 +207,8 @@ fun SettingsScreen(
     modelSizeMB: Double = 0.0,
     modelDownloadError: String? = null,
     modelPath: String = "",
+    /** 高质量分离失败的完整诊断详情（设置页长期留存，供用户截图回传） */
+    hqErrorDetail: String? = null,
     onDownloadModel: (() -> Unit)? = null,
     onDeleteModel: (() -> Unit)? = null,
     onRefreshModelStatus: (() -> Unit)? = null,
@@ -551,6 +553,7 @@ var activeSection by remember { mutableStateOf(SettingsSection.GENERAL) }
                             modelSizeMB = modelSizeMB,
                             modelDownloadError = modelDownloadError,
                             modelPath = modelPath,
+                            hqErrorDetail = hqErrorDetail,
                             coverFilterEnabled = coverFilterEnabled,
                             coverFilterBlurRadius = coverFilterBlurRadius,
                             coverFilterDarkOverlay = coverFilterDarkOverlay,

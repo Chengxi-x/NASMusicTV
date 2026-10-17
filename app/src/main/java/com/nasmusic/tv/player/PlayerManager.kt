@@ -230,6 +230,9 @@ class PlayerManager(private val applicationContext: Context) {
     val separating: StateFlow<Boolean> get() = hqOrchestrator.separating
     val separationProgress: StateFlow<Pair<Float, String>> get() = hqOrchestrator.separationProgress
     val hqError: StateFlow<String?> get() = hqOrchestrator.hqError
+
+    /** 高质量分离失败的完整诊断详情（设置页长期留存，供用户截图回传） */
+    val hqErrorDetail: StateFlow<String?> get() = hqOrchestrator.hqErrorDetail
     val hqSuccess: StateFlow<String?> get() = hqOrchestrator.hqSuccess
 
     /** 由 PlaybackService 注入处理器实例 */

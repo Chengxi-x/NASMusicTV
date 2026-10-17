@@ -49,6 +49,7 @@ internal fun NowPlayingBranch(
                     val separating by viewModel.vocalVM.separating.collectAsState()
                     val separationProgress by viewModel.vocalVM.separationProgress.collectAsState()
                     val hqError by viewModel.vocalVM.hqError.collectAsState()
+                    val hqErrorDetail by viewModel.vocalVM.hqErrorDetail.collectAsState()
                     val hqSuccess by viewModel.vocalVM.hqSuccess.collectAsState()
                     val modelDownloaded by viewModel.downloadVM.modelDownloaded.collectAsState()
                     // === F2-2b 睡眠定时器（常驻按钮状态，本页内收集） ===
@@ -150,7 +151,10 @@ internal fun NowPlayingBranch(
                             isHighQualityMode = separationMode == com.nasmusic.tv.player.SeparationMode.HIGH_QUALITY,
                             isSeparating = separating,
                             separationProgress = separationProgress,
-                            hqError = hqError,
+                            // 横幅优先显示带设备诊断的完整详情（第一行就是失败原因）。
+                            // ⚠️ 判空必须看 hqError 而不是详情：详情是长期留存的、不会随 5 秒关闭消失，
+                            // 用它判空会让横幅再也关不掉。
+                            hqError = if (hqError != null) (hqErrorDetail ?: hqError) else null,
                             onToggleSeparationMode = { viewModel.vocalVM.toggleSeparationMode() },
                             onClearHqError = { viewModel.vocalVM.clearHqError() },
                             hqSuccess = hqSuccess,

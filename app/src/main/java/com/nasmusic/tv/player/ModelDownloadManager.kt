@@ -306,7 +306,7 @@ class ModelDownloadManager(
                 is java.net.SocketTimeoutException -> context.getString(R.string.model_download_timeout)
                 is java.net.UnknownHostException -> context.getString(R.string.model_download_dns_error)
                 is java.io.FileNotFoundException -> context.getString(R.string.model_download_not_found)
-                else -> context.getString(R.string.model_download_network_error, e.message?.take(60) ?: context.getString(R.string.model_unknown_error))
+                else -> context.getString(R.string.model_download_network_error, e.message ?: context.getString(R.string.model_unknown_error))
             }
             AppLog.e(TAG, "tryDownloadUrl: failed from $urlStr", e)
             msg

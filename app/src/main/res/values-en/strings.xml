@@ -130,6 +130,7 @@
     <!-- Settings Screen -->
     <string name="settings_font_standard">Standard</string>
     <string name="settings_separation_mode_title">Vocal Separation Mode</string>
+    <string name="settings_hq_failure_detail_title">Last High-Quality Separation Failure</string>
     <string name="settings_hq_mode_downloaded">High Quality Mode (HT-Demucs FT)</string>
     <string name="settings_hq_mode_not_downloaded">High Quality Mode (Model not downloaded)</string>
     <string name="settings_download_model_hint">Download separation model (166MB) for high quality mode</string>
@@ -743,6 +744,18 @@
     <string name="demucs_error_decode_oom">Decode out of memory (audio too long?)</string>
     <string name="demucs_error_decode_failed">Audio decode failed: %s</string>
     <string name="demucs_error_bad_model_shape">Unexpected model input shape (%s). Please make sure the downloaded file is the HT-Demucs FT model.</string>
+    <string name="diag_header">[Device diagnostic - please screenshot and send to developer]</string>
+    <string name="diag_error_code">Error code: %1$s</string>
+    <string name="diag_device_model">Device: %1$s</string>
+    <string name="diag_os_version">OS: Android %1$s (API %2$s)</string>
+    <string name="diag_abi">ABIs: %1$s (app runs as %2$s-bit)</string>
+    <string name="diag_total_memory">Memory: total %1$s, free %2$s%3$s</string>
+    <string name="diag_low_memory_flag">, system reports low memory</string>
+    <string name="diag_process_memory">This process: native %1$s, Java heap %2$s / max %3$s</string>
+    <string name="diag_ort_version">ONNX Runtime: %1$s</string>
+    <string name="diag_model_file">Model file: %1$s (%2$s)</string>
+    <string name="diag_model_missing">missing</string>
+    <string name="diag_elapsed">Elapsed: %1$s</string>
 
     <!-- Player Controls -->
     <string name="player_karaoke">Karaoke</string>

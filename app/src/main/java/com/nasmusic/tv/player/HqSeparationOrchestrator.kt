@@ -6,6 +6,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.nasmusic.tv.R
 import com.nasmusic.tv.data.model.Song
 import com.nasmusic.tv.util.AppLog
+import com.nasmusic.tv.util.DeviceDiagnostics
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -118,6 +119,16 @@ class HqSeparationOrchestrator(
     private val _hqError = MutableStateFlow<String?>(null)
     val hqError: StateFlow<String?> = _hqError
 
+    /**
+     * 高质量分离失败的**完整诊断详情**（含设备型号/内存/位宽等）。
+     *
+     * 与 [_hqError] 分开存放：横幅 5 秒后会自动 [clearHqError]，而出问题的电视在用户那边、
+     * 我们没有 adb，设置页必须长期保留这条详情供用户截图回传。
+     * 因此只有下一次 HQ 分离**成功**时才会被覆盖清除。
+     */
+    private val _hqErrorDetail = MutableStateFlow<String?>(null)
+    val hqErrorDetail: StateFlow<String?> = _hqErrorDetail
+
     private val _hqSuccess = MutableStateFlow<String?>(null)
     val hqSuccess: StateFlow<String?> = _hqSuccess
 
@@ -161,6 +172,26 @@ class HqSeparationOrchestrator(
     /** 清除高质量分离错误信息 */
     fun clearHqError() {
         _hqError.value = null
+    }
+
+    /**
+     * 记录一条供设置页长期留存的诊断详情（编排层自身的失败分支）。
+     *
+     * ⚠️ 不复用 [DemucsSeparator.lastErrorDetail]：那两处只在「加载模型失败」和「分离失败」
+     * 分支里是本次刚生成的，其余分支（组件未就绪、读不到文件、完整性校验不过）可能是上一轮
+     * 遗留的，配上本轮的文案会误导。分离器内部的两处失败由调用点直接取用。
+     */
+    private fun rememberHqFailureDetail(message: String, cause: Throwable? = null) {
+        // 诊断是取证用的，绝不能因为取证的失败再打断回退流程（OOM 分支里拼字符串本身就可能再抛）
+        _hqErrorDetail.value = runCatching {
+            DeviceDiagnostics.report(
+                context = appContext,
+                error = message,
+                cause = cause,
+                modelFile = modelDownloadManager?.getModelFile(),
+                elapsedMs = if (separationStartTimeMs > 0) System.currentTimeMillis() - separationStartTimeMs else null
+            )
+        }.getOrNull() ?: message
     }
 
     /** 清除高质量分离成功信息 */
@@ -275,11 +306,11 @@ class HqSeparationOrchestrator(
             null
         } catch (e: java.net.SocketException) {
             AppLog.e(TAG, "resolveInputPath: network error", e)
-            lastDownloadError = appContext.getString(R.string.player_download_network_error, e.message?.take(30))
+            lastDownloadError = appContext.getString(R.string.player_download_network_error, e.message ?: e.javaClass.name)
             null
         } catch (e: Exception) {
             AppLog.e(TAG, "resolveInputPath: download exception", e)
-            lastDownloadError = appContext.getString(R.string.player_download_exception, e.message?.take(30))
+            lastDownloadError = appContext.getString(R.string.player_download_exception, e.message ?: e.javaClass.name)
             null
         }
     }
@@ -334,7 +365,9 @@ class HqSeparationOrchestrator(
         val modelManager = modelDownloadManager
         if (modelManager != null && !modelManager.isModelDownloaded()) {
             AppLog.w(TAG, "enableHighQualityRemoval: model not downloaded, fallback to fast mode")
-            _hqError.value = appContext.getString(R.string.hq_error_model_not_downloaded)
+            val msg = appContext.getString(R.string.hq_error_model_not_downloaded)
+            _hqError.value = msg
+            rememberHqFailureDetail(msg)
             _separationMode.value = SeparationMode.FAST
             host.setFastVocalRemoval(true)
             return false
@@ -363,7 +396,9 @@ class HqSeparationOrchestrator(
                     }
                     if (inputPath == null) {
                         AppLog.w(TAG, "enableHighQualityRemoval: cannot resolve input path, fallback to fast mode")
-                        _hqError.value = appContext.getString(R.string.hq_error_with_fallback, lastDownloadError ?: appContext.getString(R.string.hq_error_no_audio_file))
+                        val msg = appContext.getString(R.string.hq_error_with_fallback, lastDownloadError ?: appContext.getString(R.string.hq_error_no_audio_file))
+                        _hqError.value = msg
+                        rememberHqFailureDetail(msg)
                         _separationMode.value = SeparationMode.FAST
                         host.setFastVocalRemoval(true)
                         if (wasPlayingBeforeSeparation) host.play()
@@ -377,7 +412,9 @@ class HqSeparationOrchestrator(
                         val modelPath = modelManager?.getModelPath()
                         if (modelPath == null) {
                             AppLog.w(TAG, "enableHighQualityRemoval: model path unavailable, fallback to fast mode")
-                            _hqError.value = appContext.getString(R.string.hq_error_model_path_unavailable)
+                            val msg = appContext.getString(R.string.hq_error_model_path_unavailable)
+                            _hqError.value = msg
+                            rememberHqFailureDetail(msg)
                             _separationMode.value = SeparationMode.FAST
                             host.setFastVocalRemoval(true)
                             if (wasPlayingBeforeSeparation) host.play()
@@ -392,7 +429,9 @@ class HqSeparationOrchestrator(
                         }
                         if (!integrityOk) {
                             AppLog.w(TAG, "enableHighQualityRemoval: model integrity check failed, fallback to fast mode")
-                            _hqError.value = appContext.getString(R.string.hq_error_with_fallback, appContext.getString(R.string.hq_error_model_corrupted))
+                            val msg = appContext.getString(R.string.hq_error_with_fallback, appContext.getString(R.string.hq_error_model_corrupted))
+                            _hqError.value = msg
+                            rememberHqFailureDetail(msg)
                             _separationMode.value = SeparationMode.FAST
                             host.setFastVocalRemoval(true)
                             if (wasPlayingBeforeSeparation) host.play()
@@ -403,7 +442,10 @@ class HqSeparationOrchestrator(
                         val initOk = withContext(Dispatchers.IO) { separator.initialize(modelPath) }
                         if (!initOk) {
                             AppLog.w(TAG, "enableHighQualityRemoval: separator init failed, fallback to fast mode")
-                            _hqError.value = appContext.getString(R.string.hq_error_with_fallback, separator.lastError ?: appContext.getString(R.string.hq_error_separator_init_failed))
+                            val msg = appContext.getString(R.string.hq_error_with_fallback, separator.lastError ?: appContext.getString(R.string.hq_error_separator_init_failed))
+                            _hqError.value = msg
+                            // 加载失败由分离器内部生成详情（含模型文件大小、ORT 版本、加载耗时），直接留存
+                            _hqErrorDetail.value = separator.lastErrorDetail ?: msg
                             _separationMode.value = SeparationMode.FAST
                             host.setFastVocalRemoval(true)
                             if (wasPlayingBeforeSeparation) host.play()
@@ -437,13 +479,17 @@ class HqSeparationOrchestrator(
                         accompanimentCache?.cleanup()
                         _separationProgress.value = 1f to appContext.getString(R.string.hq_progress_done, totalSec)
                         _hqSuccess.value = appContext.getString(R.string.hq_success_separation_done, totalSec)
+                        // 本轮成功：上一轮留存的失败详情失效，一并清除
+                        _hqErrorDetail.value = null
                         host.setFastVocalRemoval(false)
                         switchToAccompaniment(result.accompanimentFile.absolutePath)
                         if (wasPlayingBeforeSeparation) host.play()
                     } else {
                         val totalSec = (System.currentTimeMillis() - separationStartTimeMs) / 1000.0
                         AppLog.w(TAG, "enableHighQualityRemoval: separation failed in ${String.format("%.1f", totalSec)}s, fallback to fast mode")
-                        _hqError.value = appContext.getString(R.string.hq_error_with_time_and_suffix, separator.lastError ?: appContext.getString(R.string.hq_error_separation_failed), totalSec)
+                        val msg = appContext.getString(R.string.hq_error_with_time_and_suffix, separator.lastError ?: appContext.getString(R.string.hq_error_separation_failed), totalSec)
+                        _hqError.value = msg
+                        _hqErrorDetail.value = separator.lastErrorDetail ?: msg
                         _separationMode.value = SeparationMode.FAST
                         host.setFastVocalRemoval(true)
                         if (wasPlayingBeforeSeparation) host.play()
@@ -454,13 +500,17 @@ class HqSeparationOrchestrator(
                     throw e
                 } catch (e: OutOfMemoryError) {
                     AppLog.e(TAG, "enableHighQualityRemoval: OOM", e)
-                    _hqError.value = appContext.getString(R.string.hq_error_oom)
+                    val msg = appContext.getString(R.string.hq_error_oom)
+                    _hqError.value = msg
+                    rememberHqFailureDetail(msg, e)
                     _separationMode.value = SeparationMode.FAST
                     host.setFastVocalRemoval(true)
                     if (wasPlayingBeforeSeparation) host.play()
                 } catch (e: Exception) {
                     AppLog.e(TAG, "enableHighQualityRemoval: exception", e)
-                    _hqError.value = appContext.getString(R.string.hq_error_exception_with_suffix, e.message?.take(30))
+                    val msg = appContext.getString(R.string.hq_error_exception_with_suffix, e.message ?: e.javaClass.name)
+                    _hqError.value = msg
+                    rememberHqFailureDetail(msg, e)
                     _separationMode.value = SeparationMode.FAST
                     host.setFastVocalRemoval(true)
                     if (wasPlayingBeforeSeparation) host.play()

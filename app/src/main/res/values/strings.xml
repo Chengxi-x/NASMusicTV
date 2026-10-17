@@ -133,6 +133,7 @@
     <!-- Settings Screen -->
     <string name="settings_font_standard">标准</string>
     <string name="settings_separation_mode_title">人声分离模式</string>
+    <string name="settings_hq_failure_detail_title">上次高质量分离失败详情</string>
     <string name="settings_hq_mode_downloaded">高质量模式（HT-Demucs FT）</string>
     <string name="settings_hq_mode_not_downloaded">高质量模式（未下载模型）</string>
     <string name="settings_download_model_hint">下载分离模型（166MB），以使用高质量模式</string>
@@ -780,6 +781,20 @@
     <string name="demucs_error_decode_oom">解码内存不足（音频过长?）</string>
     <string name="demucs_error_decode_failed">音频解码失败：%s</string>
     <string name="demucs_error_bad_model_shape">模型输入规格不符（%s），请确认下载的是 HT-Demucs FT 模型</string>
+
+    <!-- 失败诊断快照（高质量模型初始化失败时随提示展示，供用户截图反馈） -->
+    <string name="diag_header">【设备诊断信息，请截图反馈给开发者】</string>
+    <string name="diag_error_code">错误码：%1$s</string>
+    <string name="diag_device_model">机型：%1$s</string>
+    <string name="diag_os_version">系统：Android %1$s（API %2$s）</string>
+    <string name="diag_abi">指令集：%1$s（应用以 %2$s 位运行）</string>
+    <string name="diag_total_memory">整机内存：共 %1$s，剩余 %2$s%3$s</string>
+    <string name="diag_low_memory_flag">，系统已判定内存紧张</string>
+    <string name="diag_process_memory">本进程：native 已占 %1$s，Java 堆 %2$s / 上限 %3$s</string>
+    <string name="diag_ort_version">ONNX Runtime：%1$s</string>
+    <string name="diag_model_file">模型文件：%1$s（%2$s）</string>
+    <string name="diag_model_missing">不存在</string>
+    <string name="diag_elapsed">耗时：%1$s</string>
 
     <!-- Player Controls -->
     <string name="player_karaoke">K歌</string>

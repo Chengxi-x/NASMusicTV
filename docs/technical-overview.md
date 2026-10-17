@@ -15945,3 +15945,71 @@ Unicode 码点，「李」U+674E 在「林」U+6797 **之前**，中文序断言
 `./gradlew.bat testDebugUnitTest --tests "*PlayStatsAggregatorTest" --no-daemon
 -Pkotlin.compiler.execution.strategy=in-process` ⇒ **BUILD SUCCESSFUL**，结果 XML
 **tests=9 / failures=0 / errors=0 / skipped=0**。
+
+### 10.246 v2.38.15 — 高质量分离失败取证链路：放开截断 + 设备诊断快照（2026-10-17）
+
+**用户报障**：`模型初始化失败:Error code-ORT_RUNTIME_EXCEPTION -message: Exception duri,已切换快速模式`，
+并说明模型文件**已经下载**。
+
+**这条报障本身先暴露了一个缺陷**：`Exception duri` 是 `Exception during initialization…` 被
+`DemucsSeparator.initialize()` 里的 `e.message?.take(60)` 截断后的残骸。ORT 异常原文里能区分根因的
+恰恰是后半句（`bad_alloc` / `mmap failed` / `Missing op` / `No KernelRegistry`），
+截断正好把它切掉 ⇒ **报障文本自己把线索吃了**。同类截断还有 4 处（分离异常 `take(40)`、
+下载异常/网络错误 `take(30)`、模型下载网络错误 `take(60)`），本次一并放开。
+
+**排除「坏文件」**：`enableHighQualityRemoval()` 在 `initialize()` **之前**必过
+`verifyModelIntegrity()`（`EXPECTED_SHA-256`）这道门，走到 init 失败说明字节是对的；
+另把官方 `htdemucs_ft` 的 **fp16** 权重（`165,612,636` 字节）重新拉了一遍，
+`sha256sum` 与 `EXPECTED_SHA256` 逐字节相同 ⇒ 下载链路与阈值都没问题。
+（⚠️ `curl` 必须带 `-L`，hf-mirror 会 302 到 `cas-bridge.xethub.hf.co`，
+不带 `-L` 落盘的是 1082 字节的跳转页，而这种文件恰好会被 ±1% 的大小阈值以外的门拦下。）
+
+**排除「版本/算子不兼容」**：解析该 ONNX 得 `ir_version=8`、`opset ai.onnx=17`、producer `pytorch-2.4.1`，
+图内 **24,917** 个节点、**908** 个 `Cast`、**148** 个 fp16 初始化器、**0** 个 fp16 激活
+（⇒ 不存在「1.17.1 缺 fp16 CUDA/CPU kernel」这条路径）；桌面 ORT 1.24.4 直接 `create_session` 成功。
+
+**主嫌疑：内存**。桌面实测加载同一份权重的成本 ——
+常驻 **≈459 MB**（fp16 原件 150.9 MB + CPU EP 把 148 个初始化器**物化成 fp32** 的 301.7 MB +
+24,917 节点的图结构），建会话过程中**峰值工作集 ≈4.5 GB**（解 protobuf / 建图 / 拷贝权重）。
+⚠️ 换成 316 MB 的非 fp16 版本**并不省**：实测常驻 ≈461 MB，因为它省掉 301.7 MB 的 fp32 复制、
+却把 150.9 MB 换成 301.7 MB 的原件。**「模型文件 166MB」与「进程要占多少内存」是两个量纲**，
+前者是序列化体积（fp16 + protobuf），后者是运行期展开体积（fp32 + 图 + 解码用的 float32 临时文件）。
+32 位进程的地址空间只有约 3 GB，低内存 TV 盒子上这一步 `bad_alloc` 是**最可能**的根因
+（本项目开发机就是 armeabi-v7a / Android 5.1.1），但**至今没有任何真机跑通过高质量分离**，
+所以这是「首轮即失败」而不是回归。
+
+**为什么改成「让用户带证据回来」**：出问题的电视在用户侧，无 adb、不可复现 ⇒
+唯一取证通道是用户对着屏幕截图。于是本轮不做判定，只做记录：
+
+1. `util/DeviceDiagnostics.kt`（新增）把错误码（`OrtException.code`）、机型、系统/API、
+   `SUPPORTED_ABIS` + **运行位宽**、整机总/剩余内存（含 `lowMemory` 标记）、
+   本进程 native 已占 / Java 堆 / 上限、ORT 版本、模型文件大小与路径、耗时拼成 8~10 行文本。
+   位宽：API 23+ 用 `Process.is64Bit()`，22 退化到读 `/proc/self/maps` 里的 so 加载目录判 32/64。
+2. `DemucsSeparator` 的 12 处失败点统一走 `recordError()`：`lastError` 仍是给用户看的一句话，
+   `lastErrorDetail` 是完整诊断；两处成功路径（init OK / separate OK）会把两者一起置 null。
+3. `HqSeparationOrchestrator._hqErrorDetail` 这条 StateFlow **不进 `clearHqError()`**
+   —— 横幅 5 秒自动消失，若一起清掉就等于用户还没截图证据已经没了；只在**下一次分离成功**时清除。
+   加载失败/分离失败两处直接取分离器刚生成的详情（含模型大小、ORT 版本、加载耗时），
+   编排层自身的分支就地生成，⚠️ **不复用**分离器残留（否则上一轮的详情会配上本轮的文案）。
+   `rememberHqFailureDetail` 与 `recordError` 都包了 `runCatching`：取证失败绝不能反过来打断回退
+   （OOM 分支里拼字符串本身就可能再抛）。
+4. 链路到页：编排器 → `PlayerManager.hqErrorDetail` → `VocalSeparationViewModel` →
+   `SettingsBranch` → `SettingsScreen(hqErrorDetail=)` → `PlayerSettingsSection`
+   在「人声分离模式」下方渲染一条长期可见的「上次高质量分离失败详情」。
+5. K 歌页那条 5 秒横幅也**优先显示详情**（第一行仍是失败原因，后面接 8 行设备事实），
+   用户当场就能截一张完整的图。⚠️ 横幅的判空条件必须仍是短文案 `hqError`
+   ——详情是长期留存的，拿它判空横幅就再也关不掉了；这条陷阱由 `HqDiagnosticsGateTest` H4 锁住。
+
+**有意不做**（所有者裁决 2026-10-17：「先不加，只收数据」）：按设备总内存关掉高质量模式开关的门槛。
+现存的那道 `availableMB < 150` 预检**只看 JVM 堆**、且位于 `separate()`，
+即在 `initialize()` **之后**才跑 —— 建会话失败根本走不到它；本轮先拿真机数据，再决定门槛口径。
+
+**验证**：新增 `DeviceDiagnosticsTest`（7 例）+ `ci/HqDiagnosticsGateTest`（5 例，H1 不截断 /
+H2 recordError 与 detail 双字段 / H3 `clearHqError` 不得清详情 / H4 五跳链路到设置页 / H5 负向自证）。
+⚠️ `DeviceDiagnosticsTest` 用 **stub Context**（`getString` 答 `L<id>|<实参>…`）而不是真资源：
+本模块未开 `testOptions.unitTests.isIncludeAndroidResources`，单测里 `getString(R.string.x)` 抛
+`Resources$NotFoundException: No package ID 7f` —— 为一条诊断文本翻全局测试配置会影响 2000+ 例，不值。
+双语齐不平由 lint 的 `MissingTranslation`（阻塞级）守，占位符个数与实参个数逐条人工核对过。
+首版测试曾把「答案只回标签、吞掉实参」写成桩，于是断言实参内容的 4 例全红 —— 桩必须把实参也渲染出来。
+`assembleDebug` + `lintDebug` ⇒ **0 errors**（145 warnings，既有多为 alpha TV Compose）；
+两个新测试类 12 例全绿。

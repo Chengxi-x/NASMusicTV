@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import com.nasmusic.tv.R
 import com.nasmusic.tv.util.AppLog
+import com.nasmusic.tv.util.DeviceDiagnostics
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OnnxValue
 import ai.onnxruntime.OrtEnvironment
@@ -89,6 +90,43 @@ class DemucsSeparator(private val context: Context) {
         private set
 
     /**
+     * 上次失败的**完整诊断报告**（错误码 + 机型/系统/ABI/位宽/内存/ORT 版本/模型文件）。
+     *
+     * 与 [lastError] 的区别：lastError 是给用户看的一句话，随横幅 5 秒消失；本字段是给
+     * 开发者取证的快照，供设置页长期回看。出问题的电视在用户侧、没有 adb，唯一取证通道
+     * 是用户对着设置页截图，所以必须把它留成一条不会被清除、可回看的记录。
+     */
+    @Volatile
+    var lastErrorDetail: String? = null
+        private set
+
+    /** initialize() 记录当前加载的模型文件，供 recordError 生成诊断时引用 */
+    @Volatile
+    private var loadedModelFile: File? = null
+
+    /**
+     * 统一记录失败：写 [lastError]（一句话）与 [lastErrorDetail]（完整诊断）。
+     *
+     * [cause] 为 null 时（非异常路径，如模型不存在/shape 不符）诊断里错误码显示为 `-`。
+     * [elapsedMs] 只在加载模型时有意义：「立刻被拒」多半是参数/算子问题，「撑了很久才崩」
+     * 通常是内存撑到分配失败，两者指向完全不同的根因。
+     */
+    private fun recordError(message: String, cause: Throwable? = null, elapsedMs: Long? = null) {
+        lastError = message
+        // 诊断只是取证，绝不能因为它自己抛异常而让 catch 分支再抛出去（会打断回退）
+        lastErrorDetail = runCatching {
+            DeviceDiagnostics.report(
+                context = context,
+                error = message,
+                cause = cause,
+                modelFile = loadedModelFile,
+                ortVersion = ortEnv?.let { runCatching { it.version }.getOrNull() },
+                elapsedMs = elapsedMs
+            )
+        }.getOrNull() ?: message
+    }
+
+    /**
      * 分离结果
      */
     data class SeparationResult(
@@ -111,10 +149,12 @@ class DemucsSeparator(private val context: Context) {
      */
     fun initialize(modelPath: String): Boolean {
         val modelFile = File(modelPath)
+        loadedModelFile = modelFile
+        val startMs = System.currentTimeMillis()
         return try {
             if (!modelFile.exists()) {
                 AppLog.e(TAG, "initialize: model file not found: $modelPath")
-                lastError = context.getString(R.string.demucs_error_model_not_found)
+                recordError(context.getString(R.string.demucs_error_model_not_found))
                 return false
             }
 
@@ -146,7 +186,7 @@ class DemucsSeparator(private val context: Context) {
                         modelSession = null
                         ortEnv = null
                         isInitialized = false
-                        lastError = context.getString(R.string.demucs_error_bad_model_shape, inShape.contentToString())
+                        recordError(context.getString(R.string.demucs_error_bad_model_shape, inShape.contentToString()))
                         return false
                     }
                 }
@@ -154,16 +194,17 @@ class DemucsSeparator(private val context: Context) {
                 isInitialized = true
             }
             lastError = null
+            lastErrorDetail = null
             AppLog.d(TAG, "initialize: OK, model loaded from $modelPath (${modelFile.length() / (1024 * 1024)}MB), input='$inputName'")
             true
         } catch (e: OutOfMemoryError) {
             AppLog.e(TAG, "initialize: OOM loading model", e)
-            lastError = context.getString(R.string.demucs_error_oom_load_model, (modelFile.length() / (1024 * 1024)).toInt())
+            recordError(context.getString(R.string.demucs_error_oom_load_model, (modelFile.length() / (1024 * 1024)).toInt()), e, System.currentTimeMillis() - startMs)
             System.gc()
             false
         } catch (e: Exception) {
             AppLog.e(TAG, "initialize: failed", e)
-            lastError = context.getString(R.string.demucs_error_init_failed, e.message?.take(60))
+            recordError(context.getString(R.string.demucs_error_init_failed, e.message ?: e.toString()), e, System.currentTimeMillis() - startMs)
             false
         }
     }
@@ -289,7 +330,7 @@ class DemucsSeparator(private val context: Context) {
     ): SeparationResult? {
         if (!isReady()) {
             AppLog.e(TAG, "separate: not initialized")
-            lastError = context.getString(R.string.demucs_error_not_initialized)
+            recordError(context.getString(R.string.demucs_error_not_initialized))
             return null
         }
 
@@ -298,7 +339,7 @@ class DemucsSeparator(private val context: Context) {
         val availableMB = (runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()) / (1024 * 1024)
         if (availableMB < 150) {
             AppLog.e(TAG, "separate: available memory too low: ${availableMB}MB")
-            lastError = context.getString(R.string.demucs_error_low_memory, availableMB)
+            recordError(context.getString(R.string.demucs_error_low_memory, availableMB))
             return null
         }
 
@@ -496,15 +537,16 @@ class DemucsSeparator(private val context: Context) {
 
             AppLog.d(TAG, "separate: OK, vocals=${vocalsFile!!.absolutePath}, accompaniment=${accompanimentFile!!.absolutePath}")
             lastError = null
+            lastErrorDetail = null
             return SeparationResult(vocalsFile!!, accompanimentFile!!, durationMs)
         } catch (e: OutOfMemoryError) {
             AppLog.e(TAG, "separate: OOM", e)
-            lastError = context.getString(R.string.demucs_error_oom_separate)
+            recordError(context.getString(R.string.demucs_error_oom_separate), e)
             System.gc()
             return null
         } catch (e: Exception) {
             AppLog.e(TAG, "separate: failed", e)
-            lastError = context.getString(R.string.demucs_error_separate_exception, e.message?.take(40))
+            recordError(context.getString(R.string.demucs_error_separate_exception, e.message ?: e.javaClass.name), e)
             return null
         } finally {
             tempFile?.delete()
@@ -556,7 +598,7 @@ class DemucsSeparator(private val context: Context) {
 
             if (audioTrackIndex < 0 || format == null) {
                 AppLog.e(TAG, "decodeAudio: no audio track found")
-                lastError = context.getString(R.string.demucs_error_no_audio_track)
+                recordError(context.getString(R.string.demucs_error_no_audio_track))
                 tempFile.delete()
                 return null
             }
@@ -579,7 +621,7 @@ class DemucsSeparator(private val context: Context) {
 
             if (sourceSampleRate <= 0 || sourceChannelCount <= 0) {
                 AppLog.e(TAG, "decodeAudio: invalid format, rate=$sourceSampleRate ch=$sourceChannelCount")
-                lastError = context.getString(R.string.demucs_error_decode_failed, "invalid format")
+                recordError(context.getString(R.string.demucs_error_decode_failed, "invalid format"))
                 tempFile.delete()
                 return null
             }
@@ -745,13 +787,13 @@ class DemucsSeparator(private val context: Context) {
             return DecodeResult(totalSamples, SAMPLE_RATE, CHANNEL_COUNT, tempFile)
         } catch (e: OutOfMemoryError) {
             AppLog.e(TAG, "decodeAudioToTempFile: OOM", e)
-            lastError = context.getString(R.string.demucs_error_decode_oom)
+            recordError(context.getString(R.string.demucs_error_decode_oom), e)
             tempFile.delete()
             System.gc()
             return null
         } catch (e: Exception) {
             AppLog.e(TAG, "decodeAudioToTempFile: failed", e)
-            lastError = context.getString(R.string.demucs_error_decode_failed, e.message?.take(30))
+            recordError(context.getString(R.string.demucs_error_decode_failed, e.message ?: e.javaClass.name), e)
             tempFile.delete()
             return null
         } finally {
