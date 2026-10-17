@@ -221,24 +221,19 @@ jobs:
             gradle-robolectric-${{ runner.os }}-
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
-      # ── 取证步骤（2026-10-17，所有者裁决「先取证再改」）──────────────────────────
-      # 背景：`ProviderMirrorTest` 在同一条 commit 上 CI 连红两次（一次 200ms 探针、一次 10s 安全网），
-      # 本地全量 2218 例却 7/7 绿、每键收敛 ~30ms。Gradle 默认只打「类名 at 文件:行」，
-      # 断言自带的「当前值/期望值」和被 `withTimeout` 掩盖的线程现场**一律看不见**，
-      # 于是只能靠猜（本项目已经猜错过两次并三次扩窗）。
-      # 这两步**不改任何判定**，只是把 test-results XML 里已有的证据搬到日志与存档：
-      #   · `<system-out>` 里的 `mirror-timing` 行 —— **绿的那次也有耗时分布**，
-      #   · `<failure>` 块 —— 完整断言消息 + 全栈 + `mirror-threads` 线程现场。
-      - name: Dump test evidence (mirror timing + failure messages)
+      # ── 取证步骤（2026-10-17 引入；同日傍晚按 §10.248 收敛为通用形态）─────────────
+      # 起因是 `ProviderMirrorTest` 在同一条 commit 上 CI 连红两次，而 Gradle 默认只打
+      # 「类名 at 文件:行」，断言自带的当前值/期望值与线程现场一律看不见，于是只能靠猜
+      # （本项目已经猜错过两次）。那条时序用例现已整体退役（CI 环境对生产没有可比性），
+      # 但「让失败自己说话」这件事与它无关，保留为通用步骤：
+      #   · `app/build.gradle.kts` 里 `exceptionFormat = FULL` 让控制台直接出完整消息，
+      #   · 本步骤把 test-results XML 里的 `<failure>` 块打进日志（绿的时候不打扰），
+      #   · 红的时候整份 XML 存 artifact，离线也能复盘耗时与栈。
+      - name: Dump test failure messages
         if: always()
         run: |
           RES=app/build/test-results/testDebugUnitTest
           if [ ! -d "$RES" ]; then echo "no test-results dir (task did not run)"; exit 0; fi
-          echo "=== mirror-timing（含通过用例的耗时分布）==="
-          grep -h -o "mirror-timing[^<]*" $RES/*.xml | tail -80 || echo "(none)"
-          echo "=== mirror-threads 线程现场（仅超时会打印）==="
-          grep -h -o "mirror-threads[^<]*" $RES/*.xml | head -40 || echo "(none — 本轮无超时)"
-          grep -h -A 1 "^  [a-zA-Z].*state=" $RES/*.xml | head -120 || true
           echo "=== <failure> 完整消息 ==="
           grep -h -B 1 -A 15 "<failure" $RES/*.xml | head -200 || echo "(no failures)"
       - name: Upload unit test results

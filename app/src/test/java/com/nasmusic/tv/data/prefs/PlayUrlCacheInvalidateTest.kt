@@ -33,7 +33,9 @@ import org.robolectric.annotation.Config
  * 5. 注册体接上真 `NetworkMusicManager` 后，先前钉住的 DEAD 判定必须消失、同一首歌可重新解析。
  *
  * ⚠️ 本类一律**不**用 `startProviderMirrors` + 轮询内存镜像那种写法：全量单测 2000 例挤在同一个
- * JVM fork 里跑时 10s 窗口会超时（实测红过一次），镜像语义已由同目录 `ProviderMirrorTest` 钉住。
+ * JVM fork 里跑时 10s 窗口会超时（实测红过一次），而那种等待对生产没有可比性（2026-10-17 已整体退役，
+ * 见 `docs/technical-overview.md` §10.248）；provider 镜像的接线与形状改由同目录
+ * `ProviderMirrorWiringGateTest` 以确定性源码门守住。
  *
  * 注册点本身（`NasMusicApp` 里那一行）由 `PlayUrlCacheInvalidationWiringGateTest` 的源码门钉。
  */

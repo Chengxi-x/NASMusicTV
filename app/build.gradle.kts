@@ -303,9 +303,11 @@ ksp {
  *
  * Gradle 默认是 `SHORT`，控制台只印 `java.lang.AssertionError at XxxTest.kt:111` 加一层
  * `Caused by`，**断言自己写的消息一个字都不显示**。2026-10-17 `ProviderMirrorTest` 在 CI
- * 连红两次（本地 7/7 全绿），两次都只能看到行号、看不到「当前值/期望值/耗时」——而那条
- * 超时消息里的当前值正是唯一能区分「镜像没发射」与「线程被饿死」的证据。
- * CI 不上传 test-results XML，所以只能靠控制台输出留痕。
+ * 连红两次（本地 7/7 全绿），两次都只能看到行号、看不到「当前值/期望值/耗时」，于是排查
+ * 只能靠猜。该条时序用例同日已退役（CI 环境对生产没有可比性，见 §10.248），但「失败必须
+ * 自带可判读的信息」这条与它无关，是全局要求，因此本配置保留；
+ * 配套的 CI 步骤见 `.github/workflows/build.yml` 的 `Dump test failure messages` +
+ * `Upload unit test results`（红时整份 XML 存档，可离线复盘）。
  */
 tasks.withType<Test>().configureEach {
     testLogging {

@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *    旧实现的那次清理被 `if (!isFinishing) return` 前置拦截，配置重建时根本走不到。
  *
  * 用例用 Robolectric 取得真实的 `NasMusicApp`（manifest 声明的 application 类），
- * 与 `ProviderMirrorTest` / `CloudDriveConfigTest` 等既有 Robolectric 用例同路径。
+ * 与 `LanguageMirrorTest` / `CloudDriveConfigTest` 等既有 Robolectric 用例同路径。
  *
  * ⚠️ 本机 `testDebugUnitTest` 因 Gradle 测试 worker 环境问题无法运行（exit 268435466），
  * 这些用例**只验证了源码可编译**，实际通过与否须由 CI 判定。

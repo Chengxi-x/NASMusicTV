@@ -27,7 +27,7 @@ import org.robolectric.annotation.Config
  *
  * 注：datastore 1.0.0 在 Windows + Robolectric 下连续快速写同名文件存在
  * rename 竞态（SingleProcessDataStore.writeData 的 .tmp rename 失败），
- * 与 [ProviderMirrorTest] 用轮询等待同理——连续写之间加短暂 delay 让出句柄。
+ * 与已退役的 `ProviderMirrorTest` 轮询等待同源——连续写之间加短暂 delay 让出句柄。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

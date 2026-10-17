@@ -16054,3 +16054,56 @@ CI 上那次 10s 空等是**异常路径**，不是「窗口刚好不够」。
 `RESULT=timeout` 且 `current` 仍是默认值 + 镜像线程 `WAITING/BLOCKED` ⇒ 发射链路问题；
 线程 `RUNNABLE` 卡在别处或 `polls` 远小于 10s/20ms ⇒ 线程被饿死（调度/内存压力）。
 拿到判读结果前，⛔ 不做独占 filesDir、不做单独 JVM、不碰窗口。
+
+### 10.248 provider 镜像的时序用例退役：计时退出 CI，接线与形状改由确定性门守（2026-10-17）
+
+**决策依据（所有者提出的关键一问）**：「CI 上的测试环境与客户手机/电视完全不同，测试没有可比性。」
+核对成立。§10.247 的取证确实拿到了数据，而数据反过来判了这条测试自己的死刑：
+
+- CI 正常收敛 **20–21ms（polls=1）**，本机 **26–36ms** —— 同一量级，说明两次红不是"CI 普遍慢"，
+  而是那台机器上的偶发停顿；
+- 但**无论 CI 测出 20ms 还是 10s，都不描述任何一台真机**：runner 的磁盘/CPU/影子框架与电视无关，
+  且**生产里根本没有"超时"这个概念**——同步 getter 读到的永远是"当前镜像值"，直到它被刷新。
+  于是"耗时"这一维在单测里既不可比、也不对应任何用户可感知的契约。
+
+**同时核出的两个真实覆盖漏洞**（解释了为什么不能简单"留着的这条就当护栏"）：
+
+1. 启动接线没人守：镜像靠 `NasMusicApp.kt:300` `appPreferences.startProviderMirrors(applicationScope)`
+   这一行启动，而这行**被删掉时全仓 0 条测试变红**（旧测试自己在 `@Before` 里手工调用，绕过了接线）。
+2. 形状没人守：`AppPreferences` 有 12 个 `get*Sync()`，旧时序用例只覆盖 4 个 + 语言镜像；
+   **新增一个同步 getter 却忘了加 collector**，测试不会红，症状正是"改了设置不生效"。
+
+**改法（三处）**：
+
+1. **新增** `data/prefs/ProviderMirrorWiringGateTest.kt` —— 纯源码文本门，零时序、零 Robolectric：
+   · **G1** `NasMusicApp` 必须存在 `startProviderMirrors(applicationScope)`（换别的 scope 判负）；
+   · **G2** 以 `cached*` 字段为单位逐个核对：读侧恰好一个 `get*Sync()`（0 个=死镜像、>1 个=窗口串味都判负）、
+     写侧在 `startProviderMirrors` 体内被赋值、声明带 `@Volatile`；并**反向**核对每个同步 getter 都被解释
+     （认领某镜像字段，或在例外名单内且函数体确实读 `mirrorPrefs`）——这一条就是"新键漏接"的捕手；
+   · **G3** 镜像链路里唯一的抛点（天气 Key `CryptoUtils.decrypt`）必须被 `try`/`runCatching` 包住，
+     否则解密一抛那条收集器当场死、该键永久失联而其余键照常；
+   · **G4** 负向自证 6 个破坏样本（删启动行 / 换 scope / 摘一条 collector / 摘 @Volatile /
+     合成"新 getter 无 collector" / 裸解密）+ 空文本 + 函数体缺席一律判负，门不得空转。
+   范本照 `PlayUrlCacheInvalidationWiringGateTest`（显式 UTF-8、花括号配平抽函数体、⛔ 不锚行号/缩进）。
+2. **删除** `ProviderMirrorTest.kt` 的计时面：4 条时序用例 + 负向自证 + `awaitMirror`（含超时归因与
+   `mirror-threads` 线程现场）+ 独占 executor + `CoroutineExceptionHandler` + `MIRROR_TIMEOUT_MS` /
+   `POLL_MS` 全部退役；剩下的 2 条**不依赖时序**（`setLanguage` 同步双写 ⇒ 写完立刻能读到），
+   随内容改名 `LanguageMirrorTest.kt`。
+   ⚠️ 历史照旧不动：§10.244「无 handler 的 scope 把收集器死亡伪装成慢」与 §10.247 取证链路保持原文。
+3. **CI 步骤收敛**：`Dump test evidence (mirror timing + failure messages)` 改为通用
+   `Dump test failure messages`（`mirror-timing` / `mirror-threads` 两段 grep 随其对象一起删除），
+   `Upload unit test results` artifact 与 `app/build.gradle.kts` 的 `exceptionFormat = FULL` **保留**——
+   "失败必须自带可判读信息"是全局要求，与那条被退役的测试无关。
+
+**引用同步**：`AppPreferencesPlaylistTest` / `PlayUrlCacheInvalidateTest` / `PlayModeToggleEventTest`
+三处 KDoc 里指向 `ProviderMirrorTest` 的句子已改写（其中两处原本把它当"镜像语义已被钉住"的依据，
+现在指向本门）。CHANGELOG 不动（纯测试+CI 改动，无用户可见变化），版本号不 bump。
+
+**验证**：`testDebugUnitTest --tests "*ProviderMirrorWiringGateTest"` ⇒ BUILD SUCCESSFUL，
+XML `tests="5" skipped="0" failures="0" errors="0"`（含 G4 两组自证，证明判据真的会咬）。
+全量 `--rerun-tasks` + `lintDebug` 见本节末尾的补记。
+
+**遗留（明确未做，非遗漏）**：真机上"改完设置 ⇒ 镜像刷新"的耗时从未量化。要测就在开发机
+（创维 5.1.1）给 `startProviderMirrors` 首次回填打一条日志、跑一次即可，⛔ 不再回到 CI 断言。
+是否需要，等所有者发话。
+
