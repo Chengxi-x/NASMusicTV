@@ -1058,10 +1058,19 @@ class FeiniuAdapter(private val appContext: Context? = null) : BackendAdapter {
             // 现在优先以 `data.total` 判定。
             val data = fetchPageEnvelope(path, currentPage, size, *extra) ?: break
             val items = data.getAsJsonArray("list") ?: break
+            //items.forEach { el ->
+            //   val obj = el as? JsonObject ?: return@forEach
+            //    parse(obj)?.let { result.add(it) }
+            //}
             items.forEach { el ->
                 val obj = el as? JsonObject ?: return@forEach
-                parse(obj)?.let { result.add(it) }
+                runCatching { parse(obj) }        
+                    .onFailure { AppLog.w(TAG, "parse item failed in $path: ${it.message}") }        
+                    .getOrNull()        
+                ?.let { result.add(it) }
             }
+
+            
             pagesFetched++
             if (singlePage || items.size() == 0) break
             val total = data.get("total")?.asInt ?: -1
@@ -1173,7 +1182,7 @@ class FeiniuAdapter(private val appContext: Context? = null) : BackendAdapter {
      * @param fallbackTrackNumber 列表接口不返回 trackNo，由调用方按序号补
      * @param audioSpec 外部传入的 audioSpec（`track/metadata` 场景），为空则取对象内的
      */
-    private fun parseTrack(obj: JsonObject, fallbackTrackNumber: Int = 0, audioSpec: JsonObject? = null): Song? {
+    /*private fun parseTrack(obj: JsonObject, fallbackTrackNumber: Int = 0, audioSpec: JsonObject? = null): Song? {
         val guid = str(obj, "guid") ?: return null
         val title = str(obj, "title")?.takeIf { it.isNotBlank() } ?: return null
 
@@ -1220,6 +1229,53 @@ class FeiniuAdapter(private val appContext: Context? = null) : BackendAdapter {
             // 同 [BITRATE_UNVERIFIED]：单位未确认，不填
             bitrate = BITRATE_UNVERIFIED
         )
+    }
+    */
+    private fun parseTrack(obj: JsonObject, fallbackTrackNumber: Int = 0, audioSpec: JsonObject? = null): Song? {
+        val guid = str(obj, "guid") ?: return null    
+        val title = str(obj, "title")?.takeIf { it.isNotBlank() } ?: return null    
+        val coverId = str(obj, "coverId")    
+        if (coverId != null) synchronized(trackCoverIds) { trackCoverIds[guid] = coverId }    
+        // album 可能为 JSON null：仅当是对象时才取    
+        val albumObj = obj.get("album")?.takeIf { it.isJsonObject }?.asJsonObject    
+        val albumGuid = str(albumObj, "guid")    
+        val albumName = str(albumObj, "name")    
+        val albumCoverId = str(albumObj, "coverId")    
+        if (albumGuid != null && albumCoverId != null) {        
+            synchronized(albumCoverIds) { albumCoverIds[albumGuid] = albumCoverId }    
+        }    
+        val artistNames = ArrayList<String>()    
+        var firstArtistGuid: String? = null    
+        var firstArtistCoverId: String? = null    
+        // artists 可能为 JSON null：仅当是数组时才遍历    
+        obj.get("artists")?.takeIf { it.isJsonArray }?.asJsonArray?.forEach { el ->        
+            val artistObj = el as? JsonObject ?: return@forEach        
+            str(artistObj, "name")?.takeIf { it.isNotBlank() }?.let { artistNames.add(it) }        
+            val ag = str(artistObj, "guid")        
+            val ac = str(artistObj, "coverId")        
+            if (firstArtistGuid == null && ag != null) firstArtistGuid = ag        
+            if (firstArtistCoverId == null && ac != null) firstArtistCoverId = ac        
+            if (ag != null && ac != null) synchronized(artistCoverIds) { artistCoverIds[ag] = ac }    
+        }    
+        // duration 单位已是毫秒；obj/audioSpec 中的 duration 均可能为 JSON null    
+        val spec = audioSpec ?: obj.get("audioSpec")?.takeIf { it.isJsonObject }?.asJsonObject    
+        val durationMs = obj.get("duration")?.takeIf { it.isJsonPrimitive }?.asLong        
+        ?: spec?.get("duration")?.takeIf { it.isJsonPrimitive }?.asLong        
+        ?: 0L    
+        return Song(        
+            id = ID_PREFIX + guid,        
+            title = title,        
+            artist = artistNames.joinToString(" / "),        
+            artistId = firstArtistGuid?.let { ID_PREFIX + it },        
+            album = albumName ?: "",        
+            albumId = albumGuid?.let { ID_PREFIX + it },        
+            coverUrl = FeiniuUrl.coverUrl(apiBase, coverId ?: albumCoverId ?: firstArtistCoverId, COVER_SIZE),        
+            // 播放解析链（PlayerViewModel.resolveStreamUrl → getSongsByIds）依赖本字段，解析期即填充        
+            streamUrl = FeiniuUrl.streamUrl(apiBase, guid),        
+            durationMs = durationMs,        
+            trackNumber = fallbackTrackNumber,        
+            // 同 [BITRATE_UNVERIFIED]：单位未确认，不填        
+            bitrate = BITRATE_UNVERIFIED    )
     }
 
     // ==================== 内部：工具 ====================
